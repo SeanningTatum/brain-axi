@@ -21,6 +21,13 @@
 
 ---
 
+## 2026-07-16 — shipped brain-review: Execution dashboard verified PASS 2026-07-16: /watch/brain-review rendered all sections (pipeline, health 8/8, step acco
+- branch: `feat/execution-dashboard`
+- in-progress feature: none
+- run note: none
+
+---
+
 ## 2026-07-16 — Plan 2026-07-16-execution-dashboard approved (round 1, D1-D4 all recommended): /watch/<feature> dashboard on review server, brain pr verb, step accordion, end-of-session handoff link. Starting execution.
 - branch: `main`
 - in-progress feature: none
