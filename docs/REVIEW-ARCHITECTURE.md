@@ -230,7 +230,7 @@ SDK → Chrome:
 - No-op safely when loaded standalone (no parent frame / direct file open): all guards, zero errors.
 - Annotate mode: capture-phase click interception. Skip native controls (`button, input, select, textarea, option, label, summary, a[href], [contenteditable]`) and their descendants, `[data-brain-action]`, and anything under `[data-brain-ui]`. Clicked element → build bounded CSS path (max 5 segments, `#id` short-circuit, `:nth-of-type` disambiguation) → `brain:queuePrompt` with `tag: "element"`, `text` = trimmed `textContent` capped 400.
 - Text selection (mouseup with non-collapsed selection, annotate mode): build text target per the shape above; `text` = selection string capped 400.
-- Highlight: elements get inline `outline: 2px solid #6d5dfc` on hover (annotate mode only, removed on leave); a shadow-DOM overlay div (`[data-brain-ui]`) hosts selection highlight fragments — never mutate artifact styles.
+- Highlight: elements get inline `outline: 2px solid #d97757` on hover (annotate mode only, removed on leave); a shadow-DOM overlay div (`[data-brain-ui]`) hosts selection highlight fragments — never mutate artifact styles.
 - Report scroll (rAF-throttled `brain:scroll`), answer `brain:requestSnapshot` with `document.documentElement.outerHTML` (SDK script tag stripped, capped 500k).
 - Cmd/Ctrl+I capture-phase → `brain:toggleAnnotationMode`.
 
@@ -595,3 +595,39 @@ CLI (`brain review poll`): the `prompts` TOON table's field order becomes
 `{tag, line, selector, text, prompt}`; when any prompt is returned, the response's
 `help:` list gains a line reminding the agent to apply edits via targeted
 reads/anchored replacements at that line instead of re-reading the whole artifact.
+
+---
+
+# Addendum v7 — editorial design system + open-question answer inputs removed (2026-07-15)
+
+## v7.1 Editorial visual system ("academic journal on vellum")
+
+One shared visual language across the chrome (chrome.html) and the plan playbook's
+authoring guidance (playbooks.js), synthesized from editorial references
+(claude.ai / Readwise / Medium via Refero):
+
+| Token | Value | Role |
+|-------|-------|------|
+| bg | `#faf9f5` | vellum canvas (chrome + plan artifacts) |
+| surface | `#ffffff` | cards, composer, inputs |
+| ink | `#141413` | primary text, filled primary buttons |
+| graphite | `#3d3d3a` | secondary text |
+| muted | `#73726c` | labels, timestamps |
+| faint | `#9c9a92` | placeholders, disabled |
+| border | `#dedcd1` | hairline borders/dividers (no heavy shadows) |
+| highlight | `#fff7ca` | queued annotation pills, highlighted phrases |
+| accent | `#d97757` | terra cotta — annotate-mode hover outline, decision badge, recommended markers; used sparingly |
+
+Typography: serif stack `Charter, 'Iowan Old Style', 'Palatino Linotype', Georgia, serif`
+for headings (weight ≤600, hierarchy by size); system sans for UI/body; body 14-16px,
+line-height 1.5-1.6; plan artifacts cap content at ~72ch. Radius ~10px; depth via
+hairline borders only. The SDK annotate hover outline and diagram hover/flash colors
+are `#d97757` (was `#6d5dfc`).
+
+## v7.2 Open-question answer inputs removed from the plan standard
+
+Since every part of the artifact is annotatable (element click + text selection),
+plans MUST NOT embed per-question fill-in "answer" text fields for open questions —
+the reviewer answers by annotating the question text directly. The list-edit
+component for open questions (add/remove/strike, Addendum v5) is unchanged. The
+`plan` playbook no longer teaches the fill-in answer input pattern.
