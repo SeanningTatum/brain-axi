@@ -1961,8 +1961,17 @@ function cmdPlaybook(argv) {
 // Setup — session hook installation (explicit opt-in, idempotent, path repair)
 // ---------------------------------------------------------------------------
 
-function resolveHookCommand() {
-  // Prefer a PATH-verified binary name when it resolves to this executable.
+function resolveHookCommand(repoRoot) {
+  // Prefer a $CLAUDE_PROJECT_DIR-relative path when installed as a local
+  // node_modules dependency: this is committed into settings.json, so it must
+  // work for every teammate/CI that installs via the lockfile — not just the
+  // operator running `setup`, whose machine may also happen to have a global
+  // link that wouldn't exist for anyone else.
+  const localBin = path.join(repoRoot, "node_modules", ".bin", "brain");
+  if (fs.existsSync(localBin) && fs.realpathSync(localBin) === fs.realpathSync(BIN_PATH)) {
+    return `"$CLAUDE_PROJECT_DIR/node_modules/.bin/brain" context`;
+  }
+  // Next, a PATH-verified binary name when it resolves to this executable.
   try {
     const onPath = execFileSync("which", ["brain"], { stdio: ["ignore", "pipe", "ignore"] })
       .toString().trim();
@@ -2088,7 +2097,7 @@ function cmdSetup(argv) {
 
   const brain = findBrain(flags.brain);
   const repoRoot = path.dirname(brain);
-  const command = resolveHookCommand();
+  const command = resolveHookCommand(repoRoot);
   const targets = flags.app === "all" ? ["claude", "codex", "opencode", "copilot"] : [flags.app];
 
   const rows = [];
