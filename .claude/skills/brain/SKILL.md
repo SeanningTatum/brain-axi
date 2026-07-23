@@ -25,8 +25,34 @@ All commands print TOON-structured output. Run from anywhere inside the repo; th
 
 - `brain progress add --summary "..." --next "..."` — append a session checkpoint
 - `brain features set-status <slug> --status <planned|in-progress|shipped|blocked|cut>` — flip feature state (enforces one-in-progress policy; `--status shipped` requires `--evidence`)
-- `brain check` — deterministic harness invariants (feature list validity, one-in-progress, doc paths, dependency refs, plan/review file integrity, verification docs); exit 1 on any failure, CI-usable
+- `brain check` — deterministic harness invariants (feature list validity, one-in-progress, doc paths, dependency refs, plan/review file integrity, verification docs, verify.json shape when present); exit 1 on any failure, CI-usable
 - `brain` (home) shows an open `sessions[...]` table whenever a review session isn't ended yet
+
+## Verify — run declared project checks (`.brain/verify.json`)
+
+`.brain/verify.json` registers the project's own checks (typecheck, tests,
+lint, e2e, ...) so an agent runs the SAME commands the project actually uses
+instead of guessing. Shape:
+
+```json
+{"version":1,"checks":[{"name":"typecheck","run":"bun run typecheck","stages":["baseline","verify"]}]}
+```
+
+Each check: `name` (unique), `run` (shell command), `stages` (non-empty subset
+of `bootstrap|baseline|verify`), optional `timeout` in seconds (default 300).
+
+- `brain verify` — runs every check whose `stages` includes `verify` (the
+  default), sequentially and in registry order (checks may share
+  caches/DBs — never parallelized), from the repo root. Reports
+  `results[]{check,status,exit,seconds}` plus a `tail_<name>:` block (last 15
+  lines of combined output) for every non-pass check. Exits 1 if any executed
+  check fails or times out; exits 0 (no-op) if zero checks match the stage.
+- `brain verify --stage bootstrap|baseline|verify` — run a different stage.
+- `brain verify --only <name>` — run just one check by name; wins over `--stage`.
+- `brain verify --feature <slug>` — also appends the results verbatim as a
+  run-note step under that feature (same write path as `runs append`).
+- Missing or malformed `.brain/verify.json` exits 1 with a copy-pasteable
+  registry snippet in the `help:` lines — self-serve, no need to ask.
 
 ## Feature-centric `.brain/` layout
 

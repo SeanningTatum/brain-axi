@@ -6,7 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -285,6 +285,69 @@ const DOC_SECTIONS = {
   emails: "emails",
   transcripts: "transcripts",
 };
+
+// verify.json: a declared registry of project checks (typecheck, tests, lint,
+// e2e, ...) that `brain verify` runs sequentially. VERIFY_STAGES are the only
+// legal values inside a check's `stages` array.
+const VERIFY_STAGES = ["bootstrap", "baseline", "verify"];
+const VERIFY_SNIPPET =
+  '{"version":1,"checks":[{"name":"typecheck","run":"bun run typecheck","stages":["baseline","verify"]}]}';
+
+function verifyConfigPath(brain) {
+  return path.join(brain, "verify.json");
+}
+
+// Validates the parsed verify.json shape; returns null when valid, else a
+// precise message naming the exact bad field.
+function validateVerifyShape(parsed) {
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+    return "verify.json must be a JSON object";
+  if (!Array.isArray(parsed.checks)) return `"checks" must be an array`;
+  const names = new Set();
+  for (let i = 0; i < parsed.checks.length; i++) {
+    const c = parsed.checks[i];
+    const at = `checks[${i}]`;
+    if (typeof c !== "object" || c === null || Array.isArray(c)) return `${at} must be an object`;
+    if (typeof c.name !== "string" || !c.name.trim()) return `${at}.name must be a non-empty string`;
+    if (names.has(c.name)) return `${at}.name "${c.name}" is not unique`;
+    names.add(c.name);
+    if (typeof c.run !== "string" || !c.run.trim()) return `${at}.run must be a non-empty string`;
+    if (!Array.isArray(c.stages) || c.stages.length === 0) return `${at}.stages must be a non-empty array`;
+    const badStage = c.stages.find((s) => !VERIFY_STAGES.includes(s));
+    if (badStage !== undefined)
+      return `${at}.stages contains invalid stage "${badStage}" (valid: ${VERIFY_STAGES.join("|")})`;
+    if (c.timeout !== undefined && (typeof c.timeout !== "number" || !Number.isFinite(c.timeout) || c.timeout <= 0))
+      return `${at}.timeout must be a positive number (seconds)`;
+  }
+  return null;
+}
+
+// Loads + validates .brain/verify.json. Never throws — mirrors
+// loadFeatureList/parseProgress's read style, but (unlike loadFeatureList)
+// hands the structured error back instead of calling opError itself, since
+// callers (cmdCheck vs cmdVerify) react to a missing/malformed file
+// differently. Returns { config, error } where error is null on success or
+// { kind: "missing"|"parse"|"shape", message }.
+function loadVerifyConfig(brain) {
+  const p = verifyConfigPath(brain);
+  const rel = path.relative(process.cwd(), p);
+  if (!fs.existsSync(p)) return { config: null, error: { kind: "missing", message: `missing ${rel}` } };
+  let raw;
+  try {
+    raw = fs.readFileSync(p, "utf8");
+  } catch (e) {
+    return { config: null, error: { kind: "missing", message: `could not read ${rel} (${e.message})` } };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    return { config: null, error: { kind: "parse", message: `${rel} is not valid JSON (${e.message})` } };
+  }
+  const shapeError = validateVerifyShape(parsed);
+  if (shapeError) return { config: null, error: { kind: "shape", message: `${rel}: ${shapeError}` } };
+  return { config: parsed, error: null };
+}
 
 // ---------------------------------------------------------------------------
 // Content truncation
@@ -565,6 +628,20 @@ function cmdCheck(argv) {
     ]);
   const brain = findBrain(flags.brain);
   const checks = brainCheck(brain);
+
+  const { config: verifyConfig, error: verifyError } = loadVerifyConfig(brain);
+  if (!verifyError) {
+    checks.push({
+      check: "verify.json parses (when present)",
+      status: "pass",
+      detail: `${verifyConfig.checks.length} check(s) declared`,
+    });
+  } else if (verifyError.kind === "missing") {
+    checks.push({ check: "verify.json parses (when present)", status: "pass", detail: "not present — optional" });
+  } else {
+    checks.push({ check: "verify.json parses (when present)", status: "fail", detail: verifyError.message });
+  }
+
   const failed = checks.filter((c) => c.status === "fail");
   print([
     ...toonTable("checks", checks, ["check", "status", "detail"]),
@@ -576,6 +653,162 @@ function cmdCheck(argv) {
     ),
   ]);
   if (failed.length) process.exit(1);
+}
+
+// ---------------------------------------------------------------------------
+// Verify — declared project-check runner (.brain/verify.json registry)
+// ---------------------------------------------------------------------------
+
+// Last N lines of combined output, trimming a lone trailing empty line from
+// the final newline so the tail doesn't end on a blank row.
+function tailLines(text, n = 15) {
+  const lines = (text || "").split("\n");
+  if (lines.length && lines[lines.length - 1] === "") lines.pop();
+  return lines.slice(-n);
+}
+
+// Sanitizes a check name into a safe TOON key suffix for `tail_<name>:` —
+// check names are free-form strings, but TOON keys in this hand-rolled
+// encoder aren't quoted, so anything outside [A-Za-z0-9_-] must be replaced.
+function toonKeyPart(name) {
+  return name.replace(/[^A-Za-z0-9_-]/g, "_");
+}
+
+// Runs one check via the shell, capturing combined stdout+stderr (redirected
+// inside the shell command so ordering is preserved) and enforcing its
+// timeout. Never throws — timeouts and non-zero exits are both reported as a
+// structured result, not a JS exception.
+function runVerifyCheck(check, cwd) {
+  const timeoutSec = check.timeout || 300;
+  const start = Date.now();
+  const res = spawnSync(`${check.run} 2>&1`, { shell: true, cwd, timeout: timeoutSec * 1000, encoding: "utf8" });
+  const seconds = Number(((Date.now() - start) / 1000).toFixed(1));
+  const output = res.stdout || "";
+  if (res.error && res.error.code === "ETIMEDOUT")
+    return { check: check.name, status: "timeout", exit: null, seconds, output };
+  const exit = res.status;
+  return { check: check.name, status: exit === 0 ? "pass" : "fail", exit, seconds, output };
+}
+
+// Builds the TOON lines shared between stdout and the `--feature` run-note
+// step, so the recorded evidence matches what the agent actually saw.
+function buildVerifyReportLines(results) {
+  const lines = [
+    ...toonTable(
+      "results",
+      results.map((r) => ({ check: r.check, status: r.status, exit: r.exit, seconds: r.seconds })),
+      ["check", "status", "exit", "seconds"]
+    ),
+  ];
+  for (const r of results) {
+    if (r.status === "pass") continue;
+    lines.push(`tail_${toonKeyPart(r.check)}: |`);
+    for (const l of tailLines(r.output)) lines.push("  " + l);
+  }
+  return lines;
+}
+
+function cmdVerify(argv) {
+  const spec = {
+    "--stage": { value: true, desc: `stage to run (${VERIFY_STAGES.join("|")}, default: verify)` },
+    "--only": { value: true, desc: "run just this one check by name — wins over --stage when both are passed" },
+    "--feature": { value: true, desc: "also append the results verbatim as a run-note step for this feature" },
+  };
+  const { flags } = parseArgs(argv, spec, "verify");
+  if (flags.help)
+    helpBlock(
+      "verify",
+      "Run declared project checks from .brain/verify.json sequentially, from the repo root",
+      spec,
+      [
+        "brain verify",
+        "brain verify --stage baseline",
+        "brain verify --only typecheck",
+        "brain verify --feature authentication",
+      ]
+    );
+
+  const stage = flags.stage || "verify";
+  if (flags.stage !== undefined && !VERIFY_STAGES.includes(stage))
+    usageError(`invalid --stage "${stage}"`, [`valid stages: ${VERIFY_STAGES.join(", ")}`]);
+
+  const brain = findBrain(flags.brain);
+
+  let feat = null;
+  if (flags.feature) {
+    const list = loadFeatureList(brain);
+    feat = list.features.find((f) => f.slug === flags.feature || f.id === flags.feature);
+    if (!feat)
+      usageError(`no feature "${flags.feature}"`, [`known slugs: ${list.features.map((f) => f.slug).join(", ")}`]);
+  }
+
+  const { config, error } = loadVerifyConfig(brain);
+  if (error) {
+    if (error.kind === "missing") {
+      opError(error.message, [
+        `Create ${path.relative(process.cwd(), verifyConfigPath(brain))} with a checks array, e.g. ${VERIFY_SNIPPET}`,
+        `Each check: name (unique), run (shell command), stages (subset of ${VERIFY_STAGES.join("|")}), optional timeout (seconds, default 300)`,
+      ]);
+    }
+    opError(error.message, [`Fix ${path.relative(process.cwd(), verifyConfigPath(brain))} and re-run \`brain verify\``]);
+  }
+
+  let selected;
+  if (flags.only) {
+    const found = config.checks.find((c) => c.name === flags.only);
+    if (!found)
+      usageError(`unknown check "${flags.only}"`, [
+        `valid checks: ${config.checks.map((c) => c.name).join(", ")}`,
+      ]);
+    selected = [found];
+  } else {
+    selected = config.checks.filter((c) => c.stages.includes(stage));
+  }
+
+  if (selected.length === 0) {
+    const perStage = VERIFY_STAGES.map(
+      (s) => `${s}: ${config.checks.filter((c) => c.stages.includes(s)).length}`
+    ).join(", ");
+    print([
+      `results: 0 checks match stage "${stage}"`,
+      ...toonList("help", [
+        `Checks per stage — ${perStage}`,
+        "Run `brain verify --stage <stage>` with a stage that has checks, or `brain verify --only <name>`",
+      ]),
+    ]);
+    return;
+  }
+
+  const repoRoot = path.dirname(brain);
+  const results = selected.map((check) => runVerifyCheck(check, repoRoot));
+  const failing = results.filter((r) => r.status !== "pass");
+
+  const reportLines = buildVerifyReportLines(results);
+  const lines = [...reportLines];
+  lines.push(kv("summary", `${results.length - failing.length}/${results.length} pass`));
+
+  const help = [];
+  if (failing.length) {
+    for (const r of failing) help.push(`Run \`brain verify --only ${r.check}\` to re-run just that check`);
+  } else {
+    help.push("All checks passing");
+  }
+
+  if (feat) {
+    const stepLabel = flags.only ? `verify --only ${flags.only}` : `verify --stage ${stage}`;
+    const { file, stepNumber } = appendRunStep(brain, feat.slug, {
+      step: stepLabel,
+      observed: reportLines.join("\n"),
+    });
+    lines.push("run-note:", kv("file", file, 2), kv("step", stepNumber, 2));
+    help.push(`Run \`brain watch ${feat.slug}\` to see the recorded run-note step in the execution dashboard`);
+  } else {
+    help.push("Pass --feature <slug> to record these results as a run-note step");
+  }
+
+  lines.push(...toonList("help", help));
+  print(lines);
+  if (failing.length) process.exit(1);
 }
 
 // ---------------------------------------------------------------------------
@@ -2158,8 +2391,34 @@ All commands print TOON-structured output. Run from anywhere inside the repo; th
 
 - \`brain progress add --summary "..." --next "..."\` — append a session checkpoint
 - \`brain features set-status <slug> --status <planned|in-progress|shipped|blocked|cut>\` — flip feature state (enforces one-in-progress policy; \`--status shipped\` requires \`--evidence\`)
-- \`brain check\` — deterministic harness invariants (feature list validity, one-in-progress, doc paths, dependency refs, plan/review file integrity, verification docs); exit 1 on any failure, CI-usable
+- \`brain check\` — deterministic harness invariants (feature list validity, one-in-progress, doc paths, dependency refs, plan/review file integrity, verification docs, verify.json shape when present); exit 1 on any failure, CI-usable
 - \`brain\` (home) shows an open \`sessions[...]\` table whenever a review session isn't ended yet
+
+## Verify — run declared project checks (\`.brain/verify.json\`)
+
+\`.brain/verify.json\` registers the project's own checks (typecheck, tests,
+lint, e2e, ...) so an agent runs the SAME commands the project actually uses
+instead of guessing. Shape:
+
+\`\`\`json
+{"version":1,"checks":[{"name":"typecheck","run":"bun run typecheck","stages":["baseline","verify"]}]}
+\`\`\`
+
+Each check: \`name\` (unique), \`run\` (shell command), \`stages\` (non-empty subset
+of \`bootstrap|baseline|verify\`), optional \`timeout\` in seconds (default 300).
+
+- \`brain verify\` — runs every check whose \`stages\` includes \`verify\` (the
+  default), sequentially and in registry order (checks may share
+  caches/DBs — never parallelized), from the repo root. Reports
+  \`results[]{check,status,exit,seconds}\` plus a \`tail_<name>:\` block (last 15
+  lines of combined output) for every non-pass check. Exits 1 if any executed
+  check fails or times out; exits 0 (no-op) if zero checks match the stage.
+- \`brain verify --stage bootstrap|baseline|verify\` — run a different stage.
+- \`brain verify --only <name>\` — run just one check by name; wins over \`--stage\`.
+- \`brain verify --feature <slug>\` — also appends the results verbatim as a
+  run-note step under that feature (same write path as \`runs append\`).
+- Missing or malformed \`.brain/verify.json\` exits 1 with a copy-pasteable
+  registry snippet in the \`help:\` lines — self-serve, no need to ask.
 
 ## Feature-centric \`.brain/\` layout
 
@@ -2343,6 +2602,7 @@ const COMMANDS = {
   timeline: cmdTimeline,
   playbook: cmdPlaybook,
   check: cmdCheck,
+  verify: cmdVerify,
   ship: cmdShip,
   watch: cmdWatch,
   pr: cmdPr,

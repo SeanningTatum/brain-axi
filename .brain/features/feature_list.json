@@ -1,6 +1,6 @@
 {
   "$schema": "Machine-readable feature state tracker. Source of truth for status; per-feature MD docs are source of truth for design/runtime.",
-  "updated": "2026-07-17",
+  "updated": "2026-07-23",
   "policy": {
     "one_in_progress_at_a_time": true,
     "definition_of_done": "implementation complete + verify-done passed (CLI invoked against .brain, exit codes + TOON eyeballed, stderr diagnostics-only) + feature MD updated + brain skill --check green + brain coherent"
@@ -59,6 +59,21 @@
         "shot-review"
       ],
       "status": "planned",
+      "evidence": "",
+      "owners": [
+        "sean"
+      ]
+    },
+    {
+      "id": "feat-005",
+      "name": "harness-mode — AGENTS.md parity (verify runner + bookend playbooks + init)",
+      "slug": "harness-mode",
+      "doc": ".brain/features/harness-mode/harness-mode.md",
+      "description": "Makes brain-axi a full 5-subsystem harness: `brain verify` runs a declared check registry (.brain/verify.json, stages bootstrap/baseline/verify) replacing bespoke init.sh + verify scripts; `start`/`done` bookend playbooks; `brain init` scaffolds a minimal .brain skeleton with optional AGENTS.md pointer. setup --commands generation deferred per plan harness-parity D0.",
+      "dependencies": [
+        "core-cli"
+      ],
+      "status": "in-progress",
       "evidence": "",
       "owners": [
         "sean"
