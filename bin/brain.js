@@ -2373,11 +2373,27 @@ description: ${JSON.stringify(description)}
 
 All commands print TOON-structured output. Run from anywhere inside the repo; the CLI walks up to find \`.brain/\`. If \`brain\` is not on PATH, use \`npx -y brain-axi <command>\`.
 
+## Playbooks (\`brain playbook <id>\`)
+
+Five standing playbooks — each a full text standard printed by \`brain playbook <id>\`, meant to be followed step by step while doing the thing it names:
+
+- \`start\` — starting any non-trivial task — frame it, read the brain, baseline, open state
+- \`plan\` — writing any plan/proposal/design artifact for human review
+- \`verify\` — verifying a user-visible feature works — browser walk with screenshot evidence
+- \`execute\` — implementing an approved plan / working a feature to shipped
+- \`done\` — before declaring any task complete — full verify, harness invariants, coherence
+
+Run \`brain playbook\` for the live id/use_when index; \`brain playbook <id>\` for the full text. Referenced inline below at the point each one applies.
+
 ## Orient (start of session)
 
 - \`brain\` — dashboard: feature counts, in-progress feature, last checkpoint
 - \`brain progress\` — latest session checkpoint in full (branch, next step)
 - \`brain features\` — feature list with status
+- \`npx -y brain-axi playbook start\` — starting any non-trivial task: read brain
+  state, frame intent/scope/affected feature(s), read the relevant docs, check
+  scope policy (\`brain check\`), establish a baseline (\`brain verify --stage
+  baseline\`), then claim + open state — before writing a line of code
 
 ## Look things up (during work)
 
@@ -2493,6 +2509,17 @@ without rolling back the ship). \`runs/progress.md\` stays a rolling cursor;
   It live-updates as the commands above write state.
 - After opening a PR, record it: \`npx -y brain-axi pr <slug> --url <pr-url>\`
   — this is the dashboard's terminal state (approval → execution → PR).
+
+## Before declaring any task complete
+
+Run \`npx -y brain-axi playbook done\` and follow it before saying a task is
+finished. Short version: full \`brain verify\` (green, or fix and \`--only
+<name>\`) → feature verification for user-visible work (\`playbook verify\`,
+not duplicated here) → \`brain check\` (harness invariants) → brain coherence
+(every changed path's owning doc updated, or flagged) → close state
+(\`runs append\`, \`progress add\`, \`brain ship <slug> --evidence "..."\` if the
+feature itself is done). Anything unmet → say what's blocking, don't declare
+done.
 
 ## Plan review (human-in-the-loop) — the DEFAULT for plans and approvals
 
