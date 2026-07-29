@@ -671,8 +671,10 @@ function cmdCheck(argv) {
     ]);
   const brain = findBrain(flags.brain);
   const checks = brainCheck(brain);
-  // Evals are optional: evalChecks returns [] when the repo has no evals/ dir,
-  // so a brain without AI work sees exactly the rows it saw before.
+  // Evals are optional: evalChecks returns [] when the repo has no eval
+  // suites, so a brain without AI work sees exactly the rows it saw before —
+  // even one scaffolded by this version's `brain init` (which writes only
+  // evals/index.md, never an empty suite).
   checks.push(...evalChecks(brain));
 
   const { config: verifyConfig, error: verifyError } = loadVerifyConfig(brain);
@@ -803,12 +805,15 @@ function cmdVerifyEvals(brain, flags) {
       continue;
     }
     if (res.status !== 0) {
+      // A signal kill or maxBuffer overflow leaves status null — name what
+      // actually happened instead of printing "runner exited null".
+      const how = res.status ?? `died (${res.signal || (res.error && res.error.code) || "unknown"})`;
       rows.push({
         suite: name,
         result: "",
         score: "",
         gate: "error",
-        detail: `runner exited ${res.status}: ${tailLines(res.stderr || res.stdout || "", 1).join(" ") || "(no output)"}`,
+        detail: `runner ${typeof how === "number" ? `exited ${how}` : how}: ${tailLines(res.stderr || res.stdout || "", 1).join(" ") || "(no output)"}`,
       });
       problems.push(name);
       continue;
@@ -1272,10 +1277,14 @@ function cmdProgressAdd(argv) {
       ]);
     const score = runScore(run);
     const prevScore = runScore(runs.length > 1 ? runs[runs.length - 2] : null);
+    // "baseline" means no prior run exists — a missing CURRENT score is not a
+    // baseline, it is an unknown, and the checkpoint must say so.
     const delta =
-      prevScore === null || prevScore === undefined || score === null
-        ? "baseline"
-        : `${score >= prevScore ? "+" : ""}${(score - prevScore).toFixed(3)}`;
+      score === null
+        ? "(unknown)"
+        : prevScore === null || prevScore === undefined
+          ? "baseline"
+          : `${score >= prevScore ? "+" : ""}${(score - prevScore).toFixed(3)}`;
     const frozen = (run.frozen_failing || []).length;
     evalLine = [
       `${suite.name} ${formatScore(score) || "(unknown)"} (${delta})`,
@@ -1675,9 +1684,11 @@ function ingestEvalRun(brain, name, loaded, raw, { adapter, dryRun, source }) {
     kv("score", formatScore(summary.score) || "(unknown)", 2),
     kv(
       "delta",
-      prevScore === null || prevScore === undefined || summary.score === null
-        ? "(no prior run)"
-        : `${summary.score >= prevScore ? "+" : ""}${(summary.score - prevScore).toFixed(3)}`,
+      summary.score === null
+        ? "(unknown)"
+        : prevScore === null || prevScore === undefined
+          ? "(no prior run)"
+          : `${summary.score >= prevScore ? "+" : ""}${(summary.score - prevScore).toFixed(3)}`,
       2
     ),
     kv("gate", `${gate.status} — ${gate.reason}`, 2),
@@ -1758,12 +1769,16 @@ function cmdEvalsRun(argv) {
   });
   if (res.error && res.error.code === "ETIMEDOUT")
     opError(`runner timed out after ${timeoutSec}s`, [`runner: ${suite.runner}`, `Raise it: \`brain evals run ${name} --timeout ${timeoutSec * 2}\``]);
-  if (res.status !== 0)
-    opError(`runner exited ${res.status}`, [
+  if (res.status !== 0) {
+    // A signal kill or maxBuffer overflow leaves status null — name what
+    // actually happened instead of printing "runner exited null".
+    const how = res.status ?? `died (${res.signal || (res.error && res.error.code) || "unknown"})`;
+    opError(`runner ${typeof how === "number" ? `exited ${how}` : how}`, [
       `runner: ${suite.runner}`,
       ...tailLines(res.stderr || res.stdout || "", 10).map((l) => `stderr: ${l}`),
       "Nothing was recorded — a half-run is not evidence",
     ]);
+  }
 
   ingestEvalRun(brain, name, loaded, res.stdout || "", {
     adapter,
@@ -1796,11 +1811,19 @@ function cmdEvalsRecord(argv) {
   if (!flags.from) usageError("--from is required", [`brain evals record ${name} --from <file>`]);
   const file = path.resolve(flags.from);
   if (!fs.existsSync(file)) opError(`no such file: ${flags.from}`, ["Pass the path to the result file your runner wrote"]);
+  if (!fs.statSync(file).isFile())
+    opError(`--from must be a file, not a directory: ${flags.from}`, ["Pass the path to the result file your runner wrote"]);
   const adapter = flags.adapter || loaded.suite.adapter;
   if (!EVAL_ADAPTERS.includes(adapter))
     usageError(`unknown adapter "${adapter}"`, [`valid adapters: ${EVAL_ADAPTERS.join(", ")}`]);
 
-  ingestEvalRun(brain, name, loaded, fs.readFileSync(file, "utf8"), {
+  let raw;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch (e) {
+    opError(`could not read ${flags.from} (${e.message})`, ["Pass the path to the result file your runner wrote"]);
+  }
+  ingestEvalRun(brain, name, loaded, raw, {
     adapter,
     dryRun: !!flags["dry-run"],
     source: path.relative(process.cwd(), file),
@@ -1810,6 +1833,19 @@ function cmdEvalsRecord(argv) {
 function cmdEvalsGolden(argv) {
   const sub = argv[0] && !argv[0].startsWith("--") ? argv[0] : null;
   const rest = argv.slice(1);
+
+  if (sub === null && argv.includes("--help"))
+    helpBlock(
+      "evals golden",
+      "Manage a suite's golden set — every fixed AI bug becomes a frozen regression case",
+      {},
+      [
+        'brain evals golden add summarizer --id inv-date --input "..." --frozen',
+        "brain evals golden freeze skill-coverage cmd-features",
+        "brain evals golden unfreeze skill-coverage cmd-features",
+      ],
+      ["<suite> — suite name from `brain evals`", "<case-id> — case id from `brain evals cases <suite>`"]
+    );
 
   if (sub === "add") {
     const spec = {
@@ -1897,7 +1933,7 @@ function cmdEvalsGolden(argv) {
     return;
   }
 
-  usageError(`unknown subcommand \`evals golden ${sub || ""}\``.trim(), [
+  usageError(`unknown subcommand \`evals golden${sub ? " " + sub : ""}\``, [
     "valid subcommands: add <suite> --id ... --input ..., freeze <suite> <case-id>, unfreeze <suite> <case-id>",
   ]);
 }

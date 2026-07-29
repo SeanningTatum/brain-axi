@@ -34,18 +34,33 @@ if (!fs.existsSync(path.join(suiteDir, "cases.jsonl"))) fail("missing cases.json
 // break inside `brain verify --stage baseline` from reading as a missing
 // contract — a false negative that would train everyone to ignore this suite.
 const skill = fs.readFileSync(skillPath, "utf8").replace(/\s+/g, " ");
-const cases = fs
-  .readFileSync(path.join(suiteDir, "cases.jsonl"), "utf8")
-  .split("\n")
-  .filter((l) => l.trim())
-  .map((l) => JSON.parse(l));
+
+let cases;
+try {
+  cases = fs
+    .readFileSync(path.join(suiteDir, "cases.jsonl"), "utf8")
+    .split("\n")
+    .filter((l) => l.trim())
+    .map((l) => JSON.parse(l));
+} catch (e) {
+  fail(`cases.jsonl: ${e.message}`);
+}
+
+// Needles get the same whitespace collapse as the haystack, and match with
+// letter/digit boundaries on both ends: plain substring matching makes
+// "brain pr" pass whenever "brain progress" is present — exactly the silent
+// skill drift this suite exists to catch. (Not \b: needles may start with
+// a flag like "--stage evals", where \b would never match.)
+const norm = (s) => String(s).replace(/\s+/g, " ");
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const mentions = (needle) => new RegExp(`(?<![A-Za-z0-9])${escapeRe(norm(needle))}(?![A-Za-z0-9])`).test(skill);
 
 // One assertion type per case. Kept tiny on purpose: an assertion language
 // that grows features is a runner that needs its own tests.
 function evaluate(c) {
   const a = c.assert || {};
   if (a.type === "contains") {
-    const hit = skill.includes(a.value);
+    const hit = mentions(a.value);
     return {
       pass: hit,
       output: hit ? `found: ${a.value}` : `NOT FOUND: ${a.value}`,
@@ -57,7 +72,7 @@ function evaluate(c) {
   // command reachable, which is what the case actually asserts.
   if (a.type === "contains_any") {
     const values = a.values || [];
-    const hit = values.find((v) => skill.includes(v));
+    const hit = values.find((v) => mentions(v));
     return {
       pass: !!hit,
       output: hit ? `found: ${hit}` : `NOT FOUND (any of): ${values.join(" | ")}`,
@@ -65,7 +80,7 @@ function evaluate(c) {
     };
   }
   if (a.type === "not_contains") {
-    const hit = skill.includes(a.value);
+    const hit = mentions(a.value);
     return {
       pass: !hit,
       output: hit ? `PRESENT (must not be): ${a.value}` : `absent as required: ${a.value}`,
