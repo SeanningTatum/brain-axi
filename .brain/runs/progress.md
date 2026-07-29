@@ -21,6 +21,31 @@
 
 ---
 
+## 2026-07-29 — Phases 2+3 of ai-work: lib/review/evals.js data layer + brain evals (list/view/cases/runs/run/record/golden add|freeze) + promptfoo adapter + brain verify --stage evals gate (frozen hard-fail, tolerance band) + progress add --eval + home eval line + 4 new brain check rows + evals/index.md in brain init + dogfood suite skill-coverage (31 cases, 28 frozen) w/ reference runner. Suite caught 4 real skill gaps (evals/context/setup/skill undocumented) — fixed, 0.871 -> 1.000.
+- branch: `feat/ai-work-harness`
+- in-progress feature: ai-work
+- run note: features/ai-work/runs/2026-07-29-progress.md
+- eval: skill-coverage 1.000 (+0.000), 31/31 pass, no frozen failures, cost 0, run 2026-07-29T01:43:58.722Z
+- next: Phase 4: brain evals review <suite> (generated run artifact + per-case annotation -> feedback/<date>.md); then phase 6 agent topology, phase 7 cf-saas-react-router-starter portability
+
+---
+
+## 2026-07-29 — Phase 1 of ai-work done on feat/ai-work-harness: new 'ai' playbook (347 lines: prompt contract, prompting practice, golden sets + synthesis, eval design/judge calibration, change loop, pipelines/guardrails, agent topology, human loop, anti-patterns, readiness) + AI branches in plan (§13 addendum), start (§3 evals read, §5 eval baseline), execute (3b per-prompt-change delta), done (§2b eval gate + DoD row) + skill 'AI work' section regenerated + .brain/rules/ai-work.md. brain check 9/9, verify 2/2, skill --check clean.
+- branch: `feat/ai-work-harness`
+- in-progress feature: ai-work
+- run note: features/ai-work/runs/2026-07-29-progress.md
+- next: Phase 2: .brain/evals data model + brain evals read verbs + check rows + init scaffold
+
+---
+
+## 2026-07-29 — Plan 'ai-work-harness' authored and reviewed 2 rounds: AI-aware harness (evals subsystem, playbook ai + AI branches, agent topology, promptfoo/langchain portability). Decisions 1-6 locked at recommended; rounds 1-2 answers applied (runs committed to git, --stage evals opt-in, calibration helper, topology state, trace_url + usage capture, roles descriptive-but-functional via optional impl pointer). Cards 7-9 (topology shape, adapter set, calibration depth) still unanswered.
+- branch: `feat/orchestration-routing-bench`
+- in-progress feature: none
+- run note: none
+- next: Get answers on cards 7-9 (or accept recommended), create feat-006 ai-work, then start Phase 1: brain playbook ai + AI branches in plan/start/execute/done + skill sync
+
+---
+
 ## 2026-07-23 — harness-mode shipped + PR #8 opened: https://github.com/SeanningTatum/brain-axi/pull/8 — brain verify (registry runner), start/done playbooks, brain init scaffolder. 4 commits on feat/harness-mode. Deferred: setup --commands (D0). Uncommitted README/asset work from a prior session left untouched.
 - branch: `feat/harness-mode`
 - in-progress feature: none

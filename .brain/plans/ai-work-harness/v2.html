@@ -1,0 +1,974 @@
+<meta charset="utf-8" />
+<title>AI-work harness — evals, golden sets, prompt review</title>
+<style>
+  :root {
+    --bg: #faf9f5; --surface: #ffffff; --fg: #141413; --fg-secondary: #3d3d3a;
+    --muted: #73726c; --border: #dedcd1; --highlight: #fff7ca; --accent: #d97757;
+    --space-2: 8px; --space-3: 16px; --space-4: 24px; --space-6: 40px;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+      Helvetica, Arial, sans-serif;
+    font-size: 16px; background: var(--bg); color: var(--fg); line-height: 1.6;
+    max-width: 72ch; margin: 0 auto; padding: var(--space-6) var(--space-4);
+  }
+  h1, h2, h3 {
+    font-family: Charter, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    font-weight: 600; line-height: 1.25; color: var(--fg);
+  }
+  h1 { font-size: 1.75em; }
+  h2 { font-size: 1.3em; font-weight: 500; margin-top: var(--space-6);
+    border-bottom: 1px solid var(--border); padding-bottom: var(--space-2); }
+  h3 { font-size: 1.05em; font-weight: 500; }
+  p, li { color: var(--fg-secondary); }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; }
+  mark, .highlight { background: var(--highlight); color: var(--fg); padding: 0 2px; }
+  .chip { display: inline-block; padding: 2px 10px; border-radius: 999px;
+    font-size: 0.8em; font-weight: 600; border: 1px solid var(--border); }
+  .chip-status-draft { background: var(--surface); color: var(--muted); }
+  .chip-status-in-review { background: var(--highlight); color: var(--fg);
+    border-color: var(--highlight); }
+  .chip-status-reviewed { background: var(--fg); color: #fff; border-color: var(--fg); }
+  .chip-high { color: var(--accent); border-color: var(--accent); }
+  .chip-med { color: var(--fg-secondary); }
+  .chip-low { color: var(--muted); }
+  .decision-card { background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: var(--space-4); margin: var(--space-4) 0; }
+  table { width: 100%; border-collapse: collapse; margin: var(--space-3) 0;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    overflow: hidden; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid
+    var(--border); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  .tag-recommended { color: var(--accent); font-weight: 600; }
+  .btn-queue, .btn-approve, .btn-request-changes {
+    border: none; border-radius: 10px; padding: 8px 16px; font-weight: 600;
+    cursor: pointer; font-size: 0.95em;
+  }
+  .btn-queue, .btn-approve { background: var(--fg); color: #fff; }
+  .btn-request-changes { background: transparent; color: var(--fg);
+    border: 1px solid var(--border); }
+  .queue-ack { margin-left: var(--space-3); font-size: 0.9em; color: var(--muted); }
+  .checklist { list-style: none; padding: 0; }
+  .checklist li { margin: var(--space-2) 0; }
+  pre.mermaid { text-align: center; }
+  pre.mermaid svg { display: block; margin: 0 auto; }
+  pre.tree { background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: var(--space-3); overflow-x: auto; font-size: 0.85em;
+    color: var(--fg-secondary); }
+  .item-x, .item-restore, .list-add-btn { cursor: pointer; border: 1px solid var(--border);
+    background: var(--surface); border-radius: 6px; font-size: 0.85em; padding: 1px 8px;
+    color: var(--fg-secondary); }
+  [data-item-text] { cursor: text; }
+  .item-removed { opacity: 0.5; }
+  .item-removed [data-item-text] { text-decoration: line-through; }
+  .item-edited [data-item-text] { border-bottom: 2px dotted var(--accent); }
+  .item-badge { font-size: 0.75em; color: var(--muted); margin-left: 6px; font-style: italic; }
+  .item-badge-proposed { color: var(--accent); }
+  .item-proposed { border-left: 2px dashed var(--accent); padding-left: 6px; }
+  .list-add-row { display: flex; gap: 8px; margin-top: var(--space-2); }
+  .list-add-input { flex: 1; padding: 6px 10px; border: 1px solid var(--border);
+    border-radius: 6px; background: var(--surface); color: var(--fg); }
+</style>
+
+<header>
+  <h1>AI-work harness — evals, golden sets, prompt review</h1>
+  <div>
+    <span>2026-07-28</span> ·
+    <span>feature: ai-work (new, not yet created)</span> ·
+    <span class="chip chip-status-in-review">in-review</span> ·
+    <span>round 1</span>
+  </div>
+</header>
+
+<section id="tldr">
+  <h2>TL;DR</h2>
+  <p>Today the harness assumes deterministic code: <code>brain verify</code> runs
+  shell checks that pass or fail, and the playbooks talk about browser evidence.
+  AI work has no such notion — a prompt change is a diff with no test. This plan
+  adds an <mark>evals subsystem</mark> (<code>.brain/evals/</code> + a
+  <code>brain evals</code> verb + a new <code>evals</code> verify stage) and an
+  <mark>AI branch through every playbook</mark> so planning an AI feature forces a
+  golden set, an eval plan, and a regression gate before code is written. It also
+  adds the human loop you asked for: checkpoints surface eval deltas, and
+  <code>brain evals review</code> opens the existing review server on the last run
+  so you can read the prompt and the per-case outputs and annotate them.</p>
+  <p><strong>Round 1 update.</strong> All six decisions locked at the recommended
+  option. Four open questions answered, which grew the plan in two places:
+  <mark>agent-topology state is now in scope</mark> (phase 6 — the brain records
+  which sub-agent/model owns which step), and
+  <mark>portability is a first-class requirement</mark> — this has to work in
+  <code>cf-saas-react-router-starter</code> with promptfoo + langchain, so the
+  runner contract grows adapters instead of forcing every repo to hand-write an
+  envelope.</p>
+</section>
+
+<section id="context">
+  <h2>Context</h2>
+  <p>Grounded in real brain state read just now:</p>
+  <ul>
+    <li>Feature tracker has 5 features — <code>core-cli</code>,
+      <code>brain-review</code>, <code>shot-review</code>,
+      <code>harness-mode</code> shipped; <code>annotation-watch</code> planned.
+      None is in-progress, so the one-in-progress policy is free.</li>
+    <li>Latest checkpoint (2026-07-23): "harness-mode shipped + PR #8 opened …
+      brain verify (registry runner), start/done playbooks, brain init
+      scaffolder". Next-step line points at adopting the harness in
+      cf-saas-starter. <mark>That PR is the direct parent of this plan</mark> —
+      it created <code>verify.json</code>, the stage model
+      (<code>bootstrap|baseline|verify</code>) and the start/done bookends this
+      plan extends.</li>
+    <li><code>brain plans</code> shows a draft from yesterday,
+      <code>2026-07-27-2026-07-27-orchestration-routing-bench</code> (status
+      draft, 0 rounds, uncommitted). It overlaps on one axis — benchmarking
+      model/agent routing — and is a candidate to fold into the eval suite
+      format here rather than build twice. Flagged as a decision below.</li>
+    <li>Constraints from <code>CLAUDE.md</code> that bound every option here:
+      zero runtime deps, node &gt;=18, all stdout is TOON, every result ends in a
+      <code>help:</code> list, the generated skill must stay in sync
+      (<code>brain skill --check</code>).
+      <mark>No option below adds a dependency or an API key requirement to the
+      CLI itself.</mark></li>
+  </ul>
+</section>
+
+<section id="big-picture">
+  <h2>Big picture</h2>
+  <p>Three new nouns (prompt, golden set, eval suite) and one new loop. The
+  agent writes prompts in the app repo; the brain holds the golden set, the run
+  history, and the human's feedback on both.</p>
+  <pre class="mermaid">
+flowchart TD
+  Plan["Plan artifact<br/>(AI addendum: prompt contract + eval plan)"]
+  Prompt["Prompt in the app repo<br/>src/prompts/*.md"]
+  Golden[".brain/evals/&lt;suite&gt;/cases.jsonl<br/>golden set"]
+  Runner["Project runner<br/>(declared in suite.json)<br/>promptfoo / langchain / custom"]
+  Adapter["Adapter<br/>vendor output -&gt; run envelope"]
+  Topology[".brain/agents/agents.json<br/>roles, models, handoffs"]
+  Runs[".brain/evals/&lt;suite&gt;/runs.jsonl<br/>+ runs/&lt;ts&gt;.json"]
+  Gate["brain verify --stage evals<br/>regression gate"]
+  Review["brain evals review &lt;suite&gt;<br/>human reads prompt + outputs"]
+  Feedback[".brain/evals/&lt;suite&gt;/feedback/*.md"]
+  Progress["runs/progress.md checkpoint<br/>carries the eval delta"]
+
+  Plan --> Prompt
+  Plan --> Golden
+  Topology --> Plan
+  Topology --> Progress
+  Prompt --> Runner
+  Golden --> Runner
+  Runner --> Adapter
+  Adapter --> Runs
+  Runs --> Gate
+  Runs --> Review
+  Review --> Feedback
+  Feedback --> Prompt
+  Feedback --> Golden
+  Gate --> Progress
+  Runs --> Progress
+  </pre>
+  <p>The load-bearing idea: <mark>a failed eval case is not a bug report, it is a
+  new golden case</mark>. The feedback file is the human's channel into both the
+  prompt and the golden set, and it is the thing <code>playbook done</code> will
+  refuse to let you skip.</p>
+</section>
+
+<section id="decisions">
+  <h2>Decisions needed</h2>
+
+  <p><span class="chip chip-status-reviewed">locked round 1</span> Cards 1-6 were
+  all answered at the recommended option — kept below for the record, no action
+  needed. <mark>Cards 7-9 are new</mark>, raised by the round-1 answers: agent
+  topology, which eval adapters ship first, and how far the calibration helper
+  goes.</p>
+
+  <div class="decision-card" id="decision-topology" data-brain-action>
+    <p><strong>7. Where does agent-topology state live?</strong> You said yes to
+    recording which sub-agent owns which step. Question is whether it is per-plan
+    or a standing registry.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-topology" id="opt-topo-both"
+            value="Standing roster in .brain/agents/agents.json (roles, model, tools, handoff contract) + a per-plan assignment table binding each phase to a role" checked data-brain-action></td>
+          <td><label for="opt-topo-both">Roster + per-plan assignment
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Roles are reusable across plans; assignment stays with the work; checkpoints can say which role produced a step</td>
+          <td>Two files to keep coherent — <code>brain check</code> must catch a plan assigning an unknown role</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-topology" id="opt-topo-plan"
+            value="Per-plan only: the topology table lives in the plan artifact and the run note, no registry" data-brain-action></td>
+          <td><label for="opt-topo-plan">Per-plan only</label></td>
+          <td>Zero new state; the plan already describes its own execution</td>
+          <td>Every plan re-invents the same roles; nothing queryable across features</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-topology" id="opt-topo-registry"
+            value="Registry only: roles + default ownership, plans inherit implicitly" data-brain-action></td>
+          <td><label for="opt-topo-registry">Registry only</label></td>
+          <td>Single source; least ceremony per plan</td>
+          <td>Loses the actual record of who did what on a specific piece of work</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-topology','Where does agent-topology state live?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-topology"></span>
+  </div>
+
+  <div class="decision-card" id="decision-adapters" data-brain-action>
+    <p><strong>8. Which eval adapters ship in phase 3?</strong> An adapter is a
+    pure-JSON normalizer from a tool's output into the brain's run envelope — no
+    dependency, brain only reads the file the tool already wrote.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-adapters" id="opt-adapters-two"
+            value="Two: native envelope + promptfoo (promptfoo eval -o out.json), with adapter named in suite.json" checked data-brain-action></td>
+          <td><label for="opt-adapters-two">Native + promptfoo
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Covers the actual next consumer repo; promptfoo is the de-facto config-first eval runner and langchain chains slot under it as providers</td>
+          <td>One vendor format to track; promptfoo output shape can change between majors (pin + tolerate unknown fields)</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-adapters" id="opt-adapters-one"
+            value="Native envelope only; repos write a 10-line normalizer script themselves" data-brain-action></td>
+          <td><label for="opt-adapters-one">Native only</label></td>
+          <td>Smallest surface; brain never chases a vendor schema</td>
+          <td>Every repo writes and maintains the same glue — friction exactly where adoption happens</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-adapters" id="opt-adapters-many"
+            value="Native + promptfoo + a generic JSONPath mapping declared in suite.json" data-brain-action></td>
+          <td><label for="opt-adapters-many">Native + promptfoo + mapping</label></td>
+          <td>Any tool works without brain code changes (braintrust, evalite, custom)</td>
+          <td>A mapping mini-language is real complexity and a new failure mode to error on well</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-adapters','Which eval adapters ship in phase 3?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-adapters"></span>
+  </div>
+
+  <div class="decision-card" id="decision-calibration" data-brain-action>
+    <p><strong>9. How far does the calibration helper go?</strong> You said judge
+    calibration stays a playbook recommendation, but the harness should help you
+    get started.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-calibration" id="opt-cal-label"
+            value="brain evals calibrate <suite> samples N cases and opens the review surface in label mode; agreement rate between human labels and judge scores is printed and stored on the suite" checked data-brain-action></td>
+          <td><label for="opt-cal-label">Sample + label in the review UI
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Reuses phase 4's surface for a second job; produces one honest number ("judge agrees with you 84% of the time") that makes the judge's verdicts interpretable</td>
+          <td>Depends on phase 4 landing, so it is a follow-up not a day-one feature</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-calibration" id="opt-cal-scaffold"
+            value="Scaffold only: brain init writes an example judge suite + a calibration section in the playbook, no command" data-brain-action></td>
+          <td><label for="opt-cal-scaffold">Scaffold + playbook text only</label></td>
+          <td>Ships with phase 1; nothing to maintain</td>
+          <td>Nobody computes an agreement rate by hand — the recommendation stays theoretical</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-calibration" id="opt-cal-gate"
+            value="Calibration is enforced: a judge suite below its agreement threshold cannot pass the gate" data-brain-action></td>
+          <td><label for="opt-cal-gate">Enforced threshold</label></td>
+          <td>Strongest guarantee that judged scores mean something</td>
+          <td>Blocks work on a meta-metric; contradicts "recommendation, not requirement"</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-calibration','How far does the calibration helper go?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-calibration"></span>
+  </div>
+
+  <h3>Locked in round 1</h3>
+  <table>
+    <thead><tr><th>#</th><th>Decision</th><th>Locked</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Prompt home</td><td>Registry pointer — prompts stay in the app repo, brain holds pointer + version hash</td></tr>
+      <tr><td>2</td><td>Eval execution</td><td>Declared shell runner in <code>suite.json</code>, JSON envelope on stdout</td></tr>
+      <tr><td>3</td><td>AI trigger</td><td><code>kind: ai|code</code> on the feature; evals presence auto-implies</td></tr>
+      <tr><td>4</td><td>Gate</td><td>Frozen cases hard-fail; aggregate within a per-suite tolerance band</td></tr>
+      <tr><td>5</td><td>Feedback surface</td><td>Generated run artifact in the existing review server</td></tr>
+      <tr><td>6</td><td>First PR</td><td>Phases 1-3; review UI + registry follow</td></tr>
+    </tbody>
+  </table>
+
+  <details>
+    <summary>Cards 1-6 (answered — kept for the record)</summary>
+
+  <div class="decision-card" id="decision-prompt-home" data-brain-action>
+    <p><strong>1. Where do prompts live?</strong> The brain is state about the
+    repo, not a copy of the repo — but eval review needs to show the exact prompt
+    text that produced a run.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-prompt-home" id="opt-registry"
+            value="Registry: prompts stay in the app repo, .brain holds a pointer + version hash" checked data-brain-action></td>
+          <td><label for="opt-registry">Registry pointer
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Prompts stay next to the code that sends them; no drift-by-copy; git history is the version history</td>
+          <td>Review UI must read a repo path, and a moved file breaks the pointer (detected by <code>brain check</code>)</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-prompt-home" id="opt-owned"
+            value="Prompts owned by .brain/prompts/, app imports from there" data-brain-action></td>
+          <td><label for="opt-owned">.brain owns prompt files</label></td>
+          <td>Self-contained; run snapshots always resolvable; version dirs are trivial</td>
+          <td>App code importing from <code>.brain/</code> inverts the harness relationship; every consumer repo must accept that</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-prompt-home" id="opt-snapshot"
+            value="Registry pointer + full prompt text snapshotted into each run record" data-brain-action></td>
+          <td><label for="opt-snapshot">Pointer + per-run snapshot</label></td>
+          <td>Exact reproducibility: every run stores the prompt it actually used</td>
+          <td>Run files get fat; some duplication in <code>.brain/</code></td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-prompt-home','Where do prompts live?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-prompt-home"></span>
+  </div>
+
+  <div class="decision-card" id="decision-runner" data-brain-action>
+    <p><strong>2. Who executes an eval?</strong> Scoring an AI output usually
+    needs a model call. The CLI has zero deps and no API key.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-runner" id="opt-declared"
+            value="Declared runner: suite.json holds a shell command that prints a JSON result envelope on stdout" checked data-brain-action></td>
+          <td><label for="opt-declared">Declared shell runner
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Exactly the <code>verify.json</code> pattern already shipped; project owns model/keys/deps; brain stays zero-dep</td>
+          <td>Every consumer repo must write a runner script and honor the envelope schema</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-runner" id="opt-builtin"
+            value="Built-in LLM-judge runner inside brain-axi" data-brain-action></td>
+          <td><label for="opt-builtin">Built-in judge</label></td>
+          <td>Works out of the box, one less thing per repo</td>
+          <td>Needs an SDK + API key in the CLI — breaks the zero-dep invariant; opinionated about provider</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-runner" id="opt-agent-scored"
+            value="No runner: the agent runs the eval itself and records results via brain evals record" data-brain-action></td>
+          <td><label for="opt-agent-scored">Agent-scored only</label></td>
+          <td>Zero infrastructure; works day one in any repo</td>
+          <td>Not reproducible, not CI-able — the agent grading its own work is the failure mode evals exist to prevent</td>
+        </tr>
+      </tbody>
+    </table>
+    <p><em>Note: recommended option still keeps <code>brain evals record</code>
+    for agent-scored/manual runs — it is the escape hatch, not the default.</em></p>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-runner','Who executes an eval?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-runner"></span>
+  </div>
+
+  <div class="decision-card" id="decision-trigger" data-brain-action>
+    <p><strong>3. How does the harness know a task is AI work?</strong> The AI
+    sections should not nag on a CSS fix.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-trigger" id="opt-feature-kind"
+            value="Feature-level flag: feature_list.json gains kind: ai|code; playbooks branch on it, and evals presence auto-implies it" checked data-brain-action></td>
+          <td><label for="opt-feature-kind">Feature flag <code>kind: ai</code>
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Declared once, read everywhere (home, check, start, done, verify); machine-checkable</td>
+          <td>One more field in the tracker; needs a migration default (<code>kind</code> absent = code)</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-trigger" id="opt-always"
+            value="Always-on: AI sections appear in every playbook, marked skip-if-not-applicable" data-brain-action></td>
+          <td><label for="opt-always">Always-on sections</label></td>
+          <td>Zero new state; agents can't forget to set a flag</td>
+          <td>Playbooks are already long; irrelevant sections train agents to skim</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-trigger" id="opt-heuristic"
+            value="Heuristic: infer from repo (prompt files / evals dir present)" data-brain-action></td>
+          <td><label for="opt-heuristic">Infer from repo</label></td>
+          <td>No declaration at all</td>
+          <td>Silent and wrong at the exact moment it matters — the first AI feature, before any prompt file exists</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-trigger','How does the harness know a task is AI work?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-trigger"></span>
+  </div>
+
+  <div class="decision-card" id="decision-gate" data-brain-action>
+    <p><strong>4. How strict is the regression gate?</strong> Evals are noisy;
+    a gate that flaps gets disabled.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-gate" id="opt-frozen-plus-band"
+            value="Two tiers: frozen cases must never regress (hard fail), aggregate score must stay within a per-suite tolerance band" checked data-brain-action></td>
+          <td><label for="opt-frozen-plus-band">Frozen cases hard, aggregate banded
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Regression cases (born from real bugs) are absolute; fuzzy rubric scores get slack for noise</td>
+          <td>Two concepts to explain; needs a <code>frozen: true</code> flag per case</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-gate" id="opt-nodrop"
+            value="No-drop: any decrease in pass count fails the stage" data-brain-action></td>
+          <td><label for="opt-nodrop">No drop at all</label></td>
+          <td>Dead simple, one number</td>
+          <td>Flaps on judge nondeterminism; gets bypassed within a week</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-gate" id="opt-advisory"
+            value="Advisory only: report the delta, never fail the stage" data-brain-action></td>
+          <td><label for="opt-advisory">Advisory only</label></td>
+          <td>Never blocks; pure information</td>
+          <td>Not a gate — regressions ship, which is the whole problem</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-gate','How strict is the regression gate?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-gate"></span>
+  </div>
+
+  <div class="decision-card" id="decision-human-loop" data-brain-action>
+    <p><strong>5. Human feedback surface on evals</strong> — your ask: "see the
+    prompts and give feedback on the evaluations the harness runs."</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-human-loop" id="opt-review-mode"
+            value="New review-server mode: brain evals review <suite> renders prompt + per-case outputs as a generated HTML artifact, annotated with the existing pin/annotate machinery" checked data-brain-action></td>
+          <td><label for="opt-review-mode">Generated artifact in the existing review server
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Reuses annotate + queuePrompt + session store already built for plans and shots; per-case pins land as agent-readable prompts</td>
+          <td>Needs a generator for the eval-run HTML; biggest chunk of new code in this plan</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-human-loop" id="opt-md-only"
+            value="Markdown only: brain evals view prints failing cases; human edits a feedback.md" data-brain-action></td>
+          <td><label for="opt-md-only">Markdown feedback file</label></td>
+          <td>Ships in a day; no UI code at all</td>
+          <td>Reading 30 model outputs in a terminal is exactly what people don't do</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-human-loop" id="opt-watch"
+            value="Fold into the existing brain watch dashboard as an evals panel" data-brain-action></td>
+          <td><label for="opt-watch">Panel in <code>brain watch</code></label></td>
+          <td>One surface for everything; live SSE updates during a run</td>
+          <td>Dashboard is a monitoring surface, not an annotation surface — feedback would need the review machinery anyway</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-human-loop','Human feedback surface on evals?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-human-loop"></span>
+  </div>
+
+  <div class="decision-card" id="decision-scope" data-brain-action>
+    <p><strong>6. How much ships in the first PR?</strong> Phases are listed
+    below; this decides where the line is.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-scope" id="opt-p1p3"
+            value="Phases 1-3 in PR #1 (docs + playbooks + evals data model + run/record + verify stage), phases 4-5 in a follow-up" checked data-brain-action></td>
+          <td><label for="opt-p1p3">Phases 1-3, review UI follows
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Gate is real and CI-able on day one; UI lands against a data model already proven by dogfooding</td>
+          <td>The human-feedback surface — your headline ask — arrives second</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-scope" id="opt-p1"
+            value="Phase 1 only: docs + playbook AI branches, no new commands" data-brain-action></td>
+          <td><label for="opt-p1">Playbooks only</label></td>
+          <td>Hours, not days; pure text, zero risk to the CLI surface</td>
+          <td>Guidance with nothing to enforce it; no eval state exists to review</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-scope" id="opt-all"
+            value="All five phases in one PR" data-brain-action></td>
+          <td><label for="opt-all">Everything at once</label></td>
+          <td>One coherent story; skill regenerated once</td>
+          <td>Large diff across bin + lib/review + docs; hard to verify honestly in one pass</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-scope','How much ships in the first PR?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-scope"></span>
+  </div>
+  </details>
+</section>
+
+<section id="plan-of-record" data-brain-section="plan-of-record">
+  <h2>Plan of record</h2>
+  <p>Double-click a phase to rewrite it, x to drop it, or add one below.</p>
+  <ol>
+    <template>
+      <li data-brain-item>
+        <span data-item-text data-brain-action></span>
+        <span class="item-controls">
+          <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+          <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+        </span>
+      </li>
+    </template>
+    <li data-brain-item="0">
+      <strong>Phase 1 — AI branch through the playbooks (text only).</strong>
+      <span data-item-text data-brain-action>New <code>brain playbook ai</code>: prompt contract, golden-set construction rules (min 20 cases, sourced from real failures, held-out slice, never tune on the eval set), eval kinds (exact / rubric / LLM-judge with judge calibration), pipeline-vs-agent decomposition, sub-agent coordination boundaries, model pinning, prompting best practices. Plus an AI addendum in <code>playbook plan</code> (extra required sections: prompt contract, eval plan, golden set, regression gate + two stock decision cards for model choice and eval kind), an evals read in <code>playbook start</code> step 1, an eval-delta requirement in <code>playbook execute</code>, and a "no unreviewed eval feedback, no regression, new golden case for every fixed bug" clause in <code>playbook done</code>. Acceptance: <code>brain playbook ai</code> prints; <code>brain skill --check</code> clean.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="1">
+      <strong>Phase 2 — <code>.brain/evals/</code> data model + read verbs.</strong>
+      <span data-item-text data-brain-action>Loader + <code>brain evals</code> (list suites: cases, last run, pass rate, delta, staleness), <code>brain evals view &lt;suite&gt;</code> (cases, thresholds, last run, failing case ids), <code>brain evals cases &lt;suite&gt;</code>. <code>brain check</code> gains eval rows (suite referenced by a feature but missing, prompt pointer dangling, run older than the prompt's last git touch). <code>brain init</code> scaffolds <code>evals/index.md</code> + <code>rules/ai-prompting.md</code> + <code>recipes/ai-eval-loop.md</code>. Acceptance: read verbs work against a dogfood suite in this repo; TOON-only stdout; help lists on every result.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="2">
+      <strong>Phase 3 — execution + the gate.</strong>
+      <span data-item-text data-brain-action><code>brain evals run &lt;suite&gt;</code> shells the declared runner and appends to <code>runs.jsonl</code>; <code>brain evals record --from &lt;file&gt; --adapter &lt;name&gt;</code> ingests an externally produced result (native envelope or promptfoo output, per decision 8); <code>brain evals golden add</code> promotes a failure into a frozen regression case. New <code>evals</code> stage for <code>verify.json</code> so <code>brain verify --stage evals</code> runs suites and applies the gate — <mark>opt-in only, never folded into the default <code>verify</code> stage</mark> (round-1 answer: model calls cost money, so evals run when asked). <code>brain progress add --eval &lt;suite&gt;=&lt;score&gt;</code> writes the delta into the checkpoint, and the home dashboard grows an eval line that flags regressions, staleness, and unreviewed feedback. Acceptance: a deliberate prompt regression makes <code>brain verify --stage evals</code> exit 1 with a readable per-case table, and a raw promptfoo output file records cleanly through the adapter.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="3">
+      <strong>Phase 4 — human eval review (the feedback loop).</strong>
+      <span data-item-text data-brain-action><code>brain evals review &lt;suite&gt;</code> generates a run artifact (prompt text at top, then one card per case: input, expected, actual, score, judge rationale; failures first) and opens it in the existing review server. Per-case pins and annotations queue as prompts and persist to <code>.brain/evals/&lt;suite&gt;/feedback/&lt;date&gt;.md</code>. <code>playbook done</code> blocks on unreviewed feedback. Acceptance: Playwright walk with screenshots per <code>playbook verify</code>.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="4">
+      <strong>Phase 5 — prompt registry.</strong>
+      <span data-item-text data-brain-action><code>brain prompts</code> / <code>brain prompts view &lt;name&gt;</code> over a registry mapping prompt name to repo path, model, owning feature, and linked eval suite. Ties a prompt edit to the suite that must be re-run — this is what makes the eval line on the dashboard say "stale" instead of nothing.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="5">
+      <strong>Phase 6 — agent topology state.</strong> <span class="chip chip-high">new in round 1</span>
+      <span data-item-text data-brain-action><code>.brain/agents/agents.json</code>: a roster of roles (role name, model pin, tools/permissions, what it owns, handoff contract, escalation rule) plus a per-plan assignment table binding each phase of a plan to a role. New <code>brain agents</code> / <code>brain agents view &lt;role&gt;</code>. <code>brain progress add --agent &lt;role&gt;</code> stamps who produced a checkpoint, so the timeline answers "which role wrote this and under which model." <code>playbook ai</code> gains a topology section (decomposition boundaries, when a step deserves its own sub-agent, what must cross a handoff in writing); <code>playbook plan</code>'s AI addendum requires a topology table; <code>brain check</code> fails a plan that assigns an unknown role. Acceptance: this repo's own coordinator/sub-agent pattern is expressible in <code>agents.json</code> and shows in <code>brain timeline</code>.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="6">
+      <strong>Phase 7 — prove portability in cf-saas-react-router-starter.</strong> <span class="chip chip-high">new in round 1</span>
+      <span data-item-text data-brain-action>The harness is only real if a second repo adopts it without brain-axi code changes. Ship a recipe (<code>recipes/ai-eval-loop.md</code> + a starter-side <code>verify.json</code> evals entry) wiring promptfoo as the runner with langchain chains as providers, then run the whole loop there: define one suite over a real prompt, build a 20-case golden set, run, regress deliberately, gate, review, feed back. Anything that needs a brain-axi change to work there is a bug in phases 1-6, found before the API sets. Acceptance: a verification doc in this repo citing a green loop in the starter repo.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+  </ol>
+  <p><em>Ship order per decision 6: phases 1-3 in PR #1. Phases 4 (review UI),
+  5 (prompt registry), 6 (topology), 7 (starter-repo adoption) follow — but
+  phase 7's constraints are designed into phases 1-3, not discovered later.</em></p>
+  <div class="list-add-row" data-brain-section-add="plan-of-record">
+    <input type="text" class="list-add-input" data-brain-action placeholder="Add a phase..." />
+    <button type="button" class="list-add-btn" data-brain-action>+ Add item</button>
+  </div>
+
+  <details>
+    <summary>Proposed on-disk shape (phase 2)</summary>
+    <pre class="tree">.brain/evals/
+  index.md
+  &lt;suite&gt;/
+    suite.json      # kind, runner cmd, adapter, thresholds, prompt refs, model pin
+    cases.jsonl     # {id, input, expected, tags[], frozen, origin}
+    runs.jsonl      # {ts, commit, branch, pass, total, score, run_file}
+    runs/&lt;ts&gt;.json  # per-case: output, score, judge rationale  (committed)
+    feedback/&lt;date&gt;.md
+.brain/agents/
+  agents.json       # role roster: model, tools, owns, handoff, escalation
+</pre>
+    <p>Runner envelope on stdout (the whole contract a consumer repo implements):
+    <code>{"cases":[{"id":"...","output":"...","pass":true,"score":0.9,"notes":"..."}]}</code>.
+    Same shape whether a script, a python eval framework, or an agent produced it —
+    and per decision 8 a repo using promptfoo skips writing it entirely by naming
+    <code>"adapter": "promptfoo"</code> and pointing at promptfoo's own output file.</p>
+    <p><strong>Git policy (round-1 answer): everything is committed</strong>,
+    including per-case outputs — the run history is the audit trail, and a run you
+    cannot diff six weeks later is not evidence. Mitigation for size: per-case
+    output truncated at a configurable <code>max_output_chars</code> (default
+    ~4000) with the full text kept only when a case is frozen.</p>
+  </details>
+</section>
+
+<section id="files">
+  <h2>Files that change</h2>
+  <table>
+    <thead><tr><th>File</th><th>Change</th><th>Phase</th></tr></thead>
+    <tbody>
+      <tr><td><code>lib/review/playbooks.js</code></td><td>New <code>ai</code> playbook; AI addendum + branches in plan / start / execute / done / verify</td><td>1</td></tr>
+      <tr><td><code>bin/brain.js</code></td><td><code>cmdEvals</code> (+ <code>cmdPrompts</code>), COMMANDS entries, loaders, <code>evals</code> verify stage, <code>check</code> rows, <code>progress add --eval</code>, home eval line, <code>init</code> scaffold, <code>skillContent()</code> sync</td><td>2-5</td></tr>
+      <tr><td><code>lib/review/brain-data.js</code></td><td>Eval suite/run readers for the review server</td><td>2, 4</td></tr>
+      <tr><td><code>lib/review/server.js</code>, <code>sdk.js</code></td><td>Eval-run artifact route + per-case annotation persistence</td><td>4</td></tr>
+      <tr><td><code>.brain/rules/ai-prompting.md</code>, <code>.brain/recipes/ai-eval-loop.md</code>, <code>.brain/evals/</code></td><td>New docs + dogfood suite in this repo</td><td>1-3</td></tr>
+      <tr><td><code>docs/REVIEW-ARCHITECTURE.md</code></td><td>Section for the eval review surface</td><td>4</td></tr>
+      <tr><td><code>.brain/features/feature_list.json</code></td><td>New feature <code>ai-work</code>; optional <code>kind</code> field (decision 3)</td><td>1</td></tr>
+      <tr><td><code>.brain/agents/agents.json</code> + <code>cmdAgents</code></td><td>Role roster, per-plan assignment, <code>progress add --agent</code>, check rows</td><td>6</td></tr>
+      <tr><td><code>bin/brain.js</code> adapters</td><td>Pure-JSON normalizers (native + promptfoo) behind <code>--adapter</code> / <code>suite.json</code></td><td>3</td></tr>
+      <tr><td><em>cf-saas-react-router-starter</em> (other repo)</td><td>promptfoo config + langchain provider, <code>verify.json</code> evals entry, first real suite — no brain-axi changes allowed</td><td>7</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="golden-path">
+  <h2>Golden path</h2>
+  <p>An agent picks up "improve the summarizer prompt" in a repo using this
+  harness:</p>
+  <pre class="mermaid">
+sequenceDiagram
+  participant A as Agent
+  participant B as brain CLI
+  participant R as Project runner
+  participant H as Human
+
+  A->>B: brain playbook start
+  B-->>A: feature kind=ai -> also read brain evals
+  A->>B: brain verify --stage evals (baseline)
+  B->>R: run suite "summarizer"
+  R-->>B: envelope: 22/25 pass, score 0.84
+  B-->>A: baseline recorded
+  A->>A: edit prompt
+  A->>B: brain evals run summarizer
+  B-->>A: 24/25 pass, score 0.91 (+0.07), 1 frozen case failing
+  A->>B: brain evals golden add --from-case c17 --frozen
+  A->>B: brain evals review summarizer
+  B-->>H: browser: prompt + 25 case cards, failures first
+  H-->>B: pins on 3 cases ("too verbose", "invented a date")
+  B-->>A: feedback/2026-07-28.md
+  A->>A: revise prompt, re-run
+  A->>B: brain progress add --eval summarizer=0.95 --summary "..."
+  A->>B: brain playbook done -> verify --stage evals gate passes
+  </pre>
+</section>
+
+<section id="error-paths">
+  <h2>Error paths</h2>
+  <table>
+    <thead><tr><th>Failure</th><th>Behavior</th><th>Exit</th></tr></thead>
+    <tbody data-brain-section="error-paths">
+      <tr data-brain-item="0"><td data-item-text data-brain-action>No <code>.brain/evals/</code> in the repo</td><td><code>brain evals</code> prints an empty table plus a help list explaining how to create the first suite — not an error</td><td>0</td></tr>
+      <tr data-brain-item="1"><td data-item-text data-brain-action>Runner exits non-zero or prints non-JSON</td><td><code>opError</code> with the runner's stderr tail and the exact command; no partial run appended to <code>runs.jsonl</code></td><td>1</td></tr>
+      <tr data-brain-item="2"><td data-item-text data-brain-action>Envelope references case ids not in the golden set</td><td>Unknown ids reported as a table, run still recorded, marked <code>partial: true</code></td><td>1</td></tr>
+      <tr data-brain-item="3"><td data-item-text data-brain-action>Frozen regression case fails</td><td>Gate fails hard regardless of aggregate score; failing ids listed with a pointer to <code>brain evals review</code></td><td>1</td></tr>
+      <tr data-brain-item="4"><td data-item-text data-brain-action>Prompt file moved or deleted (dangling pointer)</td><td><code>brain check</code> row fails; <code>evals review</code> renders the case cards with a "prompt unavailable" banner rather than refusing to open</td><td>1 / 0</td></tr>
+      <tr data-brain-item="6"><td data-item-text data-brain-action>Adapter cannot parse the vendor file (promptfoo schema drift)</td><td>Named error saying which adapter, which file, which field was missing; suggests <code>--adapter envelope</code> as the escape hatch; nothing recorded</td><td>1</td></tr>
+      <tr data-brain-item="7"><td data-item-text data-brain-action>Plan assigns a phase to an agent role not in the roster</td><td><code>brain check</code> row fails naming the unknown role and the known ones</td><td>1</td></tr>
+      <tr data-brain-item="5"><td data-item-text data-brain-action>No prior run to compare against</td><td>First run establishes the baseline; gate passes with an explicit "baseline established" row, never a silent pass</td><td>0</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="testing" data-brain-section="testing">
+  <h2>Testing plan</h2>
+  <p>No test framework in this repo — verification is running the CLI and reading
+  TOON, per <code>CLAUDE.md</code>.</p>
+  <ul class="checklist">
+    <template>
+      <li data-brain-item>
+        <label><input type="checkbox" /> <span data-item-text data-brain-action></span></label>
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </li>
+    </template>
+    <li data-brain-item="0"><label><input type="checkbox" /> <span data-item-text data-brain-action>Dogfood: a real eval suite in this repo's own <code>.brain/evals/</code> — suggestion: score the generated skill text against assertions about command coverage, so brain-axi's own AI-facing output is itself evaluated</span></label>
+      <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+      <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button></li>
+    <li data-brain-item="1"><label><input type="checkbox" /> <span data-item-text data-brain-action>Every new command: <code>--help</code> renders, unknown flag exits 2, stdout is TOON only, result ends in a <code>help:</code> list</span></label>
+      <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+      <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button></li>
+    <li data-brain-item="2"><label><input type="checkbox" /> <span data-item-text data-brain-action>Deliberate regression: degrade the dogfood prompt, confirm <code>brain verify --stage evals</code> exits 1 and names the failing frozen case</span></label>
+      <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+      <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button></li>
+    <li data-brain-item="3"><label><input type="checkbox" /> <span data-item-text data-brain-action><code>brain skill --check</code> clean after every phase (skill/CLI sync invariant)</span></label>
+      <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+      <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button></li>
+    <li data-brain-item="4"><label><input type="checkbox" /> <span data-item-text data-brain-action><code>brain init</code> into an empty temp dir produces a harness where <code>brain evals</code> and <code>brain verify --stage evals</code> both succeed with zero suites</span></label>
+      <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+      <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button></li>
+    <li data-brain-item="6"><label><input type="checkbox" /> <span data-item-text data-brain-action>Adapter fixture: a real <code>promptfoo eval -o out.json</code> file records through <code>brain evals record --adapter promptfoo</code> with correct pass/score mapping; a truncated/garbage file errors cleanly</span></label>
+      <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+      <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button></li>
+    <li data-brain-item="7"><label><input type="checkbox" /> <span data-item-text data-brain-action>Cross-repo: full loop runs in cf-saas-react-router-starter (promptfoo + langchain) with zero brain-axi source changes — the real portability test</span></label>
+      <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+      <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button></li>
+    <li data-brain-item="5"><label><input type="checkbox" /> <span data-item-text data-brain-action>Phase 4: Playwright walk of the eval review surface with screenshots, verification doc per <code>playbook verify</code></span></label>
+      <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+      <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button></li>
+  </ul>
+  <div class="list-add-row" data-brain-section-add="testing">
+    <input type="text" class="list-add-input" data-brain-action placeholder="Add a test..." />
+    <button type="button" class="list-add-btn" data-brain-action>+ Add item</button>
+  </div>
+</section>
+
+<section id="open-questions" data-brain-section="open-questions">
+  <h2>Open questions</h2>
+  <ul>
+    <template>
+      <li data-brain-item>
+        <span data-item-text data-brain-action></span>
+        <span class="item-controls">
+          <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+          <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+        </span>
+      </li>
+    </template>
+    <li data-brain-item="0">
+      <span data-item-text data-brain-action>Does yesterday's <code>orchestration-routing-bench</code> draft become an eval suite kind (model/agent routing benchmark = a suite whose cases are tasks and whose score is routing quality), or stay a separate feature? Folding it in avoids two run-history formats.</span>
+      <span class="item-controls"><button type="button" class="item-x" data-brain-action title="Remove">x</button>
+      <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button></span>
+    </li>
+    <li data-brain-item="1">
+      <span data-item-text data-brain-action>Promptfoo version policy: pin a supported major in the adapter and error loudly outside it, or parse defensively and accept whatever fields are present?</span>
+      <span class="item-controls"><button type="button" class="item-x" data-brain-action title="Remove">x</button>
+      <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button></span>
+    </li>
+    <li data-brain-item="2">
+      <span data-item-text data-brain-action>Do agent roles in <code>agents.json</code> map to real runnable things (Claude Code subagent definitions in <code>.claude/agents/*.md</code>) or stay descriptive-only? Mapping them makes the roster executable; keeping them descriptive keeps the brain vendor-neutral.</span>
+      <span class="item-controls"><button type="button" class="item-x" data-brain-action title="Remove">x</button>
+      <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button></span>
+    </li>
+    <li data-brain-item="3">
+      <span data-item-text data-brain-action>Langchain tracing: if the starter repo emits traces (Logfire/LangSmith), should a run record carry a trace URL per case so review can deep-link into the actual chain execution?</span>
+      <span class="item-controls"><button type="button" class="item-x" data-brain-action title="Remove">x</button>
+      <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button></span>
+    </li>
+    <li data-brain-item="4">
+      <span data-item-text data-brain-action>Cost: should a run record capture tokens/$ per suite so the dashboard can show what an eval sweep costs, or is that out of scope?</span>
+      <span class="item-controls"><button type="button" class="item-x" data-brain-action title="Remove">x</button>
+      <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button></span>
+    </li>
+  </ul>
+  <div class="list-add-row" data-brain-section-add="open-questions">
+    <input type="text" class="list-add-input" data-brain-action placeholder="Add an open question..." />
+    <button type="button" class="list-add-btn" data-brain-action>+ Add item</button>
+  </div>
+
+  <h3>Answered in round 1</h3>
+  <table>
+    <thead><tr><th>Question</th><th>Answer</th><th>Landed as</th></tr></thead>
+    <tbody>
+      <tr><td>Do eval runs belong in git?</td><td>Yes — commit them</td><td>Git policy note under the on-disk shape; truncation cap instead of exclusion</td></tr>
+      <tr><td>Evals in the default verify stage?</td><td>Only when asked</td><td>Phase 3: <code>--stage evals</code> is opt-in, never folded into <code>verify</code></td></tr>
+      <tr><td>Judge calibration required?</td><td>Playbook recommendation — but help the user start</td><td>Decision card 9: <code>brain evals calibrate</code> sampling + label mode</td></tr>
+      <tr><td>Agent topology state?</td><td>Yes, needed</td><td>Phase 6 + decision card 7</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="verdict">
+  <h2>Verdict</h2>
+  <p>Cards 1-6 are locked. Answer cards 7-9 (agent topology, adapters,
+  calibration) and the remaining open question about the
+  <code>orchestration-routing-bench</code> draft, then:</p>
+  <div>
+    <button type="button" class="btn-approve" data-brain-action
+      onclick="queueVerdict('approve')">Approve plan</button>
+    <button type="button" class="btn-request-changes" data-brain-action
+      onclick="queueVerdict('request-changes')">Request changes</button>
+  </div>
+</section>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "neutral" });
+</script>
+
+<script>
+  function queueDecision(cardId, question) {
+    var card = document.getElementById(cardId);
+    var checked = card.querySelector('input[type="radio"]:checked');
+    if (!checked) return;
+    var choice = checked.value;
+    if (window.brain && typeof window.brain.queuePrompt === "function") {
+      window.brain.queuePrompt({
+        tag: "decision",
+        queueKey: cardId,
+        prompt: question + ": " + choice,
+        target: { type: "decision", question: question, choice: choice }
+      });
+    }
+    var ack = document.getElementById("ack-" + cardId);
+    if (ack) ack.textContent = "Queued: " + choice;
+  }
+
+  function queueVerdict(verdict) {
+    if (!(window.brain && typeof window.brain.queuePrompt === "function")) return;
+    window.brain.queuePrompt({
+      tag: "message",
+      queueKey: "verdict",
+      prompt: verdict === "approve"
+        ? "Plan approved as written."
+        : "Requesting changes — see annotations."
+    });
+  }
+</script>
+
+<script>
+  (function () {
+    function queueList(section, queueKey, prompt, action, item, index) {
+      if (window.brain && typeof window.brain.queuePrompt === "function") {
+        window.brain.queuePrompt({
+          tag: "list-edit",
+          queueKey: queueKey,
+          prompt: prompt,
+          target: { type: "list-edit", section: section, action: action, item: item, index: index }
+        });
+      }
+    }
+
+    function slugify(s) {
+      return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "").slice(0, 60) || "item";
+    }
+
+    function itemText(el) {
+      var t = el.querySelector("[data-item-text]");
+      return (t || el).textContent.trim();
+    }
+
+    function addBadge(el, cls, label) {
+      var badge = el.querySelector("." + cls);
+      if (!badge) {
+        badge = document.createElement("span");
+        badge.className = "item-badge " + cls;
+        el.appendChild(badge);
+      }
+      badge.textContent = label;
+    }
+
+    function toggleRemoved(item, section) {
+      var index = Number(item.getAttribute("data-brain-item"));
+      var text = itemText(item);
+      var removed = item.classList.toggle("item-removed");
+      var xBtn = item.querySelector(".item-x");
+      var restoreBtn = item.querySelector(".item-restore");
+      if (xBtn) xBtn.hidden = removed;
+      if (restoreBtn) restoreBtn.hidden = !removed;
+      var key = section + ":remove:" + index;
+      if (removed) {
+        queueList(section, key, "Remove from " + section + ": \"" + text + "\"", "remove", text, index);
+      } else {
+        queueList(section, key, "Cancelled: keep \"" + text + "\" in " + section, "edit", text, index);
+      }
+    }
+
+    function startEdit(item, section) {
+      if (item.classList.contains("item-removed")) return;
+      var span = item.querySelector("[data-item-text]");
+      if (!span || span.isContentEditable) return;
+      var before = span.textContent;
+      span.setAttribute("contenteditable", "true");
+      span.focus();
+
+      function commit() {
+        span.removeAttribute("contenteditable");
+        span.removeEventListener("blur", commit);
+        span.removeEventListener("keydown", onKey);
+        var text = span.textContent.trim();
+        if (!text || text === before.trim()) { span.textContent = before; return; }
+        var index = Number(item.getAttribute("data-brain-item"));
+        addBadge(item, "item-badge-edited", "edited");
+        queueList(section, section + ":edit:" + index,
+          "Edit " + section + " item " + index + ": \"" + text + "\"", "edit", text, index);
+      }
+      function onKey(ev) {
+        if (ev.key === "Enter") { ev.preventDefault(); span.blur(); }
+        else if (ev.key === "Escape") { span.textContent = before; ev.preventDefault(); span.blur(); }
+      }
+      span.addEventListener("blur", commit);
+      span.addEventListener("keydown", onKey);
+    }
+
+    function commitAdd(addRow) {
+      var section = addRow.getAttribute("data-brain-section-add");
+      var input = addRow.querySelector(".list-add-input");
+      var text = input.value.trim();
+      if (!text) return;
+      var list = document.querySelector("[data-brain-section=\"" + section + "\"]");
+      var tpl = list && list.querySelector("template");
+      if (!list || !tpl) return;
+      var node = document.importNode(tpl.content, true);
+      var item = node.querySelector("[data-brain-item]") || node.firstElementChild;
+      item.setAttribute("data-brain-item", "new");
+      var span = item.querySelector("[data-item-text]");
+      if (span) span.textContent = text;
+      item.classList.add("item-proposed");
+      addBadge(item, "item-badge-proposed", "proposed");
+      list.insertBefore(node, tpl.nextSibling);
+      input.value = "";
+      queueList(section, section + ":add:" + slugify(text),
+        "Add to " + section + ": \"" + text + "\"", "add", text, null);
+    }
+
+    document.addEventListener("click", function (ev) {
+      var xBtn = ev.target.closest(".item-x");
+      var restoreBtn = ev.target.closest(".item-restore");
+      if (xBtn || restoreBtn) {
+        var item = ev.target.closest("[data-brain-item]");
+        var section = ev.target.closest("[data-brain-section]");
+        if (item && section) toggleRemoved(item, section.getAttribute("data-brain-section"));
+        return;
+      }
+      var addBtn = ev.target.closest(".list-add-btn");
+      if (addBtn) {
+        var addRow = ev.target.closest("[data-brain-section-add]");
+        if (addRow) commitAdd(addRow);
+      }
+    });
+
+    // Double-clicking label text also toggles the checkbox twice on the way to
+    // edit mode (click, click, dblclick all fire) — it nets back to its original
+    // state, so do NOT "fix" this with preventDefault: that would break
+    // click-to-check.
+    document.addEventListener("dblclick", function (ev) {
+      var item = ev.target.closest("[data-brain-item]");
+      if (!item) return;
+      var section = item.closest("[data-brain-section]");
+      if (section) startEdit(item, section.getAttribute("data-brain-section"));
+    });
+
+    document.addEventListener("keydown", function (ev) {
+      if (ev.key !== "Enter") return;
+      var addRow = ev.target.closest("[data-brain-section-add]");
+      if (addRow && ev.target.classList.contains("list-add-input")) {
+        ev.preventDefault();
+        commitAdd(addRow);
+      }
+    });
+  })();
+</script>

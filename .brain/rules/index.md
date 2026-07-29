@@ -18,6 +18,7 @@ Domain-specific do/don't rules organized by **layer of `brain-axi`**. Terse, act
 | 2 | [`cli-commands.md`](cli-commands.md) | `bin/brain.js` commands, flags, dispatch, skill sync | Adding/renaming a command or flag |
 | 3 | [`review-server.md`](review-server.md) | `lib/review/server.js`, `store.js`, `brain-data.js` | HTTP routes, sessions, persistence, trust boundary |
 | 4 | [`review-browser.md`](review-browser.md) | `lib/review/chrome.{html,js}`, `sdk.js` | Chrome UI, injected SDK, postMessage, sandbox |
+| 5 | [`ai-work.md`](ai-work.md) | `lib/review/playbooks.js` (the `ai` playbook + AI branches), `skillContent()` | Editing AI guidance; building the evals subsystem |
 
 ## Layer dependency direction
 
@@ -38,4 +39,5 @@ Agents may not reach across the iframe boundary except via `postMessage`, nor of
 - New command / flag / dispatch change → `cli-commands.md` (and update `skillContent()`)
 - New HTTP route, session field, or persistence shape → `review-server.md` + `docs/REVIEW-ARCHITECTURE.md`
 - New postMessage type or SDK behavior → `review-browser.md` + `docs/REVIEW-ARCHITECTURE.md`
+- New/changed AI guidance, eval command, or `.brain/evals/` shape → `ai-work.md` (and `skill --write`)
 - Pattern deprecated → mark `> DEPRECATED` block + replacement pointer (do not silent-delete)

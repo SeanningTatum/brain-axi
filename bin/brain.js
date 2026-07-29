@@ -25,6 +25,27 @@ import {
 } from "../lib/review/brain-data.js";
 import { sessionKey, stateDir, listSessions } from "../lib/review/store.js";
 import { PLAYBOOKS } from "../lib/review/playbooks.js";
+import {
+  listSuiteNames,
+  loadSuite,
+  suiteRows,
+  lastRun,
+  runScore,
+  formatScore,
+  isStale,
+  repoRoot,
+  evalChecks,
+  evalsDir,
+  adaptRunOutput,
+  scoreRun,
+  recordRun,
+  gateVerdict,
+  appendCase,
+  freezeCase,
+  CASE_ORIGINS,
+  EVAL_ADAPTERS,
+  SUITE_SNIPPET,
+} from "../lib/review/evals.js";
 
 const BIN_PATH = fileURLToPath(import.meta.url);
 const DESCRIPTION =
@@ -291,6 +312,10 @@ const DOC_SECTIONS = {
 // e2e, ...) that `brain verify` runs sequentially. VERIFY_STAGES are the only
 // legal values inside a check's `stages` array.
 const VERIFY_STAGES = ["bootstrap", "baseline", "verify"];
+// `evals` is a stage of `brain verify` but NOT a legal stage inside
+// verify.json: eval suites are declared in .brain/evals/, and the gate logic
+// (frozen cases, tolerance bands) lives in brain, not in a shell string.
+const ALL_VERIFY_STAGES = [...VERIFY_STAGES, "evals"];
 const VERIFY_SNIPPET =
   '{"version":1,"checks":[{"name":"typecheck","run":"bun run typecheck","stages":["baseline","verify"]}]}';
 
@@ -403,6 +428,23 @@ function cmdHome(argv) {
   if (progress.entries.length) {
     const top = progress.entries[0];
     lines.push(kv("last-checkpoint", `${top.date} — ${top.summary}`));
+  }
+
+  // Eval state, when the repo has any: one line, with the suites that need
+  // attention named. A stale or regressed suite that only shows up when
+  // someone remembers to type `brain evals` is a gate nobody is watching.
+  const evalRows = suiteRows(brain);
+  if (evalRows.length) {
+    const attention = evalRows.filter((r) => r.state !== "ok");
+    lines.push(
+      kv(
+        "evals",
+        `${evalRows.length} suite(s)` +
+          (attention.length
+            ? ` — ${attention.map((r) => `${r.suite} ${r.state}`).join(", ")}`
+            : ` — all ok (${evalRows.map((r) => `${r.suite} ${r.score}`).join(", ")})`)
+      )
+    );
   }
 
   // Phase-1 adoption: surface open review sessions, cheap (reads the local
@@ -629,6 +671,9 @@ function cmdCheck(argv) {
     ]);
   const brain = findBrain(flags.brain);
   const checks = brainCheck(brain);
+  // Evals are optional: evalChecks returns [] when the repo has no evals/ dir,
+  // so a brain without AI work sees exactly the rows it saw before.
+  checks.push(...evalChecks(brain));
 
   const { config: verifyConfig, error: verifyError } = loadVerifyConfig(brain);
   if (!verifyError) {
@@ -709,9 +754,123 @@ function buildVerifyReportLines(results) {
   return lines;
 }
 
+// `brain verify --stage evals` — run every eval suite through its declared
+// runner and apply the gate. Suites run sequentially (they hit rate-limited
+// APIs in real repos) and the table prints even when the gate fails, mirroring
+// the registry runner's "report everything, then exit 1" contract.
+function cmdVerifyEvals(brain, flags) {
+  const names = listSuiteNames(brain);
+  if (!names.length) {
+    print([
+      'results: 0 eval suites declared (stage "evals")',
+      ...toonList("help", [
+        `Create one at ${path.join(relBrain(brain), "evals/<suite>/")} with suite.json + cases.jsonl`,
+        "Run `brain playbook ai` for the golden-set + eval-design standard",
+      ]),
+    ]);
+    return;
+  }
+
+  let feat = null;
+  if (flags.feature) {
+    const list = loadFeatureList(brain);
+    feat = list.features.find((f) => f.slug === flags.feature || f.id === flags.feature);
+    if (!feat)
+      usageError(`no feature "${flags.feature}"`, [`known slugs: ${list.features.map((f) => f.slug).join(", ")}`]);
+  }
+
+  const rows = [];
+  const problems = [];
+  for (const name of names) {
+    const loaded = loadSuite(brain, name);
+    if (loaded.error) {
+      rows.push({ suite: name, result: "", score: "", gate: "error", detail: loaded.error });
+      problems.push(name);
+      continue;
+    }
+    const { suite, cases, runs } = loaded;
+    const timeoutSec = suite.timeout || 600;
+    const res = spawnSync(suite.runner, {
+      shell: true,
+      cwd: repoRoot(brain),
+      timeout: timeoutSec * 1000,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    if (res.error && res.error.code === "ETIMEDOUT") {
+      rows.push({ suite: name, result: "", score: "", gate: "error", detail: `runner timed out after ${timeoutSec}s` });
+      problems.push(name);
+      continue;
+    }
+    if (res.status !== 0) {
+      rows.push({
+        suite: name,
+        result: "",
+        score: "",
+        gate: "error",
+        detail: `runner exited ${res.status}: ${tailLines(res.stderr || res.stdout || "", 1).join(" ") || "(no output)"}`,
+      });
+      problems.push(name);
+      continue;
+    }
+    const adapted = adaptRunOutput(res.stdout || "", suite.adapter);
+    if (adapted.error) {
+      rows.push({ suite: name, result: "", score: "", gate: "error", detail: adapted.error });
+      problems.push(name);
+      continue;
+    }
+    const { scored, unknown, summary } = scoreRun(cases, adapted.cases);
+    const prev = lastRun(runs);
+    const gate = gateVerdict(suite, summary, prev);
+    recordRun(brain, name, {
+      suite,
+      scored,
+      summary,
+      usage: adapted.usage,
+      ts: new Date().toISOString(),
+      branch: resolveBranch(brain, undefined),
+      commit: gitCommit(brain),
+      unknown,
+    });
+    rows.push({
+      suite: name,
+      result: `${summary.pass}/${summary.total}`,
+      score: formatScore(summary.score),
+      gate: gate.status,
+      detail: gate.reason,
+    });
+    if (gate.status === "fail") problems.push(name);
+  }
+
+  const lines = [
+    ...toonTable("evals", rows, ["suite", "result", "score", "gate", "detail"]),
+    kv("summary", `${rows.length - problems.length}/${rows.length} suite(s) clear`),
+  ];
+  const help = problems.length
+    ? [
+        `${problems.length} suite(s) blocking: ${problems.join(", ")}`,
+        "Frozen regression cases are absolute — read them with `brain evals view <suite>`",
+        "Run `brain playbook ai` section 5 for what to do with a failed gate",
+      ]
+    : ["All eval gates clear"];
+
+  if (feat) {
+    const { file, stepNumber } = appendRunStep(brain, feat.slug, {
+      step: "verify --stage evals",
+      observed: lines.join("\n"),
+    });
+    lines.push("run-note:", kv("file", file, 2), kv("step", stepNumber, 2));
+  } else {
+    help.push("Pass --feature <slug> to record these results as a run-note step");
+  }
+
+  print([...lines, ...toonList("help", help)]);
+  if (problems.length) process.exit(1);
+}
+
 function cmdVerify(argv) {
   const spec = {
-    "--stage": { value: true, desc: `stage to run (${VERIFY_STAGES.join("|")}, default: verify)` },
+    "--stage": { value: true, desc: `stage to run (${ALL_VERIFY_STAGES.join("|")}, default: verify)` },
     "--only": { value: true, desc: "run just this one check by name — wins over --stage when both are passed" },
     "--feature": { value: true, desc: "also append the results verbatim as a run-note step for this feature" },
   };
@@ -724,16 +883,23 @@ function cmdVerify(argv) {
       [
         "brain verify",
         "brain verify --stage baseline",
+        "brain verify --stage evals",
         "brain verify --only typecheck",
         "brain verify --feature authentication",
       ]
     );
 
   const stage = flags.stage || "verify";
-  if (flags.stage !== undefined && !VERIFY_STAGES.includes(stage))
-    usageError(`invalid --stage "${stage}"`, [`valid stages: ${VERIFY_STAGES.join(", ")}`]);
+  if (flags.stage !== undefined && !ALL_VERIFY_STAGES.includes(stage))
+    usageError(`invalid --stage "${stage}"`, [`valid stages: ${ALL_VERIFY_STAGES.join(", ")}`]);
 
   const brain = findBrain(flags.brain);
+
+  // The evals stage is a different animal from the verify.json registry: it
+  // runs eval SUITES and applies the regression gate. It is opt-in by design
+  // (plan `ai-work-harness`, round-1 answer) — model calls cost money, so they
+  // never ride along on an ordinary `brain verify`.
+  if (stage === "evals" && !flags.only) return cmdVerifyEvals(brain, flags);
 
   let feat = null;
   if (flags.feature) {
@@ -1045,7 +1211,7 @@ function resolveBranch(brain, explicit) {
 // Shared by `progress add` and `brain ship`'s internal checkpoint. Returns
 // {date, branch, file} on success, or null when runs/progress.md is missing
 // (callers decide whether that's fatal for them).
-function appendProgressEntry(brain, { summary, branch, feature, runNote, next } = {}) {
+function appendProgressEntry(brain, { summary, branch, feature, runNote, next, evalLine } = {}) {
   const progress = parseProgress(brain);
   if (progress.raw === null) return null;
 
@@ -1056,6 +1222,7 @@ function appendProgressEntry(brain, { summary, branch, feature, runNote, next } 
     `- branch: \`${resolvedBranch}\``,
     `- in-progress feature: ${feature || "none"}`,
     `- run note: ${runNote || "none"}`,
+    ...(evalLine ? [`- eval: ${evalLine}`] : []),
     ...(next ? [`- next: ${next}`] : []),
   ].join("\n");
 
@@ -1077,23 +1244,55 @@ function cmdProgressAdd(argv) {
     "--branch": { value: true, desc: "current branch (default: from git)" },
     "--feature": { value: true, desc: "in-progress feature id/slug (default: none)" },
     "--run-note": { value: true, desc: "path to the run note (default: none)" },
+    "--eval": { value: true, desc: "eval suite whose real last-run score + delta to stamp on this checkpoint" },
     "--next": { value: true, desc: "one sentence on what to do next" },
   };
   const { flags } = parseArgs(argv, spec, "progress add");
   if (flags.help)
     helpBlock("progress add", "Append a checkpoint entry to the top of runs/progress.md", spec, [
       'brain progress add --summary "auth refactor half-done" --next "wire session into loader"',
+      'brain progress add --eval summarizer --summary "added 2 refusal examples"',
     ]);
   if (!flags.summary)
     usageError("--summary is required", ['brain progress add --summary "..." [--branch ...] [--next ...]']);
 
   const brain = findBrain(flags.brain);
+
+  // --eval reads the number out of the suite's own run record rather than
+  // taking it from the caller: a checkpoint claiming a score nobody ran is the
+  // exact failure the evals subsystem exists to prevent.
+  let evalLine;
+  if (flags.eval) {
+    const { suite, runs, error } = loadSuite(brain, flags.eval);
+    if (error) opError(error, [`known suites: ${listSuiteNames(brain).join(", ") || "(none)"}`]);
+    const run = lastRun(runs);
+    if (!run)
+      opError(`suite "${suite.name}" has no recorded run to cite`, [
+        `Run \`brain evals run ${suite.name}\` first — a checkpoint cannot cite a score that was never measured`,
+      ]);
+    const score = runScore(run);
+    const prevScore = runScore(runs.length > 1 ? runs[runs.length - 2] : null);
+    const delta =
+      prevScore === null || prevScore === undefined || score === null
+        ? "baseline"
+        : `${score >= prevScore ? "+" : ""}${(score - prevScore).toFixed(3)}`;
+    const frozen = (run.frozen_failing || []).length;
+    evalLine = [
+      `${suite.name} ${formatScore(score) || "(unknown)"} (${delta})`,
+      `${run.pass ?? "?"}/${run.total ?? "?"} pass`,
+      frozen ? `${frozen} frozen case(s) FAILING` : "no frozen failures",
+      ...(run.usage && run.usage.cost_usd !== undefined ? [`cost ${run.usage.cost_usd}`] : []),
+      `run ${run.ts}`,
+    ].join(", ");
+  }
+
   const result = appendProgressEntry(brain, {
     summary: flags.summary,
     branch: flags.branch,
     feature: flags.feature,
     runNote: flags["run-note"],
     next: flags.next,
+    evalLine,
   });
   if (!result)
     opError("runs/progress.md not found in this brain", ["Create runs/progress.md first (see HARNESS.md state layer)"]);
@@ -1103,6 +1302,7 @@ function cmdProgressAdd(argv) {
     kv("date", result.date, 2),
     kv("summary", flags.summary, 2),
     kv("branch", result.branch, 2),
+    ...(evalLine ? [kv("eval", evalLine, 2)] : []),
     kv("file", path.relative(process.cwd(), result.file), 2),
   ]);
 }
@@ -1198,6 +1398,507 @@ function cmdRunsAppend(argv) {
       `If this step produced a visual test, run \`brain shots add <img> --feature ${feat.slug} --step <NN-name>\` (pass or fail)`,
       `Run \`brain ship ${feat.slug} --evidence "..."\` once the feature is demonstrably working`,
     ]),
+  ]);
+}
+
+// ---------------------------------------------------------------------------
+// Evals — AI suites, golden sets, run history (.brain/evals/, lib/review/evals.js)
+// ---------------------------------------------------------------------------
+
+// Shortens a case's input for a table cell. Cases carry whole prompts and
+// documents; a list view that dumps them is unreadable and expensive.
+function evalPreview(value, limit = 60) {
+  const s = typeof value === "string" ? value : JSON.stringify(value ?? "");
+  const flat = s.replace(/\s+/g, " ").trim();
+  return flat.length <= limit ? flat : flat.slice(0, limit - 1) + "…";
+}
+
+function requireSuite(brain, name) {
+  if (!name)
+    usageError("missing required argument <suite>", ["brain evals view <suite>  (see `brain evals`)"]);
+  const loaded = loadSuite(brain, name);
+  if (loaded.error)
+    opError(loaded.error, [`known suites: ${listSuiteNames(brain).join(", ") || "(none)"}`]);
+  return loaded;
+}
+
+function cmdEvals(argv) {
+  const sub = argv[0] && !argv[0].startsWith("--") ? argv[0] : "list";
+  const rest = sub === argv[0] ? argv.slice(1) : argv;
+
+  if (sub === "list") {
+    const { flags } = parseArgs(rest, {}, "evals");
+    if (flags.help)
+      helpBlock("evals", "List eval suites: cases, last run, score, and state (never-run|stale|regressed|ok)", {}, [
+        "brain evals",
+        "brain evals view <suite>",
+      ]);
+    const brain = findBrain(flags.brain);
+    const rows = suiteRows(brain);
+    if (!rows.length) {
+      print([
+        "evals: 0 suites in this brain",
+        ...toonList("help", [
+          `Create one at ${path.join(relBrain(brain), "evals/<suite>/")} with suite.json + cases.jsonl`,
+          `suite.json shape: ${SUITE_SNIPPET}`,
+          "Run `brain playbook ai` for the golden-set + eval-design standard",
+        ]),
+      ]);
+      return;
+    }
+    const attention = rows.filter((r) => r.state !== "ok");
+    print([
+      ...toonTable("suites", rows, ["suite", "kind", "cases", "frozen", "last_run", "score", "state"]),
+      ...toonList("help", [
+        ...(attention.length
+          ? [`${attention.length} suite(s) need attention: ${attention.map((r) => `${r.suite} (${r.state})`).join(", ")}`]
+          : []),
+        "Run `brain evals view <suite>` for thresholds, the last run, and failing cases",
+        "Run `brain evals cases <suite>` to read the golden set",
+      ]),
+    ]);
+    return;
+  }
+
+  if (sub === "view") {
+    const { flags, positionals } = parseArgs(rest, {}, "evals view");
+    if (flags.help)
+      helpBlock("evals view", "Show one suite: config, coverage, last run, failing cases", {},
+        ["brain evals view skill-coverage"], ["<suite> — suite name from `brain evals`"]);
+    const brain = findBrain(flags.brain);
+    const name = positionals[0];
+    const { suite, cases, runs, errors } = requireSuite(brain, name);
+    const run = lastRun(runs);
+    const prev = runs.length > 1 ? runs[runs.length - 2] : null;
+    const score = runScore(run);
+    const prevScore = runScore(prev);
+    const byOrigin = {};
+    const byTag = {};
+    for (const c of cases) {
+      byOrigin[c.origin] = (byOrigin[c.origin] || 0) + 1;
+      for (const t of c.tags || []) byTag[t] = (byTag[t] || 0) + 1;
+    }
+    const thresholds = suite.thresholds || {};
+    const lines = [
+      "suite:",
+      kv("name", suite.name, 2),
+      kv("kind", suite.kind, 2),
+      kv("runner", suite.runner, 2),
+      kv("adapter", suite.adapter, 2),
+      ...(suite.model ? [kv("model", suite.model, 2)] : []),
+      ...(suite.description ? [kv("description", suite.description, 2)] : []),
+      kv("cases", `${cases.length} total, ${cases.filter((c) => c.frozen).length} frozen`, 2),
+      kv("origins", Object.entries(byOrigin).map(([k, v]) => `${v} ${k}`).join(", ") || "(none)", 2),
+      kv("tags", Object.entries(byTag).map(([k, v]) => `${k}:${v}`).join(", ") || "(none)", 2),
+      kv(
+        "thresholds",
+        Object.keys(thresholds).length ? Object.entries(thresholds).map(([k, v]) => `${k}=${v}`).join(", ") : "(none declared)",
+        2
+      ),
+      kv("stale", run ? String(isStale(brain, suite, run)) : "n/a (never run)", 2),
+    ];
+    if (suite.prompts && suite.prompts.length) {
+      lines.push(
+        ...toonTable(
+          "prompts",
+          suite.prompts.map((p) => ({
+            name: p.name || path.basename(p.path),
+            path: p.path,
+            resolves: fs.existsSync(path.resolve(repoRoot(brain), p.path)) ? "yes" : "NO",
+          })),
+          ["name", "path", "resolves"]
+        )
+      );
+    }
+    if (run) {
+      lines.push(
+        "last_run:",
+        kv("ts", run.ts, 2),
+        ...(run.branch ? [kv("branch", run.branch, 2)] : []),
+        ...(run.commit ? [kv("commit", run.commit, 2)] : []),
+        kv("result", `${run.pass ?? "?"}/${run.total ?? "?"} pass`, 2),
+        kv("score", formatScore(score) || "(unknown)", 2),
+        kv(
+          "delta",
+          prevScore === null || score === null ? "(no prior run)" : `${score >= prevScore ? "+" : ""}${(score - prevScore).toFixed(3)}`,
+          2
+        ),
+        ...(run.usage ? [kv("usage", Object.entries(run.usage).map(([k, v]) => `${k}=${v}`).join(", "), 2)] : []),
+        ...(run.failing && run.failing.length ? [kv("failing", run.failing.join(", "), 2)] : []),
+        ...(run.partial ? [kv("partial", "true — some cases were not scored", 2)] : [])
+      );
+    } else {
+      lines.push(kv("last_run", "(never run)"));
+    }
+    if (errors.length) lines.push(...toonList("data_errors", errors));
+    print([
+      ...lines,
+      ...toonList("help", [
+        `Run \`brain evals cases ${suite.name}\` to read the golden set`,
+        `Run \`brain evals runs ${suite.name}\` for run history`,
+        "Run `brain playbook ai` for the change loop (baseline, one change, re-run, compare per-case)",
+      ]),
+    ]);
+    return;
+  }
+
+  if (sub === "cases") {
+    const spec = {
+      "--frozen": { value: false, desc: "only frozen regression cases" },
+      "--origin": { value: true, desc: `filter by origin (${CASE_ORIGINS.join("|")})` },
+      "--tag": { value: true, desc: "filter by tag" },
+      "--limit": { value: true, desc: "max rows (default: 100)" },
+    };
+    const { flags, positionals } = parseArgs(rest, spec, "evals cases");
+    if (flags.help)
+      helpBlock("evals cases", "List a suite's golden set", spec,
+        ["brain evals cases skill-coverage", "brain evals cases skill-coverage --frozen"],
+        ["<suite> — suite name from `brain evals`"]);
+    const brain = findBrain(flags.brain);
+    const name = positionals[0];
+    const { cases } = requireSuite(brain, name);
+    let rows = cases;
+    if (flags.frozen) rows = rows.filter((c) => c.frozen);
+    if (flags.origin) rows = rows.filter((c) => c.origin === flags.origin);
+    if (flags.tag) rows = rows.filter((c) => (c.tags || []).includes(flags.tag));
+    const limit = flags.limit ? Number(flags.limit) : 100;
+    if (!Number.isFinite(limit) || limit <= 0) usageError("--limit must be a positive number", ["brain evals cases <suite> --limit 20"]);
+    const shown = rows.slice(0, limit);
+    print([
+      ...toonTable(
+        "cases",
+        shown.map((c) => ({
+          id: c.id,
+          origin: c.origin,
+          frozen: c.frozen ? "yes" : "",
+          tags: (c.tags || []).join("|"),
+          input: evalPreview(c.input),
+          expected: evalPreview(c.expected),
+        })),
+        ["id", "origin", "frozen", "tags", "input", "expected"]
+      ),
+      kv("shown", `${shown.length} of ${cases.length} case(s)`),
+      ...toonList("help", [
+        "Every bug you fix becomes a frozen regression case — `brain playbook ai` section 3",
+        `Run \`brain evals view ${name}\` for thresholds and the last run`,
+      ]),
+    ]);
+    return;
+  }
+
+  if (sub === "runs") {
+    const spec = { "--limit": { value: true, desc: "max rows, newest first (default: 20)" } };
+    const { flags, positionals } = parseArgs(rest, spec, "evals runs");
+    if (flags.help)
+      helpBlock("evals runs", "Run history for one suite, newest first", spec,
+        ["brain evals runs skill-coverage --limit 5"], ["<suite> — suite name from `brain evals`"]);
+    const brain = findBrain(flags.brain);
+    const name = positionals[0];
+    const { runs } = requireSuite(brain, name);
+    const limit = flags.limit ? Number(flags.limit) : 20;
+    if (!Number.isFinite(limit) || limit <= 0) usageError("--limit must be a positive number", ["brain evals runs <suite> --limit 5"]);
+    if (!runs.length) {
+      print([
+        `runs: 0 recorded runs for ${name}`,
+        ...toonList("help", ["A suite with no baseline cannot tell an improvement from a regression — record one before editing prompts"]),
+      ]);
+      return;
+    }
+    const rows = runs
+      .slice()
+      .reverse()
+      .slice(0, limit)
+      .map((r) => ({
+        ts: r.ts,
+        result: `${r.pass ?? "?"}/${r.total ?? "?"}`,
+        score: formatScore(runScore(r)),
+        branch: r.branch || "",
+        cost: r.usage && r.usage.cost_usd !== undefined ? String(r.usage.cost_usd) : "",
+        partial: r.partial ? "yes" : "",
+      }));
+    print([
+      ...toonTable("runs", rows, ["ts", "result", "score", "branch", "cost", "partial"]),
+      kv("shown", `${rows.length} of ${runs.length} run(s)`),
+      ...toonList("help", [`Run \`brain evals view ${name}\` for the latest run in full`]),
+    ]);
+    return;
+  }
+
+  if (sub === "run") return cmdEvalsRun(rest);
+  if (sub === "record") return cmdEvalsRecord(rest);
+  if (sub === "golden") return cmdEvalsGolden(rest);
+
+  usageError(`unknown subcommand \`evals ${sub}\``, [
+    "valid subcommands: list (default), view <suite>, cases <suite>, runs <suite>, run <suite>, record <suite> --from <file>, golden add|freeze",
+  ]);
+}
+
+// Shared tail for `evals run` / `evals record`: join adapter output to the
+// golden set, record it, apply the gate, print one report. `raw` is whatever
+// the runner or the vendor file produced.
+function ingestEvalRun(brain, name, loaded, raw, { adapter, dryRun, source }) {
+  const { suite, cases, runs } = loaded;
+  const adapted = adaptRunOutput(raw, adapter);
+  if (adapted.error)
+    opError(adapted.error, [
+      `source: ${source}`,
+      `Declared adapter is "${adapter}" — pass \`--adapter envelope\` if the file is already in brain's envelope shape`,
+      'Envelope shape: {"cases":[{"id":"...","output":"...","pass":true,"score":1}]}',
+    ]);
+
+  const { scored, unknown, summary } = scoreRun(cases, adapted.cases);
+  const prev = lastRun(runs);
+  const gate = gateVerdict(suite, summary, prev);
+  const ts = new Date().toISOString();
+
+  let recorded = null;
+  if (!dryRun) {
+    recorded = recordRun(brain, name, {
+      suite,
+      scored,
+      summary,
+      usage: adapted.usage,
+      ts,
+      branch: resolveBranch(brain, undefined),
+      commit: gitCommit(brain),
+      unknown,
+    });
+  }
+
+  const prevScore = runScore(prev);
+  const failing = scored.filter((s) => !s.pass);
+  print([
+    "run:",
+    kv("suite", name, 2),
+    kv("source", source, 2),
+    kv("result", `${summary.pass}/${summary.total} pass`, 2),
+    kv("score", formatScore(summary.score) || "(unknown)", 2),
+    kv(
+      "delta",
+      prevScore === null || prevScore === undefined || summary.score === null
+        ? "(no prior run)"
+        : `${summary.score >= prevScore ? "+" : ""}${(summary.score - prevScore).toFixed(3)}`,
+      2
+    ),
+    kv("gate", `${gate.status} — ${gate.reason}`, 2),
+    ...(adapted.usage ? [kv("usage", Object.entries(adapted.usage).filter(([, v]) => v !== undefined).map(([k, v]) => `${k}=${v}`).join(", "), 2)] : []),
+    ...(recorded ? [kv("recorded", path.join(relBrain(brain), "evals", name, recorded.run_file), 2)] : [kv("recorded", "no — --dry-run", 2)]),
+    ...(unknown.length ? [kv("unknown_case_ids", unknown.join(", "), 2)] : []),
+    ...(failing.length
+      ? toonTable(
+          "failing",
+          failing.map((f) => ({
+            id: f.id,
+            frozen: f.frozen ? "yes" : "",
+            notes: evalPreview(f.notes || f.output, 80),
+          })),
+          ["id", "frozen", "notes"]
+        )
+      : []),
+    ...toonList("help", [
+      ...(gate.status === "fail"
+        ? [
+            "Gate FAILED — a frozen case may never regress, whatever the aggregate did (`brain playbook ai` section 5)",
+            `Read the failures: \`brain evals view ${name}\``,
+          ]
+        : []),
+      ...(failing.length && gate.status !== "fail"
+        ? [`${failing.length} case(s) failing under the gate's tolerance — still worth reading: \`brain evals view ${name}\``]
+        : []),
+      `Fixed a failure? Encode it: \`brain evals golden freeze ${name} <case-id>\``,
+      `Checkpoint the delta: \`brain progress add --eval ${name} --summary "..."\``,
+    ]),
+  ]);
+  if (gate.status === "fail") process.exit(1);
+}
+
+// Short commit sha for a run record; empty when this is not a git repo (a
+// harness in a non-git directory still records runs, just without provenance).
+function gitCommit(brain) {
+  const res = spawnSync("git rev-parse --short HEAD", {
+    shell: true,
+    cwd: repoRoot(brain),
+    encoding: "utf8",
+  });
+  return res.status === 0 ? (res.stdout || "").trim() : "";
+}
+
+function cmdEvalsRun(argv) {
+  const spec = {
+    "--adapter": { value: true, desc: `override the suite's adapter (${EVAL_ADAPTERS.join("|")})` },
+    "--dry-run": { value: false, desc: "run and report, but do not record the run" },
+    "--timeout": { value: true, desc: "runner timeout in seconds (default: suite.timeout or 600)" },
+  };
+  const { flags, positionals } = parseArgs(argv, spec, "evals run");
+  if (flags.help)
+    helpBlock(
+      "evals run",
+      "Run a suite's declared runner, record the run, and apply the regression gate",
+      spec,
+      ["brain evals run skill-coverage", "brain evals run skill-coverage --dry-run"],
+      ["<suite> — suite name from `brain evals`"]
+    );
+  const brain = findBrain(flags.brain);
+  const name = positionals[0];
+  const loaded = requireSuite(brain, name);
+  const suite = loaded.suite;
+  const adapter = flags.adapter || suite.adapter;
+  if (!EVAL_ADAPTERS.includes(adapter))
+    usageError(`unknown adapter "${adapter}"`, [`valid adapters: ${EVAL_ADAPTERS.join(", ")}`]);
+  const timeoutSec = flags.timeout ? Number(flags.timeout) : suite.timeout || 600;
+  if (!Number.isFinite(timeoutSec) || timeoutSec <= 0)
+    usageError("--timeout must be a positive number of seconds", [`brain evals run ${name} --timeout 120`]);
+
+  const res = spawnSync(suite.runner, {
+    shell: true,
+    cwd: repoRoot(brain),
+    timeout: timeoutSec * 1000,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  if (res.error && res.error.code === "ETIMEDOUT")
+    opError(`runner timed out after ${timeoutSec}s`, [`runner: ${suite.runner}`, `Raise it: \`brain evals run ${name} --timeout ${timeoutSec * 2}\``]);
+  if (res.status !== 0)
+    opError(`runner exited ${res.status}`, [
+      `runner: ${suite.runner}`,
+      ...tailLines(res.stderr || res.stdout || "", 10).map((l) => `stderr: ${l}`),
+      "Nothing was recorded — a half-run is not evidence",
+    ]);
+
+  ingestEvalRun(brain, name, loaded, res.stdout || "", {
+    adapter,
+    dryRun: !!flags["dry-run"],
+    source: suite.runner,
+  });
+}
+
+function cmdEvalsRecord(argv) {
+  const spec = {
+    "--from": { value: true, desc: "path to a result file the runner already produced (required)" },
+    "--adapter": { value: true, desc: `how to read it (${EVAL_ADAPTERS.join("|")}, default: the suite's)` },
+    "--dry-run": { value: false, desc: "report, but do not record the run" },
+  };
+  const { flags, positionals } = parseArgs(argv, spec, "evals record");
+  if (flags.help)
+    helpBlock(
+      "evals record",
+      "Record a run produced elsewhere (promptfoo output, a python harness, an agent-scored pass)",
+      spec,
+      [
+        "brain evals record summarizer --from out.json --adapter promptfoo",
+        "brain evals record summarizer --from agent-run.json",
+      ],
+      ["<suite> — suite name from `brain evals`"]
+    );
+  const brain = findBrain(flags.brain);
+  const name = positionals[0];
+  const loaded = requireSuite(brain, name);
+  if (!flags.from) usageError("--from is required", [`brain evals record ${name} --from <file>`]);
+  const file = path.resolve(flags.from);
+  if (!fs.existsSync(file)) opError(`no such file: ${flags.from}`, ["Pass the path to the result file your runner wrote"]);
+  const adapter = flags.adapter || loaded.suite.adapter;
+  if (!EVAL_ADAPTERS.includes(adapter))
+    usageError(`unknown adapter "${adapter}"`, [`valid adapters: ${EVAL_ADAPTERS.join(", ")}`]);
+
+  ingestEvalRun(brain, name, loaded, fs.readFileSync(file, "utf8"), {
+    adapter,
+    dryRun: !!flags["dry-run"],
+    source: path.relative(process.cwd(), file),
+  });
+}
+
+function cmdEvalsGolden(argv) {
+  const sub = argv[0] && !argv[0].startsWith("--") ? argv[0] : null;
+  const rest = argv.slice(1);
+
+  if (sub === "add") {
+    const spec = {
+      "--id": { value: true, desc: "case id, unique within the suite (required)" },
+      "--input": { value: true, desc: "the case input (required)" },
+      "--expected": { value: true, desc: "assertion describing a correct answer" },
+      "--frozen": { value: false, desc: "mark as a frozen regression case — may never regress" },
+      "--origin": { value: true, desc: `where it came from (${CASE_ORIGINS.join("|")}, default: regression)` },
+      "--tag": { value: true, desc: "comma-separated tags" },
+      "--note": { value: true, desc: "why this case exists" },
+    };
+    const { flags, positionals } = parseArgs(rest, spec, "evals golden add");
+    if (flags.help)
+      helpBlock(
+        "evals golden add",
+        "Add a case to a suite's golden set — the move after fixing an AI bug",
+        spec,
+        ['brain evals golden add summarizer --id inv-date --input "..." --expected "does not invent a date" --frozen'],
+        ["<suite> — suite name from `brain evals`"]
+      );
+    const brain = findBrain(flags.brain);
+    const name = positionals[0];
+    requireSuite(brain, name);
+    if (!flags.id) usageError("--id is required", [`brain evals golden add ${name} --id <case-id> --input "..."`]);
+    if (flags.input === undefined)
+      usageError("--input is required", [`brain evals golden add ${name} --id ${flags.id} --input "..."`]);
+    const origin = flags.origin || "regression";
+    if (!CASE_ORIGINS.includes(origin))
+      usageError(`--origin must be one of ${CASE_ORIGINS.join("|")}`, [`brain evals golden add ${name} --origin regression`]);
+    const entry = {
+      id: flags.id,
+      input: flags.input,
+      ...(flags.expected !== undefined ? { expected: flags.expected } : {}),
+      tags: flags.tag ? flags.tag.split(",").map((t) => t.trim()).filter(Boolean) : [],
+      frozen: !!flags.frozen,
+      origin,
+      ...(flags.note ? { note: flags.note } : {}),
+    };
+    const { error } = appendCase(brain, name, entry);
+    if (error) opError(error, [`Run \`brain evals cases ${name}\` to see existing ids`]);
+    print([
+      "case:",
+      kv("suite", name, 2),
+      kv("id", entry.id, 2),
+      kv("frozen", String(entry.frozen), 2),
+      kv("origin", entry.origin, 2),
+      ...toonList("help", [
+        ...(entry.frozen ? [] : ["A case encoding a fixed bug should be frozen — re-add with --frozen, or `brain evals golden freeze`"]),
+        `Run \`brain evals run ${name}\` to score it`,
+      ]),
+    ]);
+    return;
+  }
+
+  if (sub === "freeze" || sub === "unfreeze") {
+    const { flags, positionals } = parseArgs(rest, {}, `evals golden ${sub}`);
+    if (flags.help)
+      helpBlock(
+        `evals golden ${sub}`,
+        sub === "freeze"
+          ? "Mark an existing case as a frozen regression case (may never regress)"
+          : "Un-freeze a case — only when the expectation itself was wrong",
+        {},
+        [`brain evals golden ${sub} skill-coverage cmd-features`],
+        ["<suite> — suite name", "<case-id> — case id from `brain evals cases <suite>`"]
+      );
+    const brain = findBrain(flags.brain);
+    const name = positionals[0];
+    const id = positionals[1];
+    requireSuite(brain, name);
+    if (!id) usageError("missing required argument <case-id>", [`brain evals golden ${sub} ${name} <case-id>`]);
+    const { error, entry } = freezeCase(brain, name, id, sub === "freeze");
+    if (error) opError(error, [`Run \`brain evals cases ${name}\` to see existing ids`]);
+    print([
+      "case:",
+      kv("suite", name, 2),
+      kv("id", entry.id, 2),
+      kv("frozen", String(entry.frozen), 2),
+      ...toonList("help", [
+        sub === "freeze"
+          ? "Frozen cases are absolute — the gate fails on any regression here regardless of the aggregate"
+          : "Un-freezing removes a hard guarantee — say why in the case's note",
+      ]),
+    ]);
+    return;
+  }
+
+  usageError(`unknown subcommand \`evals golden ${sub || ""}\``.trim(), [
+    "valid subcommands: add <suite> --id ... --input ..., freeze <suite> <case-id>, unfreeze <suite> <case-id>",
   ]);
 }
 
@@ -2280,6 +2981,32 @@ function initSectionIndexMd(title, body, cliSection) {
   return [`# ${title}`, "", `${body} Run \`brain docs ${cliSection}\` for the live list.`, ""].join("\n");
 }
 
+// Evals are optional per repo, so init scaffolds only the index that explains
+// the shape — never an empty suite directory that would list as a broken suite.
+function initEvalsIndexMd() {
+  return [
+    "# Evals",
+    "",
+    "One directory per eval suite — the golden set and run history for anything whose output comes from a model.",
+    "",
+    "```",
+    "evals/<suite>/",
+    "  suite.json      kind, runner, adapter, thresholds, prompt pointers",
+    "  cases.jsonl     the golden set — one JSON object per line",
+    "  runs.jsonl      run history summaries (committed)",
+    "  runs/<ts>.json  full per-case results for one run",
+    "  feedback/<date>.md   human review notes on prompts + outputs",
+    "```",
+    "",
+    `suite.json shape: \`${SUITE_SNIPPET}\``,
+    "",
+    "A case is `{id, input, expected, tags[], frozen, origin, note}`. `frozen: true` means the case may never regress at any aggregate score — that is the gate.",
+    "",
+    "Run `brain evals` for the live list and `brain playbook ai` for the standard: how to build the golden set, which eval kind to use, and the change loop (baseline → one change → re-run → compare per-case).",
+    "",
+  ].join("\n");
+}
+
 function initVerifyJson() {
   const doc = {
     version: 1,
@@ -2444,6 +3171,7 @@ async function initAsync(root, brainDir, flags) {
     path.join(brainDir, DOC_SECTIONS.architecture, "index.md"),
     initSectionIndexMd("High-level architecture", "Add macro-view docs here — how the major pieces fit together.", "architecture")
   );
+  writeInitFile(created, root, path.join(evalsDir(brainDir), "index.md"), initEvalsIndexMd());
   writeInitFile(created, root, verifyConfigPath(brainDir), initVerifyJson());
   writeInitFile(created, root, path.join(brainDir, "CHANGELOG.md"), initChangelogMd(today));
 
@@ -2671,10 +3399,11 @@ All commands print TOON-structured output. Run from anywhere inside the repo; th
 
 ## Playbooks (\`brain playbook <id>\`)
 
-Five standing playbooks — each a full text standard printed by \`brain playbook <id>\`, meant to be followed step by step while doing the thing it names:
+Six standing playbooks — each a full text standard printed by \`brain playbook <id>\`, meant to be followed step by step while doing the thing it names:
 
 - \`start\` — starting any non-trivial task — frame it, read the brain, baseline, open state
 - \`plan\` — writing any plan/proposal/design artifact for human review
+- \`ai\` — any work involving prompts, models, or agents — evals, golden sets, regression gates, topology
 - \`verify\` — verifying a user-visible feature works — browser walk with screenshot evidence
 - \`execute\` — implementing an approved plan / working a feature to shipped
 - \`done\` — before declaring any task complete — full verify, harness invariants, coherence
@@ -2736,6 +3465,9 @@ of \`bootstrap|baseline|verify\`), optional \`timeout\` in seconds (default 300)
   lines of combined output) for every non-pass check. Exits 1 if any executed
   check fails or times out; exits 0 (no-op) if zero checks match the stage.
 - \`brain verify --stage bootstrap|baseline|verify\` — run a different stage.
+- \`brain verify --stage evals\` — the AI gate: runs the eval suites in
+  \`.brain/evals/\`, not verify.json checks (\`evals\` is NOT a legal stage inside
+  verify.json). Opt-in only — see the AI-work section below.
 - \`brain verify --only <name>\` — run just one check by name; wins over \`--stage\`.
 - \`brain verify --feature <slug>\` — also appends the results verbatim as a
   run-note step under that feature (same write path as \`runs append\`).
@@ -2816,6 +3548,54 @@ without rolling back the ship). \`runs/progress.md\` stays a rolling cursor;
 - After opening a PR, record it: \`npx -y brain-axi pr <slug> --url <pr-url>\`
   — this is the dashboard's terminal state (approval → execution → PR).
 
+## AI work — prompts, models, agents
+
+Run \`npx -y brain-axi playbook ai\` and follow it whenever the work involves a
+prompt, a model call, a chain, retrieval, or an agent — it is additive to
+start/execute/done, not a replacement. Short version: write the prompt contract
+(job, inputs, output shape, known failure modes, model + settings pin) → build a
+golden set in \`.brain/evals/<suite>/\` (min ~20 cases, real before synthetic, four
+coverage bands — typical / edge / adversarial / refusal-correct, a held-out slice
+you never tune against) → score with the cheapest kind that discriminates
+(deterministic assertions before rubric+judge before human) → baseline, change ONE
+thing, re-run, compare per-case → record the real numbers via \`brain runs append\`
+and carry the delta into \`brain progress add\`.
+
+Non-negotiables: every bug you fix becomes a frozen regression case in the same
+session; a failing frozen case blocks the change no matter what the aggregate did;
+a model/settings change is a prompt change (re-run the suite); prompts and eval
+outputs get reviewed by a human, and unreviewed feedback blocks "done". Plans for
+AI work carry section 13 of \`playbook plan\` (prompt contract, eval plan + golden
+set, regression gate, agent topology).
+
+Suites live in \`.brain/evals/<suite>/\` (\`suite.json\` + \`cases.jsonl\` + committed
+run history). Commands:
+
+- \`brain evals\` — every suite: cases, frozen count, last run, score, state
+  (\`never-run\` | \`stale\` | \`regressed\` | \`ok\`). \`stale\` means a prompt the suite
+  points at changed after the last run — the number on screen no longer describes
+  the prompt on disk.
+- \`brain evals view <suite>\` — config, coverage by origin/tag, thresholds, last
+  run + delta + cost, failing case ids. \`brain evals cases <suite>\`
+  (\`--frozen\`, \`--origin\`, \`--tag\`) reads the golden set; \`brain evals runs
+  <suite>\` is the history.
+- \`brain evals run <suite>\` — runs the suite's declared runner (a shell command
+  in \`suite.json\`; brain never calls a model itself), records the run, applies the
+  gate, exits 1 when it fails. \`--dry-run\` to skip recording.
+- \`brain evals record <suite> --from <file> [--adapter promptfoo]\` — record a run
+  produced elsewhere (promptfoo output, a python harness, an agent-scored pass).
+  Runner/adapter contract: one JSON envelope,
+  \`{"cases":[{"id":"...","output":"...","pass":true,"score":1}],"usage":{...}}\`.
+- \`brain evals golden add <suite> --id <id> --input "..." --frozen\` — add a case;
+  \`brain evals golden freeze <suite> <case-id>\` — flip an existing case to frozen.
+  This is the move right after fixing an AI bug, in the same session.
+- \`brain verify --stage evals\` — runs every suite through the gate. Opt-in by
+  design: it never rides along on an ordinary \`brain verify\`, because model calls
+  cost money and time.
+- \`brain progress add --eval <suite> --summary "..."\` — stamps the checkpoint with
+  the suite's real last-run score and delta, read from the run record (never a
+  number you typed from memory).
+
 ## Before declaring any task complete
 
 Run \`npx -y brain-axi playbook done\` and follow it before saying a task is
@@ -2838,7 +3618,8 @@ in order, in the current turn:
    in-progress feature, relevant rules).
 2. **Run \`npx -y brain-axi playbook plan\` and follow it** to write the plan as ONE
    standalone HTML file (inline CSS, system fonts, no build step — it must render
-   opened directly). The playbook covers the 11-section structure, decision cards,
+   opened directly). The playbook covers the 12-section structure (plus section 13,
+   the AI addendum, required when the plan touches prompts/models/agents), decision cards,
    and diagram options (a CDN-based Mermaid snippet that degrades to readable text
    offline, or hand-rolled inline SVG for zero network dependency). Any path works;
    \`<repo>/plans/<topic>.html\` is a good default.
@@ -2868,6 +3649,19 @@ Rules:
 - \`npx -y brain-axi shots add <img> --feature <slug> --step <NN-name>\` — attach a screenshot to a feature (\`--scope <plan-or-feature>\` is the legacy form)
 - \`npx -y brain-axi plans\` / \`plans view <slug>\` — see past plan artifacts and their review rounds
 - \`npx -y brain-axi timeline\` — merged history across checkpoints, run notes, plan reviews, and verifications
+
+## Install & session hooks (run once per repo)
+
+- \`brain setup --app claude|codex|opencode\` — installs a SessionStart hook so the
+  agent gets brain context automatically at the start of every session.
+  Idempotent: re-running repairs stale paths and JSON-merges into existing
+  settings without clobbering them.
+- \`brain context\` — what that hook runs: a compact orientation block (features,
+  latest checkpoint, open sessions). Silent no-op outside a repo with a
+  \`.brain/\`, so it is safe to wire unconditionally.
+- \`brain skill --write\` — regenerate this skill file after changing the CLI;
+  \`brain skill --check\` exits 1 when it has drifted (wire it into CI, or into
+  \`.brain/verify.json\` as a check).
 
 Every command supports \`--help\`. Errors print an \`error:\` line plus a \`help:\` line with the corrected command.
 `;
@@ -2925,6 +3719,7 @@ const COMMANDS = {
   progress: cmdProgress,
   runs: cmdRuns,
   docs: cmdDocs,
+  evals: cmdEvals,
   search: cmdSearch,
   context: cmdContext,
   setup: cmdSetup,

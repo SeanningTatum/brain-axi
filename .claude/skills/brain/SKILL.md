@@ -9,10 +9,11 @@ All commands print TOON-structured output. Run from anywhere inside the repo; th
 
 ## Playbooks (`brain playbook <id>`)
 
-Five standing playbooks — each a full text standard printed by `brain playbook <id>`, meant to be followed step by step while doing the thing it names:
+Six standing playbooks — each a full text standard printed by `brain playbook <id>`, meant to be followed step by step while doing the thing it names:
 
 - `start` — starting any non-trivial task — frame it, read the brain, baseline, open state
 - `plan` — writing any plan/proposal/design artifact for human review
+- `ai` — any work involving prompts, models, or agents — evals, golden sets, regression gates, topology
 - `verify` — verifying a user-visible feature works — browser walk with screenshot evidence
 - `execute` — implementing an approved plan / working a feature to shipped
 - `done` — before declaring any task complete — full verify, harness invariants, coherence
@@ -74,6 +75,9 @@ of `bootstrap|baseline|verify`), optional `timeout` in seconds (default 300).
   lines of combined output) for every non-pass check. Exits 1 if any executed
   check fails or times out; exits 0 (no-op) if zero checks match the stage.
 - `brain verify --stage bootstrap|baseline|verify` — run a different stage.
+- `brain verify --stage evals` — the AI gate: runs the eval suites in
+  `.brain/evals/`, not verify.json checks (`evals` is NOT a legal stage inside
+  verify.json). Opt-in only — see the AI-work section below.
 - `brain verify --only <name>` — run just one check by name; wins over `--stage`.
 - `brain verify --feature <slug>` — also appends the results verbatim as a
   run-note step under that feature (same write path as `runs append`).
@@ -154,6 +158,54 @@ without rolling back the ship). `runs/progress.md` stays a rolling cursor;
 - After opening a PR, record it: `npx -y brain-axi pr <slug> --url <pr-url>`
   — this is the dashboard's terminal state (approval → execution → PR).
 
+## AI work — prompts, models, agents
+
+Run `npx -y brain-axi playbook ai` and follow it whenever the work involves a
+prompt, a model call, a chain, retrieval, or an agent — it is additive to
+start/execute/done, not a replacement. Short version: write the prompt contract
+(job, inputs, output shape, known failure modes, model + settings pin) → build a
+golden set in `.brain/evals/<suite>/` (min ~20 cases, real before synthetic, four
+coverage bands — typical / edge / adversarial / refusal-correct, a held-out slice
+you never tune against) → score with the cheapest kind that discriminates
+(deterministic assertions before rubric+judge before human) → baseline, change ONE
+thing, re-run, compare per-case → record the real numbers via `brain runs append`
+and carry the delta into `brain progress add`.
+
+Non-negotiables: every bug you fix becomes a frozen regression case in the same
+session; a failing frozen case blocks the change no matter what the aggregate did;
+a model/settings change is a prompt change (re-run the suite); prompts and eval
+outputs get reviewed by a human, and unreviewed feedback blocks "done". Plans for
+AI work carry section 13 of `playbook plan` (prompt contract, eval plan + golden
+set, regression gate, agent topology).
+
+Suites live in `.brain/evals/<suite>/` (`suite.json` + `cases.jsonl` + committed
+run history). Commands:
+
+- `brain evals` — every suite: cases, frozen count, last run, score, state
+  (`never-run` | `stale` | `regressed` | `ok`). `stale` means a prompt the suite
+  points at changed after the last run — the number on screen no longer describes
+  the prompt on disk.
+- `brain evals view <suite>` — config, coverage by origin/tag, thresholds, last
+  run + delta + cost, failing case ids. `brain evals cases <suite>`
+  (`--frozen`, `--origin`, `--tag`) reads the golden set; `brain evals runs
+  <suite>` is the history.
+- `brain evals run <suite>` — runs the suite's declared runner (a shell command
+  in `suite.json`; brain never calls a model itself), records the run, applies the
+  gate, exits 1 when it fails. `--dry-run` to skip recording.
+- `brain evals record <suite> --from <file> [--adapter promptfoo]` — record a run
+  produced elsewhere (promptfoo output, a python harness, an agent-scored pass).
+  Runner/adapter contract: one JSON envelope,
+  `{"cases":[{"id":"...","output":"...","pass":true,"score":1}],"usage":{...}}`.
+- `brain evals golden add <suite> --id <id> --input "..." --frozen` — add a case;
+  `brain evals golden freeze <suite> <case-id>` — flip an existing case to frozen.
+  This is the move right after fixing an AI bug, in the same session.
+- `brain verify --stage evals` — runs every suite through the gate. Opt-in by
+  design: it never rides along on an ordinary `brain verify`, because model calls
+  cost money and time.
+- `brain progress add --eval <suite> --summary "..."` — stamps the checkpoint with
+  the suite's real last-run score and delta, read from the run record (never a
+  number you typed from memory).
+
 ## Before declaring any task complete
 
 Run `npx -y brain-axi playbook done` and follow it before saying a task is
@@ -176,7 +228,8 @@ in order, in the current turn:
    in-progress feature, relevant rules).
 2. **Run `npx -y brain-axi playbook plan` and follow it** to write the plan as ONE
    standalone HTML file (inline CSS, system fonts, no build step — it must render
-   opened directly). The playbook covers the 11-section structure, decision cards,
+   opened directly). The playbook covers the 12-section structure (plus section 13,
+   the AI addendum, required when the plan touches prompts/models/agents), decision cards,
    and diagram options (a CDN-based Mermaid snippet that degrades to readable text
    offline, or hand-rolled inline SVG for zero network dependency). Any path works;
    `<repo>/plans/<topic>.html` is a good default.
@@ -206,5 +259,18 @@ Rules:
 - `npx -y brain-axi shots add <img> --feature <slug> --step <NN-name>` — attach a screenshot to a feature (`--scope <plan-or-feature>` is the legacy form)
 - `npx -y brain-axi plans` / `plans view <slug>` — see past plan artifacts and their review rounds
 - `npx -y brain-axi timeline` — merged history across checkpoints, run notes, plan reviews, and verifications
+
+## Install & session hooks (run once per repo)
+
+- `brain setup --app claude|codex|opencode` — installs a SessionStart hook so the
+  agent gets brain context automatically at the start of every session.
+  Idempotent: re-running repairs stale paths and JSON-merges into existing
+  settings without clobbering them.
+- `brain context` — what that hook runs: a compact orientation block (features,
+  latest checkpoint, open sessions). Silent no-op outside a repo with a
+  `.brain/`, so it is safe to wire unconditionally.
+- `brain skill --write` — regenerate this skill file after changing the CLI;
+  `brain skill --check` exits 1 when it has drifted (wire it into CI, or into
+  `.brain/verify.json` as a check).
 
 Every command supports `--help`. Errors print an `error:` line plus a `help:` line with the corrected command.
