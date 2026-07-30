@@ -3435,10 +3435,12 @@ All commands print TOON-structured output. Run from anywhere inside the repo; th
 
 ## Playbooks (\`brain playbook <id>\`)
 
-Six standing playbooks — each a full text standard printed by \`brain playbook <id>\`, meant to be followed step by step while doing the thing it names:
+Eight standing playbooks — each a full text standard printed by \`brain playbook <id>\`, meant to be followed step by step while doing the thing it names:
 
 - \`start\` — starting any non-trivial task — frame it, read the brain, baseline, open state
 - \`plan\` — writing any plan/proposal/design artifact for human review
+- \`product\` — any plan for user-facing work — the product case before the technical one
+- \`ux\` — any plan that adds or changes a screen — wireframes, screen states, user flows
 - \`ai\` — any work involving prompts, models, or agents — evals, golden sets, regression gates, topology
 - \`verify\` — verifying a user-visible feature works — browser walk with screenshot evidence
 - \`execute\` — implementing an approved plan / working a feature to shipped
@@ -3473,6 +3475,8 @@ Run \`brain playbook\` for the live id/use_when index; \`brain playbook <id>\` f
 - \`brain features view <slug>\` — tracker fields + feature doc
 - \`brain runs view <name>\` — deep per-task state (baselines, dead ends, decisions)
 - \`npx -y brain-axi playbook plan\` — the plan artifact standard (structure, decision cards, diagrams)
+- \`npx -y brain-axi playbook product\` — the product case: problem + evidence, user + job, success metric, non-goals, scope tiers, prior art, product decision cards (plan sections 3 and 7)
+- \`npx -y brain-axi playbook ux\` — wireframes, screen-state matrix, user-journey flow, layout variant cards (plan section 6)
 
 ## Record state (end of task / checkpoint)
 
@@ -3601,7 +3605,7 @@ Non-negotiables: every bug you fix becomes a frozen regression case in the same
 session; a failing frozen case blocks the change no matter what the aggregate did;
 a model/settings change is a prompt change (re-run the suite); prompts and eval
 outputs get reviewed by a human, and unreviewed feedback blocks "done". Plans for
-AI work carry section 13 of \`playbook plan\` (prompt contract, eval plan + golden
+AI work carry section 16 of \`playbook plan\` (prompt contract, eval plan + golden
 set, regression gate, agent topology).
 
 Suites live in \`.brain/evals/<suite>/\` (\`suite.json\` + \`cases.jsonl\` + committed
@@ -3654,11 +3658,16 @@ in order, in the current turn:
    in-progress feature, relevant rules).
 2. **Run \`npx -y brain-axi playbook plan\` and follow it** to write the plan as ONE
    standalone HTML file (inline CSS, system fonts, no build step — it must render
-   opened directly). The playbook covers the 12-section structure (plus section 13,
-   the AI addendum, required when the plan touches prompts/models/agents), decision cards,
+   opened directly). The playbook covers the 17-section structure (0-16), decision cards,
    and diagram options (a CDN-based Mermaid snippet that degrades to readable text
    offline, or hand-rolled inline SVG for zero network dependency). Any path works;
    \`<repo>/plans/<topic>.html\` is a good default.
+   Four of those sections are conditional, and each names the playbook that owns it —
+   read that playbook BEFORE writing the section, not after: sections 3 + 7
+   (product brief, product decisions) fire on any user-facing change →
+   \`playbook product\`; section 6 (UI mockups + UX flows) fires when a screen changes →
+   \`playbook ux\`; section 16 (AI addendum) fires on prompts/models/agents →
+   \`playbook ai\`. Skip a conditional section when it does not apply.
 3. **\`npx -y brain-axi review <plan.html>\`** — this pops the review UI in the user's
    browser. The UI shows your plan beside brain memory panels (past plans, timeline,
    screenshots), so the human reviews with full context.
