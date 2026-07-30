@@ -21,6 +21,13 @@
 
 ---
 
+## 2026-07-30 — shipped planning-ux: Verification PASS 2026-07-30 (features/planning-ux/verifications/2026-07-30.md): browser walk of the reconciled planning
+- branch: `chore/ship-planning-ux`
+- in-progress feature: none
+- run note: none
+
+---
+
 ## 2026-07-30 — PR #15: README Who-this-is-for + mermaid flow diagram — https://github.com/SeanningTatum/brain-axi/pull/15
 - branch: `docs/who-its-for`
 - in-progress feature: none

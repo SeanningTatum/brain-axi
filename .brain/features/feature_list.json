@@ -106,8 +106,8 @@
         "brain-review",
         "ai-work"
       ],
-      "status": "planned",
-      "evidence": "",
+      "status": "shipped",
+      "evidence": "Verification PASS 2026-07-30 (features/planning-ux/verifications/2026-07-30.md): browser walk of the reconciled planning UI — wireframes render, annotate + decision round-trip, E1 offline mermaid fallback, E2 offline queue; 4 screenshots captured. PR #13 squash-merged to main 2026-07-30 (523c55c). verify 3/3 pass (skill-sync, harness, playbook-refs).",
       "owners": [
         "sean"
       ]
