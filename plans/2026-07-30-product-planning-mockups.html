@@ -1,0 +1,818 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Product-grade planning — mockups, UX flows, and a product-expert planner</title>
+<style>
+  :root {
+    --bg: #faf9f5; --surface: #ffffff; --fg: #141413; --fg-secondary: #3d3d3a;
+    --muted: #73726c; --border: #dedcd1; --highlight: #fff7ca; --accent: #d97757;
+    --space-2: 8px; --space-3: 16px; --space-4: 24px; --space-6: 40px;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+      Helvetica, Arial, sans-serif;
+    font-size: 16px; background: var(--bg); color: var(--fg); line-height: 1.6;
+    max-width: 72ch; margin: 0 auto; padding: var(--space-6) var(--space-4);
+  }
+  h1, h2, h3 {
+    font-family: Charter, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    font-weight: 600; line-height: 1.25; color: var(--fg);
+  }
+  h1 { font-size: 1.75em; }
+  h2 { font-size: 1.3em; font-weight: 500; margin-top: var(--space-6);
+    border-bottom: 1px solid var(--border); padding-bottom: var(--space-2); }
+  h3 { font-size: 1.05em; font-weight: 500; }
+  p, li { color: var(--fg-secondary); }
+  mark, .highlight { background: var(--highlight); color: var(--fg); padding: 0 2px; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 4px;
+    padding: 0 4px; }
+  .chip { display: inline-block; padding: 2px 10px; border-radius: 999px;
+    font-size: 0.8em; font-weight: 600; border: 1px solid var(--border); }
+  .chip-status-draft { background: var(--surface); color: var(--muted); }
+  .chip-status-in-review { background: var(--highlight); color: var(--fg);
+    border-color: var(--highlight); }
+  .chip-status-reviewed { background: var(--fg); color: #fff; border-color: var(--fg); }
+  .chip-high { color: var(--accent); border-color: var(--accent); }
+  .chip-med { color: var(--fg-secondary); }
+  .chip-low { color: var(--muted); }
+  .decision-card { background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: var(--space-4); margin: var(--space-4) 0; }
+  table { width: 100%; border-collapse: collapse; margin: var(--space-3) 0;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    overflow: hidden; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid
+    var(--border); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  .tag-recommended { color: var(--accent); font-weight: 600; }
+  .btn-queue, .btn-approve, .btn-request-changes {
+    border: none; border-radius: 10px; padding: 8px 16px; font-weight: 600;
+    cursor: pointer; font-size: 0.95em;
+  }
+  .btn-queue, .btn-approve { background: var(--fg); color: #fff; }
+  .btn-request-changes { background: transparent; color: var(--fg);
+    border: 1px solid var(--border); }
+  .queue-ack { margin-left: var(--space-3); font-size: 0.9em; color: var(--muted); }
+  .checklist { list-style: none; padding: 0; }
+  .checklist li { margin: var(--space-2) 0; }
+  pre.mermaid { text-align: center; }
+  pre.mermaid svg { display: block; margin: 0 auto; }
+
+  /* editable-list controls */
+  .item-x, .item-restore, .list-add-btn { cursor: pointer; border: 1px solid var(--border);
+    background: var(--surface); border-radius: 6px; font-size: 0.85em; padding: 1px 8px;
+    color: var(--fg-secondary); }
+  [data-item-text] { cursor: text; }
+  .item-removed { opacity: 0.5; }
+  .item-removed [data-item-text] { text-decoration: line-through; }
+  .item-edited [data-item-text] { border-bottom: 2px dotted var(--accent); }
+  .item-badge { font-size: 0.75em; color: var(--muted); margin-left: 6px; font-style: italic; }
+  .item-badge-proposed { color: var(--accent); }
+  .item-proposed { border-left: 2px dashed var(--accent); padding-left: 6px; }
+  .list-add-row { display: flex; gap: 8px; margin-top: var(--space-2); }
+  .list-add-input { flex: 1; padding: 6px 10px; border: 1px solid var(--border);
+    border-radius: 6px; background: var(--surface); color: var(--fg); }
+
+  /* ---- PROPOSED WIREFRAME KIT (this plan proposes shipping these classes
+     inside the plan playbook's shared style block; the mockups below are a
+     live demo of the kit, not decoration) ---- */
+  .wf-screens { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: var(--space-3); margin: var(--space-3) 0; }
+  .wf { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    overflow: hidden; font-size: 0.85em; }
+  .wf-bar { display: flex; align-items: center; gap: 6px; padding: 6px 10px;
+    border-bottom: 1px solid var(--border); color: var(--muted); }
+  .wf-dot { width: 8px; height: 8px; border-radius: 50%; border: 1px solid var(--border); }
+  .wf-body { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .wf-row { display: flex; gap: 8px; align-items: center; }
+  .wf-col { display: flex; flex-direction: column; gap: 8px; flex: 1; }
+  .wf-block { background: #f1efe7; border-radius: 6px; height: 44px; }
+  .wf-block.tall { height: 88px; }
+  .wf-line { background: #e8e6dc; border-radius: 3px; height: 8px; }
+  .wf-line.short { width: 40%; }
+  .wf-line.med { width: 65%; }
+  .wf-btn { display: inline-block; border: 1px solid var(--fg-secondary); border-radius: 6px;
+    padding: 3px 12px; font-size: 0.9em; color: var(--fg); }
+  .wf-btn.primary { background: var(--fg); color: #fff; border-color: var(--fg); }
+  .wf-input { border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px;
+    color: var(--muted); flex: 1; }
+  .wf-label { font-size: 0.8em; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.04em; }
+  .wf-caption { font-size: 0.85em; color: var(--muted); padding: 6px 12px 10px; }
+  .wf-note { border-left: 2px solid var(--accent); padding-left: 10px; font-size: 0.9em;
+    color: var(--muted); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Product-grade planning — mockups, UX flows, and a product-expert planner</h1>
+  <div>
+    <span>2026-07-30</span> ·
+    <span>feature: planning-ux (proposed)</span> ·
+    <span class="chip chip-status-draft">draft</span> ·
+    <span>round 0</span>
+  </div>
+</header>
+
+<section id="tldr">
+  <h2>TL;DR</h2>
+  <p>Plans today are engineering-shaped: architecture, phases, files, tests. Two things
+  are missing before a human can actually approve one — <mark>what the thing looks
+  like</mark> (screens, states, the flow between them) and <mark>why this is the right
+  product bet</mark> (who it's for, what success is, what we're deliberately not
+  building). This adds both to the planning surface: a wireframe + UX-flow section in
+  the plan artifact, and a standing <code>product</code> playbook that makes the planner
+  argue like a product lead — surfacing decisions with a recommendation and a rationale
+  instead of asking the human to invent the options.</p>
+</section>
+
+<section id="context">
+  <h2>Context</h2>
+  <p>Six playbooks exist today (<code>start</code>, <code>plan</code>, <code>ai</code>,
+  <code>verify</code>, <code>execute</code>, <code>done</code>), all printed verbatim by
+  <code>brain playbook &lt;id&gt;</code> from <code>lib/review/playbooks.js</code> (1,943
+  lines). The <code>plan</code> playbook is 12 sections + an AI addendum (§13). None of
+  the 13 mention UI, screens, states, users, or success metrics — the closest is §9
+  "golden path", which is a request sequence diagram, not a user journey.</p>
+  <p>Prior art in this repo that this builds on, not around: plan
+  <code>2026-07-16-shot-carousel-annotation</code> (reviewed, 1 round) shipped the
+  screenshot carousel; commit <code>bc63b0b</code> shipped <mark>pin-drop annotation on
+  artifact reference images</mark> — so a reviewer can already drop numbered pins with
+  notes onto an image inside a plan. The <code>ai</code> playbook (feature
+  <code>ai-work</code>, in-progress per the 2026-07-29 checkpoint) established the
+  precedent this follows exactly: <em>a new standing playbook + conditional branches
+  folded into the existing bookends + skill regeneration + eval cases</em>.</p>
+  <p>Blocking constraint: <code>feat-006 ai-work</code> is <strong>in-progress</strong>
+  and <code>policy.one_in_progress_at_a_time</code> is enforced by
+  <code>brain check</code>. This feature cannot be claimed until ai-work Phase 4 ships.
+  See §Error paths.</p>
+</section>
+
+<section id="big-picture">
+  <h2>Big picture</h2>
+  <p>Where the two new surfaces sit in the existing loop. Everything in
+  <strong>bold</strong> is new.</p>
+  <pre class="mermaid">
+flowchart TD
+  U[User asks for a plan] --> S["brain playbook start"]
+  S --> P["brain playbook plan"]
+  P --> PR["<b>brain playbook product</b><br/>problem, users, metrics, non-goals, scope tiers"]
+  P --> UX["<b>brain playbook ux</b><br/>wireframe kit, screen states, flow diagram"]
+  PR --> A[Plan artifact HTML]
+  UX --> A
+  A --> R["brain review"]
+  R --> H{Human clicks}
+  H -->|product decisions| A
+  H -->|pins on mockups| A
+  H -->|approve| E["brain playbook execute"]
+  E --> V["brain playbook verify<br/><b>shipped UI vs approved mockup</b>"]
+  V --> D["brain playbook done"]
+  </pre>
+</section>
+
+<section id="mockup-demo">
+  <h2>What the new UX section looks like (live demo)</h2>
+  <p>This is the proposal rendering itself: the block below is exactly what
+  <code>playbook ux</code> would teach an agent to emit — pure HTML/CSS wireframes,
+  no images, no network, annotatable by clicking any element in review mode.</p>
+
+  <h3>Screens</h3>
+  <div class="wf-screens">
+    <div class="wf">
+      <div class="wf-bar"><span class="wf-dot"></span><span class="wf-dot"></span>
+        <span>Plan artifact — UX section</span></div>
+      <div class="wf-body">
+        <div class="wf-label">Screen 1 · default</div>
+        <div class="wf-line med"></div>
+        <div class="wf-block"></div>
+        <div class="wf-row"><span class="wf-btn primary">Approve UI</span>
+          <span class="wf-btn">Request changes</span></div>
+      </div>
+      <div class="wf-caption">Default state — reviewer sees the screen as proposed.</div>
+    </div>
+    <div class="wf">
+      <div class="wf-bar"><span class="wf-dot"></span><span class="wf-dot"></span>
+        <span>Plan artifact — UX section</span></div>
+      <div class="wf-body">
+        <div class="wf-label">Screen 1 · empty</div>
+        <div class="wf-line short"></div>
+        <div class="wf-block tall"></div>
+        <div class="wf-row"><span class="wf-input">nothing here yet</span></div>
+      </div>
+      <div class="wf-caption">Empty state — the state plans usually forget to design.</div>
+    </div>
+  </div>
+
+  <h3>Screen-state matrix</h3>
+  <p>One row per screen, one column per state. A blank cell is a design hole the
+  reviewer can see at a glance — which is the entire point of the table.</p>
+  <table>
+    <thead><tr><th>Screen</th><th>Empty</th><th>Loading</th><th>Error</th><th>Success</th></tr></thead>
+    <tbody>
+      <tr><td>Mockup section</td><td>no screens yet → prose fallback</td>
+        <td>n/a (static)</td><td>n/a</td><td>screens + matrix rendered</td></tr>
+      <tr><td>Pin-drop on a mockup</td><td>no pins</td><td>—</td>
+        <td>note empty → commit blocked</td><td>numbered pin + note queued</td></tr>
+    </tbody>
+  </table>
+
+  <h3>UX flow</h3>
+  <pre class="mermaid">
+flowchart TD
+  A[Reviewer opens plan] --> B[Reads screens]
+  B --> C{Screen right?}
+  C -->|yes| D[Approve UI chip flips]
+  C -->|no| E[Click element / drop pin]
+  E --> F[Note queued as prompt]
+  F --> G[Agent revises mockup]
+  G --> B
+  </pre>
+  <p class="wf-note">Why HTML and not an image: an inline wireframe is annotatable
+  per-element (the SDK already handles element clicks), diffs in git, costs zero
+  tokens to regenerate, and renders offline. Images get pin-drop, which is better
+  for dense visuals — both paths stay available (decision 2).</p>
+</section>
+
+<section id="decisions">
+  <h2>Decisions needed</h2>
+
+  <div class="decision-card" id="decision-packaging" data-brain-action>
+    <p><strong>1. How do the two capabilities get packaged?</strong> Playbooks are read
+    whole; the <code>plan</code> playbook is already ~880 lines.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-packaging" id="pk-two"
+            value="Two new playbooks (product + ux) with thin branches in plan" checked data-brain-action></td>
+          <td><label for="pk-two">Two new playbooks — <code>product</code> + <code>ux</code>
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Mirrors how <code>ai</code> shipped; each loads only when relevant; plan stays skimmable</td>
+          <td>Two more ids to keep in skill sync; agent must follow a pointer</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-packaging" id="pk-fold"
+            value="Fold both into the plan playbook as new sections" data-brain-action></td>
+          <td><label for="pk-fold">Fold both into <code>plan</code></label></td>
+          <td>One read, nothing to miss</td>
+          <td>Plan playbook grows past ~1,300 lines; every plan pays the tokens even when there's no UI</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-packaging" id="pk-product-only"
+            value="One new product playbook; UX folded into plan" data-brain-action></td>
+          <td><label for="pk-product-only">Only <code>product</code> is new; UX folds into plan</label></td>
+          <td>Smallest surface</td>
+          <td>The wireframe kit is the bulkiest part — folding the bulky half is backwards</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-packaging','How do the two capabilities get packaged?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-packaging"></span>
+  </div>
+
+  <div class="decision-card" id="decision-fidelity" data-brain-action>
+    <p><strong>2. What fidelity and medium for mockups?</strong> This sets how much
+    token budget every UI plan spends and how much a reviewer can actually judge.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-fidelity" id="fi-wire"
+            value="Greyscale HTML wireframe kit (default) with images+pin-drop as an escape hatch" checked data-brain-action></td>
+          <td><label for="fi-wire">Greyscale HTML wireframe kit, images as escape hatch
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Cheap to emit and revise; per-element annotation; offline; forces layout/flow critique instead of color bikeshedding</td>
+          <td>Can't judge visual design; a reviewer may approve a layout they'd hate styled</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-fidelity" id="fi-hifi"
+            value="Hi-fi styled mockups using the product's real palette" data-brain-action></td>
+          <td><label for="fi-hifi">Hi-fi styled mockups</label></td>
+          <td>Approve the real thing; fewer surprises at verify</td>
+          <td>Expensive per revision; drags planning into visual-design rounds; clashes with the plan's own editorial palette</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-fidelity" id="fi-both"
+            value="Wireframe by default, hi-fi opt-in as a per-plan decision card" data-brain-action></td>
+          <td><label for="fi-both">Wireframe default, hi-fi opt-in per plan</label></td>
+          <td>Right tool per plan</td>
+          <td>Two kits to document; agents will guess wrong about when to escalate</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-fidelity','What fidelity and medium for mockups?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-fidelity"></span>
+  </div>
+
+  <div class="decision-card" id="decision-gate" data-brain-action>
+    <p><strong>3. When are the product + UX sections required?</strong> A required
+    section that doesn't apply becomes ritual; an optional one gets skipped.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-gate" id="gt-conditional"
+            value="Conditional: product required for any user-facing change, UX required only when a screen changes" checked data-brain-action></td>
+          <td><label for="gt-conditional">Conditional, like §13 AI addendum
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Same trigger idiom the harness already teaches; no ritual on a refactor plan</td>
+          <td>Agent has to judge "is this user-facing" — judgment can go soft</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-gate" id="gt-always"
+            value="Always required, even for internal refactors" data-brain-action></td>
+          <td><label for="gt-always">Always required</label></td>
+          <td>No judgment call; forces "who is this for" on every plan, including CLI-only ones</td>
+          <td>Empty ceremony sections train agents to fill boxes with mush</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-gate" id="gt-advisory"
+            value="Advisory — mentioned, never required" data-brain-action></td>
+          <td><label for="gt-advisory">Advisory only</label></td>
+          <td>Zero friction</td>
+          <td>Will be skipped exactly when it matters most; no gate = no behavior change</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-gate','When are the product + UX sections required?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-gate"></span>
+  </div>
+
+  <div class="decision-card" id="decision-product-scope" data-brain-action>
+    <p><strong>4. What does "planner as product expert" actually enforce?</strong> The
+    difference between a real gate and a vibe.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-product-scope" id="ps-full"
+            value="Full: problem+evidence, user/JTBD, success metric with a number, non-goals, scope tiers (thin/complete/gold), prior art, and a recommendation with rationale on every product decision" checked data-brain-action></td>
+          <td><label for="ps-full">Full product brief: problem, user, metric, non-goals,
+            scope tiers, prior art <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Forces the "are we building the right thing" argument before phases exist; scope tiers give the human a cut lever</td>
+          <td>Longest section; a weak planner can still write plausible filler</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-product-scope" id="ps-lite"
+            value="Lite: problem, user, success metric, non-goals only" data-brain-action></td>
+          <td><label for="ps-lite">Lite: problem, user, metric, non-goals</label></td>
+          <td>Fast; covers the 80%</td>
+          <td>No scope-tier lever — the human can only approve/reject, not cut</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-product-scope" id="ps-metric"
+            value="Metric-first: one measurable success statement and a kill criterion" data-brain-action></td>
+          <td><label for="ps-metric">Metric-first only</label></td>
+          <td>Hardest to fake</td>
+          <td>Most repo work has no instrumented metric; degrades to guesses</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-product-scope','What does planner-as-product-expert enforce?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-product-scope"></span>
+  </div>
+
+  <div class="decision-card" id="decision-decision-split" data-brain-action>
+    <p><strong>5. Product decisions — separate section or merged?</strong> Today §5
+    "Decisions needed" is one undifferentiated pile.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-decision-split" id="ds-split"
+            value="Split: product decisions section first, technical decisions after" checked data-brain-action></td>
+          <td><label for="ds-split">Split — product decisions first
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>The human answers "what are we building" before "how"; a bad product answer invalidates the technical cards below it</td>
+          <td>Some decisions are genuinely both; agent must pick a home</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-decision-split" id="ds-merge"
+            value="Keep one Decisions section, tag each card product/technical" data-brain-action></td>
+          <td><label for="ds-merge">One section, tagged cards</label></td>
+          <td>No structural change; a chip carries the signal</td>
+          <td>Ordering isn't enforced, so the "why" can land after the "how"</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-decision-split','Product decisions — separate section or merged?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-decision-split"></span>
+  </div>
+
+  <div class="decision-card" id="decision-signoff" data-brain-action>
+    <p><strong>6. Does an approved mockup become verification evidence?</strong> The
+    <code>verify</code> playbook already drives a browser and stores screenshots via
+    <code>brain shots</code>.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-signoff" id="sg-phase4"
+            value="Yes, as Phase 4: approved mockup persisted, verify compares shipped screenshot against it" checked data-brain-action></td>
+          <td><label for="sg-phase4">Yes — as a separable Phase 4
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Closes the loop: approved-at-plan becomes checked-at-done; reuses shots + pin-drop wholesale</td>
+          <td>New persistence surface; can slip without blocking phases 1–3</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-signoff" id="sg-no"
+            value="No — mockups are planning-only artifacts" data-brain-action></td>
+          <td><label for="sg-no">No — planning-only</label></td>
+          <td>Nothing new to store; smaller diff</td>
+          <td>Nothing stops shipped UI from drifting from what was approved</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-signoff','Does an approved mockup become verification evidence?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-signoff"></span>
+  </div>
+</section>
+
+<section id="plan-of-record" data-brain-section="plan-of-record">
+  <h2>Plan of record</h2>
+  <p class="wf-note">Double-click any item to rewrite it, "x" to cut it, "+ Add" to
+  propose one. Every edit queues a prompt — no typing an essay.</p>
+  <ol>
+    <template>
+      <li data-brain-item>
+        <span data-item-text data-brain-action></span>
+        <span class="item-controls">
+          <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+          <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+        </span>
+      </li>
+    </template>
+    <li data-brain-item="1">
+      <span data-item-text data-brain-action><strong>Phase 1 — <code>product</code> playbook + product sections in <code>plan</code>.</strong>
+      New PLAYBOOKS entry (problem/evidence, user + JTBD, success metric, non-goals, scope tiers, prior art, recommendation-with-rationale discipline, product anti-patterns) plus the conditional branch in <code>plan</code> §2–3 and the product-decisions section.
+      Acceptance: <code>brain playbook product</code> prints; <code>brain playbook plan</code> names when it fires; <code>brain skill --check</code> clean.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="2">
+      <span data-item-text data-brain-action><strong>Phase 2 — <code>ux</code> playbook + wireframe kit.</strong>
+      Wireframe CSS kit added to <code>plan</code> §0's copy-pasteable style block, plus the UX section standard: screen inventory, screen-state matrix (empty/loading/error/success), user-journey flow diagram, variant A/B decision cards, and the annotation guidance (element click vs image pin-drop).
+      Acceptance: <code>brain playbook ux</code> prints; a demo plan authored from it renders offline with zero network and annotates cleanly in <code>brain review</code>.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="3">
+      <span data-item-text data-brain-action><strong>Phase 3 — wire into the bookends + regenerate the skill + eval cases.</strong>
+      <code>start</code> §2 gains a product framing step; <code>done</code> gains a "product claims still true" row; <code>skillContent()</code> updated (six playbooks → eight); <code>.brain/rules/</code> doc; new cases in the <code>skill-coverage</code> eval suite.
+      Acceptance: <code>brain skill --check</code> exit 0, <code>brain check</code> all rows, <code>brain evals run skill-coverage</code> ≥ baseline with no frozen-case regression.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="4">
+      <span data-item-text data-brain-action><strong>Phase 4 (separable, gated on decision 6) — mockup sign-off as verify evidence.</strong>
+      Approved mockup persisted alongside the plan; <code>verify</code> playbook step comparing the shipped screenshot to it.
+      Acceptance: a verification doc cites the approved mockup and the shipped shot side by side.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+  </ol>
+  <div class="list-add-row" data-brain-section-add="plan-of-record">
+    <input class="list-add-input" data-brain-action placeholder="Add a phase…">
+    <button type="button" class="list-add-btn" data-brain-action>+ Add</button>
+  </div>
+</section>
+
+<section id="files-changed">
+  <h2>Files that change</h2>
+  <table>
+    <thead><tr><th>Path</th><th>Change</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td><code>lib/review/playbooks.js</code></td><td>edit (bulk of the diff)</td>
+        <td>two new PLAYBOOKS entries + wireframe kit into <code>plan</code> §0 + conditional branches in <code>plan</code>/<code>start</code>/<code>done</code></td></tr>
+      <tr><td><code>bin/brain.js</code> — <code>skillContent()</code></td><td>edit</td>
+        <td>"Six standing playbooks" → eight, plus the two new bullet lines; <code>--check</code> fails otherwise</td></tr>
+      <tr><td><code>.claude/skills/brain/SKILL.md</code></td><td>regenerate</td>
+        <td>generated skill must match the CLI (invariant)</td></tr>
+      <tr><td><code>.brain/rules/planning-ux.md</code></td><td>new</td>
+        <td>the rule agents read: when product + UX sections are mandatory</td></tr>
+      <tr><td><code>.brain/evals/skill-coverage/</code></td><td>edit</td>
+        <td>cases asserting both new playbooks are documented — the suite caught 4 real gaps last time</td></tr>
+      <tr><td><code>.brain/features/feature_list.json</code></td><td>edit</td>
+        <td>new <code>planning-ux</code> feature, <code>planned</code> until ai-work ships</td></tr>
+      <tr><td><code>lib/review/sdk.js</code></td><td>none expected</td>
+        <td>element + image annotation already cover wireframes; listed so a reviewer knows it was checked</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="golden-path">
+  <h2>Golden path</h2>
+  <p>A user asks for a plan for a screen-bearing feature, after this ships.</p>
+  <pre class="mermaid">
+sequenceDiagram
+  participant U as User
+  participant A as Agent
+  participant C as brain CLI
+  participant R as Review UI
+  U->>A: "plan the settings page"
+  A->>C: playbook plan
+  C-->>A: 12 sections + "UI? read playbook ux; user-facing? read playbook product"
+  A->>C: playbook product + playbook ux
+  C-->>A: product brief standard + wireframe kit
+  A->>A: write ONE html — brief, wireframes, state matrix, flow, decision cards
+  A->>C: review plan.html --feature settings
+  C-->>R: opens browser
+  U->>R: clicks product decisions, pins a mockup
+  R-->>A: queued prompts via review poll
+  A->>A: revise mockups + brief, re-poll
+  U->>R: Approve
+  A->>C: playbook execute
+  </pre>
+</section>
+
+<section id="error-paths">
+  <h2>Error paths</h2>
+  <table>
+    <thead><tr><th>Failure</th><th>Detected by</th><th>Handled by</th><th>Reviewer sees</th></tr></thead>
+    <tbody>
+      <tr><td><code>planning-ux</code> can't be claimed — <code>ai-work</code> still in-progress</td>
+        <td><code>brain check</code> one-in-progress policy</td>
+        <td>feature lands as <code>planned</code>; work happens on a branch and is claimed after ai-work ships</td>
+        <td>plan approved but feature stays <code>planned</code> until the flip</td></tr>
+      <tr><td>Plan playbook grows past a comfortable single read</td>
+        <td>line count on <code>lib/review/playbooks.js</code></td>
+        <td>decision 1's recommended option — the bulk lives in separate playbooks loaded on demand</td>
+        <td>no change to non-UI plans</td></tr>
+      <tr><td>Agent emits a wireframe that swallows reviewer clicks</td>
+        <td>annotate mode intercepting a control</td>
+        <td><code>ux</code> playbook mandates <code>data-brain-action</code> on wireframe controls, same rule as decision cards</td>
+        <td>clicks annotate as intended instead of no-oping</td></tr>
+      <tr><td>Product section is plausible filler ("improve UX for users")</td>
+        <td>human review; no automated check can catch this</td>
+        <td><code>product</code> playbook ships an anti-patterns list with rejected examples beside their fixes</td>
+        <td>reviewer can name what's missing instead of feeling vaguely unsatisfied</td></tr>
+      <tr><td>Mermaid CDN unreachable</td><td>import fails</td>
+        <td>existing <code>&lt;pre&gt;</code> degradation; wireframes are pure CSS and unaffected</td>
+        <td>flow diagram as readable text, screens still render</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="testing-plan">
+  <h2>Testing plan</h2>
+  <ul class="checklist">
+    <li><label><input type="checkbox"> <code>brain playbook</code> lists 8 ids; <code>product</code> and <code>ux</code> each print in full</label></li>
+    <li><label><input type="checkbox"> <code>brain skill --check</code> exits 0 after regeneration; exits 1 if the playbook list is stale (verify the gate still bites)</label></li>
+    <li><label><input type="checkbox"> <code>brain check</code> and <code>brain verify --brain .brain</code> all rows pass</label></li>
+    <li><label><input type="checkbox"> Golden path: author a demo UI plan from the new playbooks, open in <code>brain review</code>, click a wireframe element and drop a pin — both queue prompts</label></li>
+    <li><label><input type="checkbox"> Offline: open the demo plan by double-click with network disabled — wireframes render, mermaid degrades to text</label></li>
+    <li><label><input type="checkbox"> Regression: an existing non-UI plan (e.g. the ai-work-harness artifact) is unaffected by the §0 style-block additions</label></li>
+    <li><label><input type="checkbox"> Eval gate: <code>brain evals run skill-coverage</code> ≥ 1.000 baseline, zero frozen-case failures</label></li>
+    <li><label><input type="checkbox"> stdout stays TOON-only for both new playbook ids; <code>echo $?</code> is 0</label></li>
+  </ul>
+</section>
+
+<section id="open-questions" data-brain-section="open-questions">
+  <h2>Open questions</h2>
+  <ul>
+    <template>
+      <li data-brain-item>
+        <span data-item-text data-brain-action></span>
+        <span class="item-controls">
+          <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+          <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+        </span>
+      </li>
+    </template>
+    <li data-brain-item="1"><span data-item-text data-brain-action>Should the <code>product</code> playbook pull real product context (competitors, prior art) from the web, or stay grounded strictly in <code>.brain/</code> memory?</span>
+      <span class="item-controls"><button type="button" class="item-x" data-brain-action title="Remove">x</button>
+      <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button></span></li>
+    <li data-brain-item="2"><span data-item-text data-brain-action>Does <code>brain-axi</code>'s own <code>.brain</code> want a standing product brief per feature, or is per-plan enough?</span>
+      <span class="item-controls"><button type="button" class="item-x" data-brain-action title="Remove">x</button>
+      <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button></span></li>
+    <li data-brain-item="3"><span data-item-text data-brain-action>Is there a role for the existing <code>refero-design</code> research skill inside <code>playbook ux</code> (reference-grounded screens), or does that couple the harness to an external skill?</span>
+      <span class="item-controls"><button type="button" class="item-x" data-brain-action title="Remove">x</button>
+      <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button></span></li>
+  </ul>
+  <div class="list-add-row" data-brain-section-add="open-questions">
+    <input class="list-add-input" data-brain-action placeholder="Add a question…">
+    <button type="button" class="list-add-btn" data-brain-action>+ Add</button>
+  </div>
+</section>
+
+<section id="ai-addendum">
+  <h2>AI addendum</h2>
+  <p>Playbook text <em>is</em> a prompt — it is the instruction an agent reads before
+  producing an artifact — so §13 applies.</p>
+  <h3>Prompt contract</h3>
+  <table>
+    <thead><tr><th>Prompt</th><th>Job</th><th>Output the caller parses</th><th>Failure modes</th></tr></thead>
+    <tbody>
+      <tr><td><code>playbook product</code></td><td>Make the planning agent argue the product case before the technical one</td>
+        <td>Product sections in the plan HTML + product decision cards</td>
+        <td>Plausible filler; invented metrics; non-goals that are really unstated goals</td></tr>
+      <tr><td><code>playbook ux</code></td><td>Make the agent emit annotatable screens, states, and a flow</td>
+        <td>Wireframe HTML + state matrix + flow diagram</td>
+        <td>Missing empty/error states; controls without <code>data-brain-action</code>; decorative mockups that don't match the plan of record</td></tr>
+    </tbody>
+  </table>
+  <p>No model call is added by this feature — both playbooks are static text served by
+  the CLI, so there is no model pin, no cost delta, and no latency delta.</p>
+  <h3>Eval plan + regression gate</h3>
+  <p>Suite: <code>skill-coverage</code> (31 cases, 28 frozen, baseline 1.000 as of the
+  2026-07-29 checkpoint). New cases assert both playbook ids are documented in the
+  generated skill and that the plan playbook names its UX/product triggers. Gate: the
+  aggregate may not fall below 1.000 and no frozen case may regress — a frozen failure
+  reverts the change regardless of the aggregate.</p>
+</section>
+
+<section id="verdict">
+  <h2>Verdict</h2>
+  <div>
+    <button type="button" class="btn-approve" data-brain-action
+      onclick="queueVerdict('approve')">Approve plan</button>
+    <button type="button" class="btn-request-changes" data-brain-action
+      onclick="queueVerdict('request-changes')">Request changes</button>
+  </div>
+</section>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "neutral" });
+</script>
+
+<script>
+  function queueDecision(cardId, question) {
+    var card = document.getElementById(cardId);
+    var checked = card.querySelector('input[type="radio"]:checked');
+    if (!checked) return;
+    var choice = checked.value;
+    if (window.brain && typeof window.brain.queuePrompt === "function") {
+      window.brain.queuePrompt({
+        tag: "decision",
+        queueKey: cardId,
+        prompt: question + ": " + choice,
+        target: { type: "decision", question: question, choice: choice }
+      });
+    }
+    var ack = document.getElementById("ack-" + cardId);
+    if (ack) ack.textContent = "Queued: " + choice;
+  }
+
+  function queueVerdict(verdict) {
+    if (!(window.brain && typeof window.brain.queuePrompt === "function")) return;
+    window.brain.queuePrompt({
+      tag: "message",
+      queueKey: "verdict",
+      prompt: verdict === "approve"
+        ? "Plan approved as written."
+        : "Requesting changes — see annotations."
+    });
+  }
+</script>
+
+<script>
+  (function () {
+    function queueList(section, queueKey, prompt, action, item, index) {
+      if (window.brain && typeof window.brain.queuePrompt === "function") {
+        window.brain.queuePrompt({
+          tag: "list-edit",
+          queueKey: queueKey,
+          prompt: prompt,
+          target: { type: "list-edit", section: section, action: action, item: item, index: index }
+        });
+      }
+    }
+
+    function slugify(s) {
+      return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "").slice(0, 60) || "item";
+    }
+
+    function itemText(el) {
+      var t = el.querySelector("[data-item-text]");
+      return (t || el).textContent.trim();
+    }
+
+    function addBadge(el, cls, label) {
+      var badge = el.querySelector("." + cls);
+      if (!badge) {
+        badge = document.createElement("span");
+        badge.className = "item-badge " + cls;
+        el.appendChild(badge);
+      }
+      badge.textContent = label;
+    }
+
+    function toggleRemoved(item, section) {
+      var index = Number(item.getAttribute("data-brain-item"));
+      var text = itemText(item);
+      var removed = item.classList.toggle("item-removed");
+      var xBtn = item.querySelector(".item-x");
+      var restoreBtn = item.querySelector(".item-restore");
+      if (xBtn) xBtn.hidden = removed;
+      if (restoreBtn) restoreBtn.hidden = !removed;
+      var key = section + ":remove:" + index;
+      if (removed) {
+        queueList(section, key, "Remove from " + section + ": \"" + text + "\"", "remove", text, index);
+      } else {
+        queueList(section, key, "Cancelled: keep \"" + text + "\" in " + section, "edit", text, index);
+      }
+    }
+
+    function startEdit(item, section) {
+      if (item.classList.contains("item-removed")) return;
+      var span = item.querySelector("[data-item-text]");
+      if (!span || span.isContentEditable) return;
+      var before = span.textContent;
+      span.setAttribute("contenteditable", "true");
+      span.focus();
+
+      function commit() {
+        span.removeAttribute("contenteditable");
+        span.removeEventListener("blur", commit);
+        span.removeEventListener("keydown", onKey);
+        var text = span.textContent.trim();
+        if (!text || text === before.trim()) { span.textContent = before; return; }
+        var index = Number(item.getAttribute("data-brain-item"));
+        addBadge(item, "item-badge-edited", "edited");
+        queueList(section, section + ":edit:" + index,
+          "Edit " + section + " item " + index + ": \"" + text + "\"", "edit", text, index);
+      }
+      function onKey(ev) {
+        if (ev.key === "Enter") { ev.preventDefault(); span.blur(); }
+        else if (ev.key === "Escape") { span.textContent = before; ev.preventDefault(); span.blur(); }
+      }
+      span.addEventListener("blur", commit);
+      span.addEventListener("keydown", onKey);
+    }
+
+    function commitAdd(addRow) {
+      var section = addRow.getAttribute("data-brain-section-add");
+      var input = addRow.querySelector(".list-add-input");
+      var text = input.value.trim();
+      if (!text) return;
+      var list = document.querySelector("[data-brain-section=\"" + section + "\"]");
+      var tpl = list && list.querySelector("template");
+      if (!list || !tpl) return;
+      var node = document.importNode(tpl.content, true);
+      var item = node.querySelector("[data-brain-item]") || node.firstElementChild;
+      item.setAttribute("data-brain-item", "new");
+      var span = item.querySelector("[data-item-text]");
+      if (span) span.textContent = text;
+      item.classList.add("item-proposed");
+      addBadge(item, "item-badge-proposed", "proposed");
+      tpl.parentNode.appendChild(node);
+      input.value = "";
+      queueList(section, section + ":add:" + slugify(text),
+        "Add to " + section + ": \"" + text + "\"", "add", text, null);
+    }
+
+    document.addEventListener("click", function (ev) {
+      var xBtn = ev.target.closest(".item-x");
+      var restoreBtn = ev.target.closest(".item-restore");
+      if (xBtn || restoreBtn) {
+        var item = ev.target.closest("[data-brain-item]");
+        var section = ev.target.closest("[data-brain-section]");
+        if (item && section) toggleRemoved(item, section.getAttribute("data-brain-section"));
+        return;
+      }
+      var addBtn = ev.target.closest(".list-add-btn");
+      if (addBtn) {
+        var addRow = ev.target.closest("[data-brain-section-add]");
+        if (addRow) commitAdd(addRow);
+      }
+    });
+
+    document.addEventListener("dblclick", function (ev) {
+      var item = ev.target.closest("[data-brain-item]");
+      if (!item) return;
+      var section = item.closest("[data-brain-section]");
+      if (section) startEdit(item, section.getAttribute("data-brain-section"));
+    });
+
+    document.addEventListener("keydown", function (ev) {
+      if (ev.key !== "Enter") return;
+      var addRow = ev.target.closest("[data-brain-section-add]");
+      if (addRow && ev.target.classList.contains("list-add-input")) {
+        ev.preventDefault();
+        commitAdd(addRow);
+      }
+    });
+  })();
+</script>
+
+</body>
+</html>
