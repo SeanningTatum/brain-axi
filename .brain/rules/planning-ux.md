@@ -16,6 +16,7 @@ Read when: editing the `product` or `ux` playbook, adding/renumbering a section 
 | Done §2c + DoD | `PLAYBOOKS.done` | Metric observed, non-goals held, shipped UI reconciled against approved mockups |
 | Verify §5b + verdict table | `PLAYBOOKS.verify` | Reconcile shipped screenshots against the approved `vN.html` snapshot; undisclosed differences fail |
 | Snapshot surfacing | `listSnapshots` in `lib/review/brain-data.js` + `cmdPlansView` | Per-round `snapshot:` path in `brain plans view`, plus the help line pointing at the frozen copy |
+| Regression check | `scripts/check-playbook-refs.mjs` (declared in `verify.json`, stages baseline + verify) | Every playbook section cross-reference resolves, every `.wf-*` class an example uses is defined by the kit, every backticked `playbook <id>` exists |
 | Skill playbook index | `skillContent()` in `bin/brain.js` | Eight playbook rows + the conditional-section map in the plan-review flow |
 
 ## The plan artifact's section numbering (0-16)
@@ -40,7 +41,7 @@ Renumbered on 2026-07-30 when the three conditional sections landed. The mapping
 | 15 | Open questions | 12 |
 | 16 | AI addendum | 13 |
 
-Section numbers are cross-referenced from inside the playbook text, from the `ai` playbook, from `skillContent()`, and from `.brain/rules/ai-work.md`. **Renumbering again means grepping all four.**
+Section numbers are cross-referenced from inside the playbook text, from the `ai` playbook, from `skillContent()`, and from `.brain/rules/ai-work.md`. **Renumbering again means grepping all four** — `node scripts/check-playbook-refs.mjs` (wired into `brain verify`) catches the playbook-internal half automatically, but it cannot see `skillContent()` or the rule docs.
 
 ## Do
 
