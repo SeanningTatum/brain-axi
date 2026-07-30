@@ -2607,10 +2607,21 @@ function cmdPlansView(argv) {
   const help = [];
   if (!flags.full && allRounds.length > shownRounds.length)
     help.push(`Run \`brain plans view ${slug} --full\` for all ${allRounds.length} rounds with complete prompt text`);
+  // A snapshot is written for EVERY round, approved or not — `ended_by` is the
+  // only signal that a round concluded the review rather than requesting more
+  // changes. Never label an open round's draft "approved": that would point
+  // verification at a change-request artifact.
+  const endedRound = [...allRounds].reverse().find((r) => r.ended_by);
+  const snapFor = (round) => (plan.snapshots || []).find((s) => s.round === round);
+  const approvedSnap = endedRound && snapFor(endedRound.round);
   const lastSnap = (plan.snapshots || []).slice(-1)[0];
-  if (lastSnap)
+  if (approvedSnap)
     help.push(
-      `Approved artifact for round ${lastSnap.round} is frozen at \`${lastSnap.path}\` — compare shipped UI against that snapshot, not the live file`
+      `Approved artifact for round ${approvedSnap.round} is frozen at \`${approvedSnap.path}\` — compare shipped UI against that snapshot, not the live file`
+    );
+  else if (lastSnap)
+    help.push(
+      `No approved snapshot yet — no review round has ended; \`${lastSnap.path}\` (round ${lastSnap.round}) is the latest draft, do not verify against it as if approved`
     );
   help.push(`Run \`brain review ${plan.file}\` to open or resume this plan`);
   lines.push(...toonList("help", help));
@@ -3699,7 +3710,7 @@ Rules:
 - A poll's DOM snapshot is a compact outline, not the raw page — it prints as \`snapshot_chars: N\` by default; pass \`--snapshot\` to see the full outline block only when you actually need it.
 - \`npx -y brain-axi review end <plan.html>\` — end the session yourself once the plan is fully approved
 - \`npx -y brain-axi shots add <img> --feature <slug> --step <NN-name>\` — attach a screenshot to a feature (\`--scope <plan-or-feature>\` is the legacy form)
-- \`npx -y brain-axi plans\` / \`plans view <slug>\` — see past plan artifacts and their review rounds. Each round prints a \`snapshot:\` path (\`plans/<slug>/vN.html\`) — the FROZEN copy the human approved. When verifying a feature whose plan carried wireframes, compare the shipped UI against that snapshot, never against the live artifact path (the agent has been editing it); record each difference in the verification doc's mockup-reconciliation table per \`playbook verify\` 5b.
+- \`npx -y brain-axi plans\` / \`plans view <slug>\` — see past plan artifacts and their review rounds. Each round prints a \`snapshot:\` path (\`plans/<slug>/vN.html\`) — the FROZEN copy of the artifact as it stood at that round. A snapshot is written for every round, so the newest one is NOT automatically the approved one: the approved snapshot is the one for the round that ended the review (\`ended by\` in the round header). \`plans view\` names it for you in its \`help:\` line, and says so explicitly when no round has ended yet. When verifying a feature whose plan carried wireframes, compare the shipped UI against that approved snapshot, never against the live artifact path (the agent has been editing it); record each difference in the verification doc's mockup-reconciliation table per \`playbook verify\` 5b.
 - \`npx -y brain-axi timeline\` — merged history across checkpoints, run notes, plan reviews, and verifications
 
 ## Install & session hooks (run once per repo)
