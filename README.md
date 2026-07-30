@@ -38,6 +38,14 @@ This installs `.claude/skills/brain/SKILL.md` into your repo via the
 loads it on demand and learns the whole command surface from it — no
 `package.json` dependency, no session hook required.
 
+Two more skills ship from the same repo, install them the same way:
+
+| Skill | Install | What it's for |
+| --- | --- | --- |
+| `brain` | `npx skills add SeanningTatum/brain-axi --skill brain` | Operate an existing `.brain/` — the main one |
+| `init-brain` | `npx skills add SeanningTatum/brain-axi --skill init-brain` | Scaffold a `.brain/` into a repo that has none |
+| `brain-axi` | `npx skills add SeanningTatum/brain-axi --skill brain-axi` | The AXI standard itself — read it when building *any* agent-facing CLI, not just this one |
+
 **Or run the CLI straight from a checkout**, no skill involved:
 
 ```sh
