@@ -21,6 +21,22 @@
 
 ---
 
+## 2026-07-29 — Phases 1-3 of ai-work shipped as PR #12 (feat/ai-work-harness). Pre-PR review: 4 subagent reviewers (Greptile API down), 0 P1 / 4 P2 / 8 P3 all fixed in bc6fa4f. Verification: 3x agreed CLI battery, gate 31/31 1.000.
+- branch: `feat/ai-work-harness`
+- in-progress feature: ai-work
+- run note: none
+- eval: skill-coverage 1.000 (+0.000), 31/31 pass, no frozen failures, cost 0, run 2026-07-29T05:02:23.081Z
+- next: Phase 4: brain evals review <suite> — run artifact in the review server, annotations -> feedback/<date>.md
+
+---
+
+## 2026-07-29 — PR opened for ai-work: https://github.com/SeanningTatum/brain-axi/pull/12
+- branch: `feat/ai-work-harness`
+- in-progress feature: none
+- run note: none
+
+---
+
 ## 2026-07-29 — Phases 2+3 of ai-work: lib/review/evals.js data layer + brain evals (list/view/cases/runs/run/record/golden add|freeze) + promptfoo adapter + brain verify --stage evals gate (frozen hard-fail, tolerance band) + progress add --eval + home eval line + 4 new brain check rows + evals/index.md in brain init + dogfood suite skill-coverage (31 cases, 28 frozen) w/ reference runner. Suite caught 4 real skill gaps (evals/context/setup/skill undocumented) — fixed, 0.871 -> 1.000.
 - branch: `feat/ai-work-harness`
 - in-progress feature: ai-work
