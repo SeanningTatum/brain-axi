@@ -33,20 +33,26 @@ function sectionsOf(content) {
 const sections = Object.fromEntries(ids.map((id) => [id, sectionsOf(PLAYBOOKS[id].content)]));
 
 // ---------------------------------------------------------------------------
-// Cross-references. A reference is attributed to another playbook when the
-// text names one right before it (`plan` §10, `brain playbook plan` section 8);
-// otherwise it is a self-reference to the containing playbook.
+// Cross-references. A reference is attributed to another playbook when the text
+// names one on either side of the number — "`plan` §10" and "section 8 of
+// `plan`" both count — otherwise it is a self-reference to the containing
+// playbook. Both orders matter: every playbook numbers its own sections from 0,
+// so those ranges overlap heavily, and a cross-playbook reference misread as a
+// self-reference would validate against the wrong inventory and pass while
+// dangling.
 // ---------------------------------------------------------------------------
+const NAME = String.raw`\`(?:brain playbook |npx -y brain-axi playbook )?(${ids.join("|")})\``;
 const REF_RE = new RegExp(
-  String.raw`(?:\`(?:brain playbook |npx -y brain-axi playbook )?(${ids.join("|")})\`[^.\n]{0,40}?)?` +
-    String.raw`(?:§|[Ss]ection )(\d+)`,
+  String.raw`(?:${NAME}[^.\n]{0,40}?)?` + // leading form: `plan` §10
+    String.raw`(?:§|[Ss]ection )(\d+)` +
+    String.raw`(?:\s+(?:of|in)\s+${NAME})?`, // trailing form: section 8 of `plan`
   "g"
 );
 
 for (const id of ids) {
   const content = PLAYBOOKS[id].content;
   for (const m of content.matchAll(REF_RE)) {
-    const target = m[1] || id;
+    const target = m[1] || m[3] || id;
     const num = m[2];
     if (!sections[target]) {
       failures.push(`${id}: reference to unknown playbook "${target}"`);
@@ -77,7 +83,7 @@ if (uxContent) {
     for (const m of head.matchAll(/\.((?:wf|wf-)[a-z-]*|tall|short|med|primary)\b/g)) defined.add(m[1]);
   }
   const used = new Set();
-  for (const attr of uxContent.matchAll(/class="([^"]+)"/g)) {
+  for (const attr of uxContent.matchAll(/class=["']([^"']+)["']/g)) {
     for (const cls of attr[1].split(/\s+/)) if (/^(wf|tall|short|med|primary)/.test(cls)) used.add(cls);
   }
   for (const cls of used) {
