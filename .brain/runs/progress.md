@@ -21,6 +21,21 @@
 
 ---
 
+## 2026-07-30 — PR opened for planning-ux: https://github.com/SeanningTatum/brain-axi/pull/13
+- branch: `feat/planning-ux`
+- in-progress feature: none
+- run note: none
+
+---
+
+## 2026-07-30 — vendored the AXI standard into the repo as the installable brain-axi skill; rewired the 3 references that pointed at the global axi skill
+- branch: `feat/planning-ux`
+- in-progress feature: none
+- run note: none
+- next: commit and push so npx skills add SeanningTatum/brain-axi --skill brain-axi resolves from GitHub
+
+---
+
 ## 2026-07-30 — planning-ux phase 4: mockup reconciliation. listSnapshots + snapshot: line in plans view surfaces the frozen per-round vN.html; verify playbook 5b + mockup-reconciliation table in the verdict doc consume it. No new persistence needed — recordReviewRound already snapshots per round. All 4 phases of plan product-planning-mockups complete.
 - branch: `feat/planning-ux`
 - in-progress feature: none
