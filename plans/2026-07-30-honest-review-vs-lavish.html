@@ -1,0 +1,793 @@
+<meta charset="utf-8">
+<title>Honest review — brain-axi vs lavish-axi</title>
+<style>
+  :root {
+    --bg: #faf9f5; --surface: #ffffff; --fg: #141413; --fg-secondary: #3d3d3a;
+    --muted: #73726c; --border: #dedcd1; --highlight: #fff7ca; --accent: #d97757;
+    --space-2: 8px; --space-3: 16px; --space-4: 24px; --space-6: 40px;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+      Helvetica, Arial, sans-serif;
+    font-size: 16px; background: var(--bg); color: var(--fg); line-height: 1.6;
+    max-width: 72ch; margin: 0 auto; padding: var(--space-6) var(--space-4);
+  }
+  h1, h2, h3 {
+    font-family: Charter, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    font-weight: 600; line-height: 1.25; color: var(--fg);
+  }
+  h1 { font-size: 1.75em; }
+  h2 { font-size: 1.3em; font-weight: 500; margin-top: var(--space-6);
+    border-bottom: 1px solid var(--border); padding-bottom: var(--space-2); }
+  h3 { font-size: 1.05em; font-weight: 500; }
+  p, li { color: var(--fg-secondary); }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em;
+    background: color-mix(in srgb, var(--fg) 6%, var(--surface)); padding: 1px 5px;
+    border-radius: 4px; }
+  pre code { background: none; padding: 0; }
+  pre.term { background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 14px; overflow-x: auto; font-size: 0.85em; line-height: 1.5;
+    color: var(--fg-secondary); }
+  mark, .highlight { background: var(--highlight); color: var(--fg); padding: 0 2px; }
+  .chip { display: inline-block; padding: 2px 10px; border-radius: 999px;
+    font-size: 0.8em; font-weight: 600; border: 1px solid var(--border); }
+  .chip-status-draft { background: var(--surface); color: var(--muted); }
+  .chip-high { color: var(--accent); border-color: var(--accent); }
+  .chip-med { color: var(--fg-secondary); }
+  .chip-low { color: var(--muted); }
+  .decision-card { background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: var(--space-4); margin: var(--space-4) 0; }
+  table { width: 100%; border-collapse: collapse; margin: var(--space-3) 0;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    overflow: hidden; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid
+    var(--border); vertical-align: top; font-size: 0.95em; }
+  tr:last-child td { border-bottom: none; }
+  .tag-recommended { color: var(--accent); font-weight: 600; }
+  .btn-queue, .btn-approve, .btn-request-changes {
+    border: none; border-radius: 10px; padding: 8px 16px; font-weight: 600;
+    cursor: pointer; font-size: 0.95em;
+  }
+  .btn-queue, .btn-approve { background: var(--fg); color: #fff; }
+  .btn-request-changes { background: transparent; color: var(--fg);
+    border: 1px solid var(--border); }
+  .queue-ack { margin-left: var(--space-3); font-size: 0.9em; color: var(--muted); }
+  .checklist { list-style: none; padding: 0; }
+  .checklist li { margin: var(--space-2) 0; }
+  pre.mermaid { text-align: center; }
+  pre.mermaid svg { display: block; margin: 0 auto; }
+  .win { border-left: 2px solid var(--accent); padding-left: var(--space-3); }
+  .lose { border-left: 2px solid var(--border); padding-left: var(--space-3); }
+  .scoreboard td:nth-child(2), .scoreboard td:nth-child(3) { font-variant-numeric: tabular-nums; }
+
+  /* ---- editable-list kit ---- */
+  .item-x, .item-restore, .list-add-btn { cursor: pointer; border: 1px solid var(--border);
+    background: var(--surface); border-radius: 6px; font-size: 0.85em; padding: 1px 8px;
+    color: var(--fg-secondary); }
+  [data-item-text] { cursor: text; }
+  .item-removed { opacity: 0.5; }
+  .item-removed [data-item-text] { text-decoration: line-through; }
+  .item-edited [data-item-text] { border-bottom: 2px dotted var(--accent); }
+  .item-badge { font-size: 0.75em; color: var(--muted); margin-left: 6px; font-style: italic; }
+  .item-badge-proposed { color: var(--accent); }
+  .item-proposed { border-left: 2px dashed var(--accent); padding-left: 6px; }
+  .list-add-row { display: flex; gap: 8px; margin-top: var(--space-2); }
+  .list-add-input { flex: 1; padding: 6px 10px; border: 1px solid var(--border);
+    border-radius: 6px; background: var(--surface); color: var(--fg); }
+</style>
+
+<header>
+  <h1>Honest review — brain-axi vs lavish-axi</h1>
+  <div>
+    <span>2026-07-30</span> ·
+    <span>feature: none (positioning)</span> ·
+    <span class="chip chip-status-draft">draft</span> ·
+    <span>round 0</span>
+  </div>
+</header>
+
+<section id="tldr">
+  <h2>TL;DR</h2>
+  <p>We have a real product with a clean moat and no distribution. lavish-axi has
+  distribution, engineering discipline we don't have, and — critically —
+  <mark>already owns the exact ground we just decided to make our headline</mark>.</p>
+  <p>The approved P1 decision ("review-first is the headline") points us at a
+  2,379-star incumbent's core feature, shipped 43 times, built by the same author
+  whose AXI standard we vendored last week. Meanwhile the thing lavish has no answer
+  for — the <code>.brain</code> harness — is what we're about to demote to the second
+  act. I think that's backwards, and this review asks you to settle it.</p>
+</section>
+
+<section id="scoreboard">
+  <h2>The scoreboard, no spin</h2>
+  <table class="scoreboard">
+    <thead><tr><th></th><th>lavish-axi</th><th>brain-axi</th><th></th></tr></thead>
+    <tbody>
+      <tr><td>Stars</td><td>2,379</td><td>0</td><td><span class="chip chip-high">them</span></td></tr>
+      <tr><td>Forks / open issues</td><td>206 / 55</td><td>0 / 0</td><td><span class="chip chip-high">them</span></td></tr>
+      <tr><td>Created</td><td>2026-05-11</td><td>2026-07-14</td><td><span class="chip chip-low">2mo head start</span></td></tr>
+      <tr><td>Last push</td><td>2026-07-23</td><td>2026-07-30</td><td><span class="chip chip-med">us</span></td></tr>
+      <tr><td>Published npm version</td><td><code>0.1.43</code></td><td><em>none — E404</em></td><td><span class="chip chip-high">them</span></td></tr>
+      <tr><td>Releases</td><td>43</td><td>1 (<code>v0.1.0</code>)</td><td><span class="chip chip-high">them</span></td></tr>
+      <tr><td>CI workflows</td><td>4 (ci, guard-generated, no-mistakes-required, release-please)</td><td>0</td><td><span class="chip chip-high">them</span></td></tr>
+      <tr><td>Tests / lint / format / typecheck</td><td><code>node --test</code>, eslint, prettier, <code>tsc --noEmit</code>, one <code>npm run check</code> gate</td><td>none</td><td><span class="chip chip-high">them</span></td></tr>
+      <tr><td>License visible to a stranger</td><td>MIT (file committed)</td><td><mark>GitHub reports <code>null</code></mark> — our LICENSE is still uncommitted</td><td><span class="chip chip-high">them</span></td></tr>
+      <tr><td>CONTRIBUTING / CHANGELOG</td><td>both (CHANGELOG 19.5KB)</td><td>neither at repo root</td><td><span class="chip chip-med">them</span></td></tr>
+      <tr><td>Runtime dependencies</td><td>7 (express, chokidar, parse5, open, tailwind-browser, daisyui, axi-sdk-js)</td><td>0</td><td><span class="chip chip-high">us</span></td></tr>
+      <tr><td>Build step</td><td>esbuild → <code>dist/cli.mjs</code></td><td>none</td><td><span class="chip chip-med">us</span></td></tr>
+      <tr><td>Node floor</td><td>&gt;=22</td><td>&gt;=18</td><td><span class="chip chip-med">us</span></td></tr>
+      <tr><td>Repo size</td><td>75.5 MB</td><td>3.6 MB</td><td><span class="chip chip-low">n/a</span></td></tr>
+      <tr><td>Persistent project memory</td><td><strong>none</strong></td><td><code>.brain/</code> — 39 docs, 7 features, 29 checkpoints, evals</td><td><span class="chip chip-high">us</span></td></tr>
+    </tbody>
+  </table>
+  <p>Every "them" row above is a solvable engineering-hygiene gap. The "us" rows in
+  the last block are the ones that took two weeks of design to earn. That asymmetry
+  is the whole strategic argument below.</p>
+</section>
+
+<section id="overlap">
+  <h2>Where we overlap — and it's more than is comfortable</h2>
+  <p>Their command surface against ours, on the review loop:</p>
+  <table>
+    <thead><tr><th>lavish-axi</th><th>brain-axi</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr><td><code>lavish-axi &lt;file&gt;</code> <code>--no-open --reopen --no-gate</code></td>
+        <td><code>brain review &lt;file&gt;</code> <code>--no-open --reopen --port --plan --feature</code></td>
+        <td>parity</td></tr>
+      <tr><td><code>poll &lt;file&gt;</code> <code>--agent-reply --timeout-ms</code></td>
+        <td><code>review poll &lt;file&gt;</code> <code>--agent-reply --timeout-ms --snapshot</code></td>
+        <td>parity — <em>identical flag names</em></td></tr>
+      <tr><td><code>end &lt;file&gt;</code></td><td><code>review end &lt;file&gt;</code></td><td>parity</td></tr>
+      <tr><td><code>playbook [id]</code></td><td><code>playbook [id]</code> — 8 playbooks</td><td>ours is deeper</td></tr>
+      <tr><td><code>setup hooks</code></td><td><code>setup --app claude|codex|opencode|copilot|all</code></td><td>ours is broader</td></tr>
+      <tr><td>Element + text-range annotation, <code>data-lavish-action</code></td>
+        <td>Element + text-range annotation, <code>data-brain-action</code></td>
+        <td>parity — <em>same design, renamed attribute</em></td></tr>
+      <tr><td>Open-time layout gate → <code>layout_warnings</code></td>
+        <td><code>layout_warnings</code> on poll</td><td>parity</td></tr>
+      <tr><td>Mermaid → editable Excalidraw whiteboards</td><td>—</td>
+        <td><span class="chip chip-high">them only</span></td></tr>
+      <tr><td><code>export</code> (asset inlining), <code>share</code> (ht-ml.app, password/token)</td><td>—</td>
+        <td><span class="chip chip-high">them only</span></td></tr>
+      <tr><td><code>update</code>, <code>stop</code>, <code>server</code></td><td>—</td>
+        <td><span class="chip chip-med">them only</span></td></tr>
+      <tr><td>—</td><td>Screenshot carousel + pin/note annotation, <code>shots notes</code></td>
+        <td><span class="chip chip-high">us only</span></td></tr>
+      <tr><td>—</td><td><code>watch</code> execution dashboard (plan → in-progress → run steps → verification → PR)</td>
+        <td><span class="chip chip-high">us only</span></td></tr>
+      <tr><td>—</td><td>Review sidebar shows brain memory: past plans, timeline, feature state</td>
+        <td><span class="chip chip-high">us only</span></td></tr>
+    </tbody>
+  </table>
+  <p>Read that honestly: on the pure artifact-review loop we are at feature parity
+  with a few gaps in their favour, using their vocabulary, one week after vendoring
+  their standard. <code>brain playbook plan</code> §9 credits "lavish-axi's own input
+  playbook" by name, and §9.4 lists which of their patterns we deliberately did and
+  did not port. We are downstream of them and the code says so.</p>
+  <p>That is not plagiarism — it's an ecosystem, they published the standard for
+  exactly this, and we attributed it in <code>THIRD-PARTY-NOTICES.md</code>. But it
+  does mean a review-first headline invites the one comparison we lose.</p>
+</section>
+
+<section id="moat">
+  <h2>Where we actually win</h2>
+  <p>lavish-axi's README, checked directly: <strong>no persistent project memory, no
+  feature tracker, no progress checkpoints, no rules/recipes docs, no verification
+  evidence, no evals.</strong> Nothing in their twelve commands writes durable state
+  about the project. Their session state is a session.</p>
+  <div class="win">
+    <p>Ours is the opposite. <code>.brain/</code> today, in this repo, dogfooded:
+    7 features with an enforced one-in-progress policy, 29 checkpoints, 39 docs
+    across rules/recipes/codebase/architecture, 3 verification verdict docs, an
+    eval suite of 37 cases, 10 plan records with review rounds, and 13
+    deterministic invariant checks that hold it together
+    (<code>brain check</code> 13/13, <code>brain verify</code> 3/3 right now).</p>
+    <p>And the thing neither of us has written down as a product claim yet: our
+    review sidebar shows that memory <em>while</em> the human reviews. The reviewer
+    sees past plans, the timeline, and feature state next to the artifact. lavish
+    reviews an artifact; we review an artifact <em>in the context of the project's
+    history</em>. That sentence is the product.</p>
+  </div>
+  <p>Two smaller genuine wins: zero runtime dependencies against their seven
+  (our whole install is one file tree, no <code>express</code>, no build), and a
+  Node 18 floor against their 22 — we run in more places, more cheaply, with a
+  smaller supply-chain surface.</p>
+</section>
+
+<section id="big-picture">
+  <h2>The positioning fork</h2>
+  <pre class="mermaid">
+flowchart TD
+  A["Agent produces an HTML artifact"] --> B{"Which axis is the headline?"}
+  B -->|"P1 as approved:<br/>review-first"| C["Compete with lavish-axi<br/>2,379 stars, v0.1.43,<br/>Excalidraw + export + share"]
+  C --> D["We are the worse artifact reviewer<br/>with a memory feature attached"]
+  B -->|"memory-first<br/>(README today)"| E["No competitor named<br/>but the first run needs a .brain"]
+  E --> F["Setup cost before any value<br/>— the reason P1 was approved"]
+  B -->|"the third option"| G["'Review that remembers'<br/>memory is the moat,<br/>review is how you meet it"]
+  G --> H["Zero-setup first run,<br/>differentiated second run"]
+  </pre>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({ startOnLoad: true, theme: "neutral" });
+  </script>
+  <p>P1 was approved for a good reason that still holds: memory-first means the
+  user's first command needs a <code>.brain</code>, and setup-before-value is a bad
+  first run. The fix for that is the zero-setup review path — which is a
+  <em>funnel</em> argument, not a <em>headline</em> argument. The third branch keeps
+  what P1 was buying without handing lavish the comparison.</p>
+</section>
+
+<section id="blockers">
+  <h2>Blockers that are true regardless of positioning</h2>
+  <table>
+    <thead><tr><th>#</th><th>Finding</th><th>Evidence</th><th>Severity</th></tr></thead>
+    <tbody>
+      <tr><td>1</td>
+        <td>Not on npm, while the shipped skill invokes <code>npx -y brain-axi</code>
+          23 times. The README's <em>recommended</em> install path is broken end to
+          end for anyone who hasn't cloned the repo.</td>
+        <td><code>npm view brain-axi</code> → E404; <code>grep -c</code> → 23</td>
+        <td><span class="chip chip-high">blocker</span></td></tr>
+      <tr><td>2</td>
+        <td>The no-<code>.brain</code> promise this branch just wrote into the skill
+          is false. <code>cmdReview</code> really doesn't call
+          <code>findBrain</code> — but <code>/api/open</code> hard-404s and
+          <code>session.brain</code> is read at ~10 sites downstream.</td>
+        <td>reproduced from a scratch dir, exit 1;
+          <code>lib/review/server.js:778-784</code></td>
+        <td><span class="chip chip-high">blocker</span></td></tr>
+      <tr><td>3</td>
+        <td>GitHub reports our license as <code>null</code> — the <code>LICENSE</code>
+          file is written but uncommitted. <code>package.json</code> claims MIT. A
+          stranger evaluating the repo sees no license and legally cannot use it.
+          lavish has theirs committed.</td>
+        <td><code>gh api repos/SeanningTatum/brain-axi --jq .license</code> → null</td>
+        <td><span class="chip chip-high">blocker</span></td></tr>
+      <tr><td>4</td>
+        <td>Three surfaces, three products. README: <em>"gives coding agents a
+          memory."</em> <code>package.json</code> (this branch): review-first.
+          Skill (this branch): review-first. Whatever we decide below, one of them
+          is wrong today.</td>
+        <td><code>README.md:3</code> vs <code>package.json</code> vs
+          <code>SKILL.md</code></td>
+        <td><span class="chip chip-high">high</span></td></tr>
+      <tr><td>5</td>
+        <td>"Single file, zero deps" is half false — 10 files, 14,748 lines. Zero
+          deps is true and is the better claim anyway.</td>
+        <td><code>README.md:272</code>; <code>wc -l</code></td>
+        <td><span class="chip chip-med">medium</span></td></tr>
+      <tr><td>6</td>
+        <td>Half the home dashboard is dead — 5 of 10 open sessions point at files
+          that no longer exist, including a <code>/private/tmp</code> demo and three
+          <code>pw-artifact-run*</code> test files. It's the first thing an agent
+          sees.</td>
+        <td><code>brain</code> home + per-path existence check</td>
+        <td><span class="chip chip-med">medium</span></td></tr>
+      <tr><td>7</td>
+        <td>README's quick-start output is stale — shows "4 total (3 shipped, 1
+          planned)", reality is 7 features and 10 sessions. The first claim a reader
+          can check, and it fails.</td>
+        <td><code>README.md:120-125</code> vs <code>brain</code></td>
+        <td><span class="chip chip-med">medium</span></td></tr>
+      <tr><td>8</td>
+        <td>Zero tests, zero CI. <code>verify</code>/<code>check</code> are green but
+          only assert harness self-consistency — nothing exercises CLI behavior,
+          which is why finding 2 was caught by hand.</td>
+        <td>no <code>.github/workflows</code>, no <code>test/</code></td>
+        <td><span class="chip chip-med">medium</span></td></tr>
+      <tr><td>9</td>
+        <td>Eval suite <code>skill-coverage</code> reads <code>stale</code> — scored
+          1.000 at 16:43, before this branch edited the skill.</td>
+        <td><code>brain evals</code></td>
+        <td><span class="chip chip-low">low</span></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="product-decisions">
+  <h2>Product decisions</h2>
+
+  <div class="decision-card" id="decision-positioning" data-brain-action>
+    <p><strong>1. What is the headline, given lavish-axi exists?</strong></p>
+    <p>This re-opens approved decision P1 of <code>launch-readiness</code>. I'm
+    re-opening it deliberately: P1 was decided before anyone had put our review
+    surface next to theirs, and the comparison changes the input.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-positioning" id="pos-remembers"
+            value="Review that remembers: memory is the moat, zero-setup review is the on-ramp" checked data-brain-action></td>
+          <td><label for="pos-remembers">"Review that remembers"
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Leads with the one thing lavish has no answer for; keeps the
+            zero-setup first run P1 was actually buying; the sidebar-shows-memory
+            behavior already exists and nothing else on the market does it</td>
+          <td>A compound claim is harder to fit in one line than either half</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-positioning" id="pos-review"
+            value="Keep P1 as approved: review-first is the headline" data-brain-action></td>
+          <td><label for="pos-review">Review-first (P1 as approved)</label></td>
+          <td>Zero-setup value on the first command; matches the skill and
+            package.json already on this branch</td>
+          <td>Invites a head-to-head we lose on Excalidraw editing, export, share,
+            43 shipped versions and 2,379 stars</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-positioning" id="pos-memory"
+            value="Memory-first: revert the skill and package to match today's README" data-brain-action></td>
+          <td><label for="pos-memory">Memory-first (revert)</label></td>
+          <td>Cheapest; strongest differentiation; README already written well</td>
+          <td>First command requires a <code>.brain</code> — the setup-before-value
+            problem P1 was approved to fix</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-positioning',
+        'What is the headline, given lavish-axi exists?')">
+      Queue answer
+    </button>
+    <span class="queue-ack" id="ack-decision-positioning"></span>
+  </div>
+
+  <div class="decision-card" id="decision-relationship" data-brain-action>
+    <p><strong>2. Do we compete with lavish-axi on artifact review, or interoperate?</strong></p>
+    <p>They publish <code>axi-sdk-js</code> and consume it; we hand-rolled
+    <code>lib/review/sdk.js</code> (1,442 lines) covering similar ground. Their
+    author wrote the AXI standard we vendored.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-relationship" id="rel-complement"
+            value="Complement: name lavish in the README as the artifact editor, position brain as the memory layer, keep our own review for the memory-integrated path" checked data-brain-action></td>
+          <td><label for="rel-complement">Complement, and say so
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Naming a 2.4k-star neighbour as complementary borrows credibility
+            instead of picking a fight; honest about where we came from; readers
+            self-select correctly</td>
+          <td>Concedes the artifact-editor crown explicitly; some users will
+            install theirs instead</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-relationship" id="rel-compete"
+            value="Compete: close the gaps (Excalidraw editing, export, share) and go head to head" data-brain-action></td>
+          <td><label for="rel-compete">Compete on features</label></td>
+          <td>One tool, no hand-off</td>
+          <td>Excalidraw + mermaid-to-excalidraw + React is their entire dev
+            dependency block — porting it ends zero-deps, our clearest technical
+            win, to chase parity on their turf</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-relationship" id="rel-silent"
+            value="Stay silent: don't mention lavish at all" data-brain-action></td>
+          <td><label for="rel-silent">Say nothing</label></td>
+          <td>No comparison to lose</td>
+          <td>Anyone in this ecosystem finds them in one search and draws their own
+            conclusion about why we didn't mention the standard's author</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-relationship',
+        'Do we compete with lavish-axi on artifact review, or interoperate?')">
+      Queue answer
+    </button>
+    <span class="queue-ack" id="ack-decision-relationship"></span>
+  </div>
+
+  <div class="decision-card" id="decision-floor" data-brain-action>
+    <p><strong>3. What engineering floor do we hold before publishing 0.2.0?</strong></p>
+    <p>Their <code>npm run check</code> is build + lint + format + typecheck + test +
+    skill-drift, wired into 4 workflows and release-please. We have
+    <code>verify</code> (3 checks) and <code>check</code> (13 invariants) and no CI
+    running either.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-floor" id="fl-promises"
+            value="Promise floor: CI running verify + check + a node:test suite that asserts the shipped skill's claims, plus the LICENSE commit" checked data-brain-action></td>
+          <td><label for="fl-promises">Promise floor
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Asserts the exact things that are broken today (findings 1, 2, 3);
+            stdlib-only per approved P5, so zero deps survives; one phase</td>
+          <td>No lint or formatter — style stays by convention</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-floor" id="fl-parity"
+            value="Match their gate: add eslint, prettier, tsc --noEmit and a full check script" data-brain-action></td>
+          <td><label for="fl-parity">Match their gate</label></td>
+          <td>Contributor-ready; catches a class of bugs we currently can't see</td>
+          <td>Four devDependencies and a config surface on a project whose pitch is
+            "nothing to install, nothing to break"; delays publish</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-floor" id="fl-ship"
+            value="Ship now: publish on the strength of verify + check, add CI after" data-brain-action></td>
+          <td><label for="fl-ship">Ship now</label></td>
+          <td>Fixes the biggest user-facing break (finding 1) today</td>
+          <td>Publishes an immutable version with no test asserting any of its
+            claims — the situation that produced finding 2</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-floor',
+        'What engineering floor do we hold before publishing 0.2.0?')">
+      Queue answer
+    </button>
+    <span class="queue-ack" id="ack-decision-floor"></span>
+  </div>
+</section>
+
+<section id="plan-of-record" data-brain-section="plan-of-record">
+  <h2>Plan of record</h2>
+  <p>Assumes the recommended answers above. Phase 1 is unconditional — those things
+  are broken under every option.</p>
+  <ol>
+    <template>
+      <li data-brain-item>
+        <span data-item-text data-brain-action></span>
+        <span class="item-controls">
+          <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+          <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+        </span>
+      </li>
+    </template>
+    <li data-brain-item="0"><strong>Phase 1 — commit what's already true.</strong>
+      <span data-item-text data-brain-action>Commit the uncommitted launch-readiness
+      phase-1 work (LICENSE, files allowlist, 0.2.0, repository/homepage/bugs/keywords)
+      as its own PR, minus the no-.brain claim until phase 3 backs it. Acceptance:
+      gh api reports license MIT not null; npm pack --dry-run still 16 files with no
+      .brain/ or plans/; brain skill --check clean.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span></li>
+    <li data-brain-item="1"><strong>Phase 2 — settle the story on every surface.</strong>
+      <span data-item-text data-brain-action>Rewrite README, skill description and
+      package description to one headline per decision 1, add the lavish-axi
+      relationship paragraph per decision 2, fix the single-file claim and regenerate
+      the stale quick-start output. Acceptance: all three surfaces state the same
+      headline; no sentence in README or SKILL.md is falsifiable by running a
+      command.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span></li>
+    <li data-brain-item="2"><strong>Phase 3 — make the zero-setup on-ramp real.</strong>
+      <span data-item-text data-brain-action>Null-brain review sessions: guard the ~10
+      session.brain reads in server.js, a sidebar empty state that names brain init,
+      and the nullable brain in docs/REVIEW-ARCHITECTURE.md. Acceptance: from a
+      scratch dir with no .brain, brain review p.html exits 0, a full
+      annotate-send-poll round completes, and no file is written in the scratch
+      dir.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span></li>
+    <li data-brain-item="3"><strong>Phase 4 — session hygiene.</strong>
+      <span data-item-text data-brain-action>Per approved P4: home hides sessions whose
+      artifact is gone, brain review prune deletes them explicitly, a new check row
+      counts them, and reopening stops minting date-prefixed shadow plan records.
+      Acceptance: home shows 5 sessions not 10; check goes to 14 rows and stays
+      green.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span></li>
+    <li data-brain-item="4"><strong>Phase 5 — CI, tests, publish, release.</strong>
+      <span data-item-text data-brain-action>node:test suite asserting the shipped
+      skill's promises per decision 3, amend the no-test-framework rule at
+      codebase/programming-model.md:58, first GitHub Actions workflow running verify +
+      check + the suite, then npm publish 0.2.0 and tag the release. Acceptance:
+      workflow green; npm view brain-axi version returns 0.2.0; npx -y brain-axi
+      --help works from a scratch dir with no clone.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span></li>
+  </ol>
+  <div class="list-add-row" data-brain-section-add="plan-of-record">
+    <input type="text" class="list-add-input" data-brain-action placeholder="Add a phase..." />
+    <button type="button" class="list-add-btn" data-brain-action>+ Add item</button>
+  </div>
+</section>
+
+<section id="testing-plan" data-brain-section="testing-plan">
+  <h2>Testing plan</h2>
+  <ul class="checklist">
+    <template>
+      <li data-brain-item><label><input type="checkbox">
+        <span data-item-text data-brain-action></span></label>
+        <span class="item-controls">
+          <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+          <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+        </span></li>
+    </template>
+    <li data-brain-item="0"><label><input type="checkbox">
+      <span data-item-text data-brain-action>Golden path: from a scratch dir with no
+      .brain and no clone, npx -y brain-axi review p.html opens a session, one
+      annotate-send-poll round completes, exit 0, nothing written in the scratch
+      dir</span></label>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span></li>
+    <li data-brain-item="1"><label><input type="checkbox">
+      <span data-item-text data-brain-action>Promise test: all 23 npx -y brain-axi
+      invocations in the shipped SKILL.md resolve to a real command with valid
+      flags</span></label>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span></li>
+    <li data-brain-item="2"><label><input type="checkbox">
+      <span data-item-text data-brain-action>Contract: exit 0 success/no-op, 1
+      operation error, 2 usage error; stdout TOON-only and stderr diagnostics-only
+      across a representative command set</span></label>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span></li>
+    <li data-brain-item="3"><label><input type="checkbox">
+      <span data-item-text data-brain-action>Regression: with a .brain present, a full
+      review round still persists a plan record and review round exactly as it does
+      today</span></label>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span></li>
+    <li data-brain-item="4"><label><input type="checkbox">
+      <span data-item-text data-brain-action>Regression: brain verify 3/3, brain check
+      green at 14 rows, evals skill-coverage back to 1.000</span></label>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span></li>
+    <li data-brain-item="5"><label><input type="checkbox">
+      <span data-item-text data-brain-action>Verification doc with a browser walk of a
+      no-brain review session — golden path plus the empty-state screen — per brain
+      playbook verify</span></label>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span></li>
+  </ul>
+  <div class="list-add-row" data-brain-section-add="testing-plan">
+    <input type="text" class="list-add-input" data-brain-action placeholder="Add a test..." />
+    <button type="button" class="list-add-btn" data-brain-action>+ Add item</button>
+  </div>
+</section>
+
+<section id="open-questions" data-brain-section="open-questions">
+  <h2>Open questions</h2>
+  <ul>
+    <template>
+      <li data-brain-item>
+        <span data-item-text data-brain-action></span>
+        <span class="item-controls">
+          <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+          <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+        </span></li>
+    </template>
+    <li data-brain-item="0">
+      <span data-item-text data-brain-action>lavish went from 0 to 2,379 stars in
+      about ten weeks. Do we know how — Show HN, a Twitter thread, an Anthropic
+      mention? Whatever channel worked for them is the one distribution question that
+      matters more than anything in this document, and I have no evidence about
+      it.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span></li>
+    <li data-brain-item="1">
+      <span data-item-text data-brain-action>Should we adopt their published
+      axi-sdk-js instead of maintaining our own 1,442-line lib/review/sdk.js? It would
+      end zero-deps but put us on the standard's reference implementation and cut a
+      maintenance burden.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span></li>
+    <li data-brain-item="2">
+      <span data-item-text data-brain-action>Is there a version of this where .brain
+      itself is the product and the review UI is optional — i.e. brain-axi ships the
+      memory harness and explicitly recommends lavish for artifact review? That's the
+      most honest read of our comparative strengths and the biggest strategic
+      swing.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span></li>
+    <li data-brain-item="3">
+      <span data-item-text data-brain-action>ai-work is the one in-progress feature
+      and the one-in-progress policy blocks claiming another. Does this land as a new
+      feature, or as a revision of the launch-readiness plan?</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span></li>
+  </ul>
+  <div class="list-add-row" data-brain-section-add="open-questions">
+    <input type="text" class="list-add-input" data-brain-action placeholder="Add an open question..." />
+    <button type="button" class="list-add-btn" data-brain-action>+ Add item</button>
+  </div>
+</section>
+
+<section id="verdict">
+  <h2>Verdict</h2>
+  <div>
+    <button type="button" class="btn-approve" data-brain-action
+      onclick="queueVerdict('approve')">Approve</button>
+    <button type="button" class="btn-request-changes" data-brain-action
+      onclick="queueVerdict('request-changes')">Request changes</button>
+  </div>
+</section>
+
+<script>
+  function queueDecision(cardId, question) {
+    var card = document.getElementById(cardId);
+    var checked = card.querySelector('input[type="radio"]:checked');
+    if (!checked) return;
+    var choice = checked.value;
+    if (window.brain && typeof window.brain.queuePrompt === "function") {
+      window.brain.queuePrompt({
+        tag: "decision",
+        queueKey: cardId,
+        prompt: question + ": " + choice,
+        target: { type: "decision", question: question, choice: choice }
+      });
+    }
+    var ack = document.getElementById("ack-" + cardId);
+    if (ack) ack.textContent = "Queued: " + choice;
+  }
+
+  function queueVerdict(verdict) {
+    if (!(window.brain && typeof window.brain.queuePrompt === "function")) return;
+    window.brain.queuePrompt({
+      tag: "message",
+      queueKey: "verdict",
+      prompt: verdict === "approve"
+        ? "Review approved as written."
+        : "Requesting changes — see annotations."
+    });
+  }
+</script>
+
+<script>
+  (function () {
+    function queueList(section, queueKey, prompt, action, item, index) {
+      if (window.brain && typeof window.brain.queuePrompt === "function") {
+        window.brain.queuePrompt({
+          tag: "list-edit",
+          queueKey: queueKey,
+          prompt: prompt,
+          target: { type: "list-edit", section: section, action: action, item: item, index: index }
+        });
+      }
+    }
+
+    function slugify(s) {
+      return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "").slice(0, 60) || "item";
+    }
+
+    function itemText(el) {
+      var t = el.querySelector("[data-item-text]");
+      return (t || el).textContent.trim();
+    }
+
+    function addBadge(el, cls, label) {
+      var badge = el.querySelector("." + cls);
+      if (!badge) {
+        badge = document.createElement("span");
+        badge.className = "item-badge " + cls;
+        el.appendChild(badge);
+      }
+      badge.textContent = label;
+    }
+
+    function toggleRemoved(item, section) {
+      var index = Number(item.getAttribute("data-brain-item"));
+      var text = itemText(item);
+      var removed = item.classList.toggle("item-removed");
+      var xBtn = item.querySelector(".item-x");
+      var restoreBtn = item.querySelector(".item-restore");
+      if (xBtn) xBtn.hidden = removed;
+      if (restoreBtn) restoreBtn.hidden = !removed;
+      var key = section + ":remove:" + index;
+      if (removed) {
+        queueList(section, key, "Remove from " + section + ": \"" + text + "\"", "remove", text, index);
+      } else {
+        queueList(section, key, "Cancelled: keep \"" + text + "\" in " + section, "edit", text, index);
+      }
+    }
+
+    function startEdit(item, section) {
+      if (item.classList.contains("item-removed")) return;
+      var span = item.querySelector("[data-item-text]");
+      if (!span || span.isContentEditable) return;
+      var before = span.textContent;
+      span.setAttribute("contenteditable", "true");
+      span.focus();
+
+      function commit() {
+        span.removeAttribute("contenteditable");
+        span.removeEventListener("blur", commit);
+        span.removeEventListener("keydown", onKey);
+        var text = span.textContent.trim();
+        if (!text || text === before.trim()) { span.textContent = before; return; }
+        var index = Number(item.getAttribute("data-brain-item"));
+        addBadge(item, "item-badge-edited", "edited");
+        queueList(section, section + ":edit:" + index,
+          "Edit " + section + " item " + index + ": \"" + text + "\"", "edit", text, index);
+      }
+      function onKey(ev) {
+        if (ev.key === "Enter") { ev.preventDefault(); span.blur(); }
+        else if (ev.key === "Escape") { span.textContent = before; ev.preventDefault(); span.blur(); }
+      }
+      span.addEventListener("blur", commit);
+      span.addEventListener("keydown", onKey);
+    }
+
+    function commitAdd(addRow) {
+      var section = addRow.getAttribute("data-brain-section-add");
+      var input = addRow.querySelector(".list-add-input");
+      var text = input.value.trim();
+      if (!text) return;
+      var list = document.querySelector("[data-brain-section=\"" + section + "\"]");
+      var tpl = list && list.querySelector("template");
+      if (!list || !tpl) return;
+      var node = document.importNode(tpl.content, true);
+      var item = node.querySelector("[data-brain-item]") || node.firstElementChild;
+      item.setAttribute("data-brain-item", "new");
+      var span = item.querySelector("[data-item-text]");
+      if (span) span.textContent = text;
+      item.classList.add("item-proposed");
+      addBadge(item, "item-badge-proposed", "proposed");
+      list.insertBefore(node, tpl.nextSibling);
+      input.value = "";
+      queueList(section, section + ":add:" + slugify(text),
+        "Add to " + section + ": \"" + text + "\"", "add", text, null);
+    }
+
+    document.addEventListener("click", function (ev) {
+      var xBtn = ev.target.closest(".item-x");
+      var restoreBtn = ev.target.closest(".item-restore");
+      if (xBtn || restoreBtn) {
+        var item = ev.target.closest("[data-brain-item]");
+        var section = ev.target.closest("[data-brain-section]");
+        if (item && section) toggleRemoved(item, section.getAttribute("data-brain-section"));
+        return;
+      }
+      var addBtn = ev.target.closest(".list-add-btn");
+      if (addBtn) {
+        var addRow = ev.target.closest("[data-brain-section-add]");
+        if (addRow) commitAdd(addRow);
+      }
+    });
+
+    document.addEventListener("dblclick", function (ev) {
+      var item = ev.target.closest("[data-brain-item]");
+      if (!item) return;
+      var section = item.closest("[data-brain-section]");
+      if (section) startEdit(item, section.getAttribute("data-brain-section"));
+    });
+
+    // Double-clicking label text toggles the checkbox twice on the way into edit
+    // mode (click, click, dblclick all fire) — it nets back to its original state,
+    // so do NOT "fix" this with a preventDefault; that would break click-to-check.
+    document.addEventListener("keydown", function (ev) {
+      if (ev.key !== "Enter") return;
+      var addRow = ev.target.closest("[data-brain-section-add]");
+      if (addRow && ev.target.classList.contains("list-add-input")) {
+        ev.preventDefault();
+        commitAdd(addRow);
+      }
+    });
+  })();
+</script>

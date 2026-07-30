@@ -1,0 +1,1256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Launch readiness — brain-axi</title>
+<style>
+  :root {
+    --bg: #faf9f5; --surface: #ffffff; --fg: #141413; --fg-secondary: #3d3d3a;
+    --muted: #73726c; --border: #dedcd1; --highlight: #fff7ca; --accent: #d97757;
+    --space-2: 8px; --space-3: 16px; --space-4: 24px; --space-6: 40px;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+      Helvetica, Arial, sans-serif;
+    font-size: 16px; background: var(--bg); color: var(--fg); line-height: 1.6;
+    max-width: 72ch; margin: 0 auto; padding: var(--space-6) var(--space-4);
+  }
+  h1, h2, h3 {
+    font-family: Charter, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    font-weight: 600; line-height: 1.25; color: var(--fg);
+  }
+  h1 { font-size: 1.75em; }
+  h2 { font-size: 1.3em; font-weight: 500; margin-top: var(--space-6);
+    border-bottom: 1px solid var(--border); padding-bottom: var(--space-2); }
+  h3 { font-size: 1.05em; font-weight: 500; }
+  p, li { color: var(--fg-secondary); }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.88em; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 4px; padding: 0 4px; }
+  mark, .highlight { background: var(--highlight); color: var(--fg); padding: 0 2px; }
+  .chip { display: inline-block; padding: 2px 10px; border-radius: 999px;
+    font-size: 0.8em; font-weight: 600; border: 1px solid var(--border); }
+  .chip-status-draft { background: var(--surface); color: var(--muted); }
+  .chip-status-in-review { background: var(--highlight); color: var(--fg);
+    border-color: var(--highlight); }
+  .chip-status-reviewed { background: var(--fg); color: #fff; border-color: var(--fg); }
+  .chip-high { color: var(--accent); border-color: var(--accent); }
+  .chip-med { color: var(--fg-secondary); }
+  .chip-low { color: var(--muted); }
+  .decision-card { background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: var(--space-4); margin: var(--space-4) 0; }
+  table { width: 100%; border-collapse: collapse; margin: var(--space-3) 0;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    overflow: hidden; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid
+    var(--border); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  .tag-recommended { color: var(--accent); font-weight: 600; }
+  .btn-queue, .btn-approve, .btn-request-changes {
+    border: none; border-radius: 10px; padding: 8px 16px; font-weight: 600;
+    cursor: pointer; font-size: 0.95em;
+  }
+  .btn-queue, .btn-approve { background: var(--fg); color: #fff; }
+  .btn-request-changes { background: transparent; color: var(--fg);
+    border: 1px solid var(--border); }
+  .queue-ack { margin-left: var(--space-3); font-size: 0.9em; color: var(--muted); }
+  .checklist { list-style: none; padding: 0; }
+  .checklist li { margin: var(--space-2) 0; }
+  pre.mermaid { text-align: center; }
+  pre.mermaid svg { display: block; margin: 0 auto; }
+  .arch-diagram .box { fill: var(--surface); stroke: var(--fg-secondary); stroke-width: 2; }
+  .arch-diagram .box-label { fill: var(--fg); font-size: 14px; }
+  .arch-diagram .arrow { stroke: var(--muted); stroke-width: 2; marker-end: url(#arrow); }
+
+  /* editable-list kit */
+  .item-x, .item-restore, .list-add-btn { cursor: pointer; border: 1px solid var(--border);
+    background: var(--surface); border-radius: 6px; font-size: 0.85em; padding: 1px 8px;
+    color: var(--fg-secondary); }
+  /* item-x and item-restore are told apart by their label text ("x" vs "restore"),
+     not by color — this palette keeps color-coding to a single accent.
+     Do NOT add display:none to .item-restore: the hidden attribute already hides
+     it, and JS only toggles the hidden property. */
+  [data-item-text] { cursor: text; }
+  .item-removed { opacity: 0.5; }
+  .item-removed [data-item-text] { text-decoration: line-through; }
+  .item-edited [data-item-text] { border-bottom: 2px dotted var(--accent); }
+  .item-badge { font-size: 0.75em; color: var(--muted); margin-left: 6px; font-style: italic; }
+  .item-badge-proposed { color: var(--accent); }
+  .item-proposed { border-left: 2px dashed var(--accent); padding-left: 6px; }
+  .list-add-row { display: flex; gap: 8px; margin-top: var(--space-2); }
+  .list-add-input { flex: 1; padding: 6px 10px; border: 1px solid var(--border);
+    border-radius: 6px; background: var(--surface); color: var(--fg); }
+  .item-controls { white-space: nowrap; }
+  .metric { font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Launch readiness — brain-axi</h1>
+  <div>
+    <span>2026-07-30</span> ·
+    <span>feature: launch-readiness (proposed)</span> ·
+    <span class="chip chip-status-draft">draft</span> ·
+    <span>round 0</span>
+  </div>
+</header>
+
+<section id="tldr">
+  <h2>TL;DR</h2>
+  <p><code>brain-axi</code> is not on npm, and the skill we tell people to install
+  invokes <code>npx -y brain-axi</code> <span class="metric">23</span> times — so
+  <mark>the documented install path 404s for everyone who is not you</mark>. This
+  plan publishes it, moves the pitch onto the one surface nothing else does well
+  (human-in-the-loop plan and screenshot review, which already runs with no
+  <code>.brain/</code> at all), and closes the two credibility gaps a first-time
+  reader hits: a home dashboard listing dead sessions, and zero self-verification.
+  Five phases; the thin tier is phase 1 alone.</p>
+</section>
+
+<section id="product-brief">
+  <h2>Product brief</h2>
+
+  <h3>Problem + evidence</h3>
+  <p>A person who wants to try this cannot. Four checkable observations:</p>
+  <table>
+    <thead><tr><th>Observed</th><th>Command run</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>The package does not exist on the registry</td>
+        <td><code>npm view brain-axi version</code></td>
+        <td><code>E404 'brain-axi@*' is not in this registry</code></td>
+      </tr>
+      <tr>
+        <td>The installed skill depends on that package on every line</td>
+        <td><code>grep -c "npx -y brain-axi" .claude/skills/brain/SKILL.md</code></td>
+        <td><span class="metric">23</span> invocations, all currently dead</td>
+      </tr>
+      <tr>
+        <td>The harness has never planned its own distribution</td>
+        <td><code>brain search "npm publish"</code></td>
+        <td><span class="metric">0</span> matches in <code>.brain</code>
+          (null result, across 23 checkpoints and 9 plans)</td>
+      </tr>
+      <tr>
+        <td>The first screen a new reader sees is already wrong</td>
+        <td><code>brain</code> (home) + file-existence check on each row</td>
+        <td><span class="metric">11</span> open sessions,
+          <mark><span class="metric">6</span> pointing at files that no longer
+          exist</mark> — <code>/private/tmp/brain-review-demo/plan.html</code>,
+          <code>…/posthog-analytics-plan.html</code>,
+          <code>pw-artifact-debug|runA|runC.html</code>,
+          <code>ZZ-demo-ux.html</code></td>
+      </tr>
+    </tbody>
+  </table>
+  <p>A fifth, about the tool's own claim on reliability:
+  <code>brain search "test framework"</code> returns
+  <span class="metric">8</span> matches, every one of them asserting there isn't
+  one — including the standing rule at
+  <code>codebase/programming-model.md:58</code>, <em>"Do NOT add an npm
+  dependency, a build step, or a test framework."</em> A harness whose pitch is
+  that it makes agents verifiable currently verifies itself by being run by hand.
+  That rule is a real constraint, not an oversight, so phase 4 asks to amend it
+  explicitly rather than quietly breaking it (technical decision 1).</p>
+
+  <h3>User + job to be done</h3>
+  <p>Two, and they want different things:</p>
+  <p><strong>The evaluating agent, first contact.</strong> It has been told
+  "write the plan and review it with me," it is sitting in a repo with no
+  <code>.brain/</code>, and its job is to get a human looking at a plan in the
+  browser <em>without</em> mutating the repo or asking permission to scaffold a
+  directory. The good news, verified in the source: <code>cmdReview</code>
+  (<code>bin/brain.js:2209</code>) never calls <code>findBrain</code>, and session
+  state lives in <code>~/.brain-axi/state.json</code>
+  (<code>lib/review/store.js:20</code>) — so <mark>review already works with no
+  brain at all</mark>. Today that agent still fails, because the one command it
+  would run resolves to a 404.</p>
+  <p><strong>The returning maintainer agent, session start.</strong> It runs
+  <code>brain</code> (or gets <code>brain context</code> from the SessionStart
+  hook) and wants the dashboard to be true, because it makes its next move from
+  that output. Today <span class="metric">6</span> of
+  <span class="metric">11</span> session rows are noise it has to learn to ignore
+  — and an agent that learns to ignore one row of a dashboard discounts the
+  rest of it too.</p>
+
+  <h3>Success metrics</h3>
+  <table>
+    <thead><tr><th>#</th><th>Metric</th><th>Today</th><th>Target</th><th>How it's observed</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>M1</td>
+        <td>Cold start works (tier 3 — named check, no instrumentation)</td>
+        <td>exit 1, <code>E404</code></td>
+        <td>exit 0, browser opens</td>
+        <td>From <code>/tmp/fresh</code>, no <code>.brain/</code>, nothing on
+          <code>PATH</code>: <code>npx -y brain-axi review plan.html</code></td>
+      </tr>
+      <tr>
+        <td>M2</td>
+        <td>Dangling sessions on home (tier 2 — countable proxy)</td>
+        <td><span class="metric">6</span> of <span class="metric">11</span></td>
+        <td><span class="metric">0</span></td>
+        <td>Same file-existence check as the evidence table, run against
+          <code>brain</code> home output</td>
+      </tr>
+      <tr>
+        <td>M3</td>
+        <td>Self-verification depth (tier 2 — countable proxy)</td>
+        <td><span class="metric">13</span> <code>check</code> rows,
+          <span class="metric">2</span> <code>verify</code> checks,
+          <span class="metric">0</span> assertions, no CI</td>
+        <td>≥<span class="metric">20</span> assertions in a <code>tests</code>
+          check, green in CI on every push</td>
+        <td><code>brain verify</code> results table + the Action's status</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Non-goals</h3>
+  <ul>
+    <li><strong>Not deleting or deprecating the memory layer.</strong> A reader
+      seeing "reposition off memory" would reasonably expect <code>.brain/</code>
+      to get cut. It doesn't — it stays the substrate and this repo keeps
+      dogfooding it. What changes is that it stops being the entry fee.</li>
+    <li><strong>Not the <code>watch</code> dashboard's live-watcher CTA.</strong>
+      Reasonable to expect, since phase 5 touches the annotate loop. Declined
+      because plan <code>2026-07-17-annotation-watch-runner</code> (draft, bound
+      to <code>feat-004</code>) already owns that decision set — transport,
+      runner start policy, CTA wording. Re-deciding it here would fork a
+      decision that already has a plan waiting on review.</li>
+    <li><strong>No pricing, hosting, or telemetry.</strong> MIT CLI stays an MIT
+      CLI. Distribution is the bottleneck; value capture is a different problem
+      and putting it in scope would make every phase above negotiable.</li>
+  </ul>
+
+  <h3>Scope tiers</h3>
+  <table>
+    <thead><tr><th>Tier</th><th>Ships</th><th>Costs</th><th>Leaves on the table</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>Thin</strong><br /><span class="chip chip-low">phase 1</span></td>
+        <td><code>files</code> allowlist, <code>0.2.0</code> published, cold
+          <code>npx</code> smoke passes</td>
+        <td>~1 phase</td>
+        <td>Pitch still memory-first; home still lists dead sessions; still no
+          tests. But the tool becomes installable, which nothing else in this
+          plan matters without.</td>
+      </tr>
+      <tr>
+        <td><strong>Complete</strong><br /><span class="chip chip-med">phases 1–3</span></td>
+        <td>Thin + review-first README/skill entry + session hygiene
+          (<code>review prune</code>, home filter, a new <code>check</code> row)</td>
+        <td>~3 phases</td>
+        <td>No automated self-verification; the annotate loop stays an inbox the
+          agent has to poll by hand.</td>
+      </tr>
+      <tr>
+        <td><strong>Gold</strong><br /><span class="chip chip-high">phases 1–5</span></td>
+        <td>Complete + <code>node:test</code> suite wired into
+          <code>verify.json</code> + GitHub Action + <code>shots poll</code>
+          closing the annotate loop</td>
+        <td>~5 phases</td>
+        <td>Nothing this plan identified. Adoption proof (three outside repos
+          using it for two weeks) is a follow-on that needs time, not code.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Prior art</h3>
+  <ul>
+    <li><code>brain plans</code> → <span class="metric">9</span> plans. None
+      touch distribution, publishing, or testing. The closest is
+      <code>2026-07-17-annotation-watch-runner</code> (draft, 0 rounds, bound to
+      <code>annotation-watch</code>, status <code>planned</code>), which owns
+      phase 5's transport decision — cited, not re-decided.</li>
+    <li><code>brain search "npm publish"</code> →
+      <span class="metric">0</span> matches. Stated as a null result: the repo has
+      never had a distribution plan, so there is no prior decision to overturn.</li>
+    <li><code>brain features</code> → <span class="metric">7</span> features
+      (<code>core-cli</code>, <code>brain-review</code>, <code>shot-review</code>,
+      <code>harness-mode</code>, <code>ai-work</code>, <code>planning-ux</code>,
+      <code>annotation-watch</code>), every one of them inward-facing. No feature
+      has ever owned "a stranger can install this."</li>
+    <li>Outside the repo: memory-in-a-directory is a crowded pattern (Cline's
+      memory-bank, <code>task-master-ai</code>, spec-kit, openspec, Serena, plus
+      Claude Code's own native memory and plan mode). Named because it is the
+      <em>reason</em> the pitch moves — not because the memory layer is bad. The
+      review loop has no comparable crowd.</li>
+  </ul>
+</section>
+
+<section id="context">
+  <h2>Context</h2>
+  <p>The most recent checkpoint (<code>brain progress</code>, 2026-07-30) reads:
+  <em>"vendored the AXI standard into the repo as the installable brain-axi
+  skill… next: commit and push so <code>npx skills add
+  SeanningTatum/brain-axi --skill brain-axi</code> resolves from GitHub."</em>
+  That next-step is a distribution step — routed through GitHub, because npm was
+  never in the picture. This plan is the missing half of that same thought.</p>
+  <p><code>brain features</code> currently has <code>ai-work</code>
+  <strong>in-progress</strong> and <code>planning-ux</code> <strong>planned</strong>
+  even though PR #13 is open for planning-ux and its four phases are checkpointed
+  as complete — so the tracker itself has drift worth resolving. More
+  practically: <code>policy.one_in_progress_at_a_time</code> means
+  <code>launch-readiness</code> cannot be flipped in-progress until
+  <code>ai-work</code> is shipped or blocked. That sequencing is open question 4,
+  not something this plan decides unilaterally.</p>
+  <p>Working branch is <code>feat/planning-ux</code> with uncommitted edits to
+  <code>README.md</code>, <code>CLAUDE.md</code>, <code>.brain/HARNESS.md</code>,
+  and <code>.brain/rules/toon-axi.md</code>. Phase 1 assumes those land first, on
+  their own branch, so the publish commit is small enough to audit.</p>
+</section>
+
+<section id="big-picture">
+  <h2>Big picture</h2>
+  <p>What changes is the first hop, and what is required before it. Solid path is
+  the proposed cold start; the dashed branch is the memory layer, which becomes
+  opt-in rather than a precondition.</p>
+  <pre class="mermaid">
+flowchart TD
+  A["Agent, first contact
+  (repo has no .brain/)"] --> B["npx -y brain-axi review plan.html"]
+  B -->|"today: E404, not published"| X["dead end"]
+  B -->|"after phase 1"| C["review server
+  127.0.0.1:4517"]
+  C --> D["state.json in ~/.brain-axi
+  (no .brain/ needed)"]
+  C --> E["browser chrome
+  artifact + composer"]
+  E -->|"human pins + sends"| F["brain review poll
+  blocking, returns prompts"]
+  F --> A
+  C -.->|"help: line offers it,
+  phase 2"| G["brain init
+  scaffold .brain/"]
+  G -.-> H["memory layer:
+  features, progress, docs"]
+  H -.->|"phase 5"| I["brain shots poll
+  closes the watch loop"]
+  </pre>
+</section>
+
+<section id="product-decisions">
+  <h2>Product decisions</h2>
+  <p>What we are building, before how. Each card has a recommendation and the
+  reasoning behind it — click one and queue it.</p>
+
+  <div class="decision-card" id="decision-headline" data-brain-action>
+    <p><strong>1. What is the headline job on the README and in the skill's
+    opening lines?</strong></p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-headline" id="hl-review"
+            value="Review-first: human-in-the-loop plan and screenshot review is the headline" checked data-brain-action></td>
+          <td><label for="hl-review">Review-first
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Uncontested ground; works with zero setup and zero repo mutation;
+            30-second time-to-value from one command</td>
+          <td>Demotes the subsystem the last 23 checkpoints were spent on</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-headline" id="hl-memory"
+            value="Memory-first: keep the current agent-memory pitch" data-brain-action></td>
+          <td><label for="hl-memory">Memory-first (status quo)</label></td>
+          <td>Matches where the code volume actually is; no doc churn</td>
+          <td>Competes head-on with ~6 named tools and the host runtime's own
+            memory; entry fee is adopting a directory</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-headline" id="hl-dual"
+            value="Dual pitch: review and memory presented as co-equal" data-brain-action></td>
+          <td><label for="hl-dual">Dual pitch</label></td>
+          <td>Nothing gets demoted; honest about the two halves</td>
+          <td>Two headlines is no headline — the reader picks neither and the
+            first command is ambiguous</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-headline',
+        'What is the headline job on the README and in the skill opening?')">
+      Queue answer
+    </button>
+    <span class="queue-ack" id="ack-decision-headline"></span>
+  </div>
+
+  <div class="decision-card" id="decision-no-brain" data-brain-action>
+    <p><strong>2. Should "works with no <code>.brain/</code>" be a guaranteed,
+    advertised promise — or an undocumented accident that happens to hold
+    today?</strong></p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-no-brain" id="nb-guarantee"
+            value="Guarantee it: documented promise, asserted by a test, help line offers brain init" checked data-brain-action></td>
+          <td><label for="nb-guarantee">Guarantee it
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>The zero-commitment entry the whole repositioning rests on; a test
+            stops a future refactor from adding a <code>findBrain</code> call and
+            silently killing it</td>
+          <td>Pins a behavior that is currently free to change</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-no-brain" id="nb-asis"
+            value="Leave as-is: true today, unpromised and untested" data-brain-action></td>
+          <td><label for="nb-asis">Leave as-is</label></td>
+          <td>Zero work</td>
+          <td>The pitch's load-bearing claim has nothing holding it up; one
+            refactor away from a broken README</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-no-brain',
+        'Should no-.brain review be a guaranteed advertised promise?')">
+      Queue answer
+    </button>
+    <span class="queue-ack" id="ack-decision-no-brain"></span>
+  </div>
+
+  <div class="decision-card" id="decision-pkg-name" data-brain-action>
+    <p><strong>3. What name do we publish under?</strong></p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-pkg-name" id="pn-unscoped"
+            value="Unscoped brain-axi — the name the skill already uses 23 times" checked data-brain-action></td>
+          <td><label for="pn-unscoped">Unscoped <code>brain-axi</code>
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Registry says the name is free (<code>E404</code>); every existing
+            doc, skill line, and playbook string already points here — zero
+            rewrites</td>
+          <td>No namespace protection against a similarly-named package later</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-pkg-name" id="pn-scoped"
+            value="Scoped @seanningtatum/brain-axi" data-brain-action></td>
+          <td><label for="pn-scoped">Scoped</label></td>
+          <td>Ownership unambiguous; name can never be sniped</td>
+          <td>Rewrites 23 skill lines plus every playbook and README string, and
+            <code>npx -y @scope/name</code> reads worse in the one command we
+            most want a stranger to type</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-pkg-name', 'What npm name do we publish under?')">
+      Queue answer
+    </button>
+    <span class="queue-ack" id="ack-decision-pkg-name"></span>
+  </div>
+
+  <div class="decision-card" id="decision-stale" data-brain-action>
+    <p><strong>4. What should <code>brain</code> home do about a session whose
+    artifact file is gone?</strong></p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-stale" id="st-hide-prune"
+            value="Hide from home automatically, delete only via explicit brain review prune" checked data-brain-action></td>
+          <td><label for="st-hide-prune">Hide automatically, prune explicitly
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Dashboard is true immediately with no data loss; a file on an
+            unmounted volume reappears rather than being destroyed; deletion stays
+            a deliberate act</td>
+          <td>Two concepts (hidden vs pruned) for the reader to hold</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-stale" id="st-autodelete"
+            value="Auto-delete dangling sessions on read" data-brain-action></td>
+          <td><label for="st-autodelete">Auto-delete</label></td>
+          <td>One concept; state self-heals</td>
+          <td>Destroys review history for a file that is merely moved or on an
+            unmounted disk — irreversible, and the round records are the thing
+            worth keeping</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-stale" id="st-manual"
+            value="Manual only: add prune, change nothing on home" data-brain-action></td>
+          <td><label for="st-manual">Manual only</label></td>
+          <td>Smallest change; home stays literal</td>
+          <td>Leaves M2 at 6 of 11 until somebody remembers to run a
+            command — the dashboard keeps lying by default</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-stale',
+        'What should home do about sessions whose artifact file is gone?')">
+      Queue answer
+    </button>
+    <span class="queue-ack" id="ack-decision-stale"></span>
+  </div>
+</section>
+
+<section id="decisions">
+  <h2>Decisions needed</h2>
+  <p>How, given the answers above.</p>
+
+  <div class="decision-card" id="decision-tests" data-brain-action>
+    <p><strong>1. <code>codebase/programming-model.md:58</code> says "Do NOT add
+    an npm dependency, a build step, or a test framework." Phase 4 needs tests.
+    Which way?</strong></p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-tests" id="tf-nodetest"
+            value="Amend the rule to allow node:test — stdlib only, still zero deps and no build" checked data-brain-action></td>
+          <td><label for="tf-nodetest">Amend the rule, use <code>node:test</code>
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Honors what the rule was protecting (no dependency, no build step,
+            no bundler) while dropping the part that was protecting nothing;
+            <code>node --test</code> ships with Node 18+</td>
+          <td>Amends a standing rule, so the rule doc and
+            <code>HARNESS.md</code> must both be edited in the same commit</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-tests" id="tf-shell"
+            value="Keep the rule: shell-script assertions registered in verify.json" data-brain-action></td>
+          <td><label for="tf-shell">Shell assertions, rule untouched</label></td>
+          <td>No rule amendment; reuses the <code>verify.json</code> registry
+            that already exists</td>
+          <td>Reinvents a test runner in bash; no per-assertion reporting; the
+            "no test framework" rule survives in letter while being violated in
+            spirit</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-tests" id="tf-none"
+            value="No tests: keep manual CLI invocation as the only verification" data-brain-action></td>
+          <td><label for="tf-none">No tests</label></td>
+          <td>Zero work; matches the rule exactly as written</td>
+          <td>Leaves M3 unmet and the credibility gap open — this is the gap a
+            reliability tool can least afford</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-tests',
+        'How do we add tests given the no-test-framework rule?')">
+      Queue answer
+    </button>
+    <span class="queue-ack" id="ack-decision-tests"></span>
+  </div>
+
+  <div class="decision-card" id="decision-publish-mech" data-brain-action>
+    <p><strong>2. How does a publish actually happen?
+    <code>package.json</code> currently has no <code>scripts</code> at all, which
+    is itself a stated property of this repo.</strong></p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-publish-mech" id="pm-manual"
+            value="files allowlist + manual npm publish after brain verify; no scripts added" checked data-brain-action></td>
+          <td><label for="pm-manual"><code>files</code> allowlist, manual publish
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Keeps <code>package.json</code> script-free as documented; the
+            human stays in the loop on an irreversible, public action</td>
+          <td>Nothing mechanically forces <code>brain verify</code> before a
+            publish — it's a documented step, not a gate</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-publish-mech" id="pm-prepublish"
+            value="Add a prepublishOnly script running brain verify" data-brain-action></td>
+          <td><label for="pm-prepublish"><code>prepublishOnly</code> gate</label></td>
+          <td>Publishing a red build becomes impossible</td>
+          <td>Adds the repo's first npm script, contradicting a documented
+            property; also runs on every local <code>npm pack</code></td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-publish-mech" id="pm-action"
+            value="Publish from a tag-triggered GitHub Action with an npm token" data-brain-action></td>
+          <td><label for="pm-action">Release Action on tag</label></td>
+          <td>Reproducible; release notes and publish in one place</td>
+          <td>Needs a stored npm token and makes the first publish depend on CI
+            that does not exist yet — more moving parts than the thin tier wants</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-publish-mech', 'How does a publish happen?')">
+      Queue answer
+    </button>
+    <span class="queue-ack" id="ack-decision-publish-mech"></span>
+  </div>
+
+  <div class="decision-card" id="decision-version" data-brain-action>
+    <p><strong>3. What version does the first publish carry?</strong></p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-version" id="v-020"
+            value="0.2.0 — pre-1.0, signals the surface can still move" checked data-brain-action></td>
+          <td><label for="v-020"><code>0.2.0</code>
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Honest: 21 commands in 17 days with no external users is not a
+            stable surface, and pre-1.0 says so without a paragraph of caveats</td>
+          <td>Some readers discount pre-1.0 packages on sight</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-version" id="v-100"
+            value="1.0.0 — commit to the surface" data-brain-action></td>
+          <td><label for="v-100"><code>1.0.0</code></label></td>
+          <td>Reads as finished; semver breaking-change discipline starts now</td>
+          <td>Commits to a command surface no outside user has touched yet;
+            every rename after this is a major bump</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-version', 'What version does the first publish carry?')">
+      Queue answer
+    </button>
+    <span class="queue-ack" id="ack-decision-version"></span>
+  </div>
+
+  <div class="decision-card" id="decision-phase5" data-brain-action>
+    <p><strong>4. Phase 5 (<code>shots poll</code>) already has a plan of its own
+    — <code>2026-07-17-annotation-watch-runner</code>, bound to
+    <code>feat-004</code>, never reviewed. How do the two relate?</strong></p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-phase5" id="p5-defer"
+            value="Keep phase 5 as a pointer: this plan lists it as gold-tier scope, the annotation-watch plan keeps its own decision cards and gets reviewed separately" checked data-brain-action></td>
+          <td><label for="p5-defer">Pointer only, review that plan separately
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>One decision lives in one place; that plan's transport card
+            (long-poll vs <code>fs.watch</code> vs hybrid) is more considered
+            than anything this plan would restate</td>
+          <td>Gold tier then depends on a second review round happening</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-phase5" id="p5-absorb"
+            value="Absorb it: bring the transport decision into this plan and mark the other plan superseded" data-brain-action></td>
+          <td><label for="p5-absorb">Absorb and supersede</label></td>
+          <td>One review round, one artifact to track</td>
+          <td>Discards a written plan that already framed the problem better,
+            and stretches this plan past launch readiness into feature work</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-phase5" id="p5-drop"
+            value="Drop phase 5 from this plan entirely; gold tier ends at phase 4" data-brain-action></td>
+          <td><label for="p5-drop">Drop from scope</label></td>
+          <td>Tightest possible plan; launch readiness only</td>
+          <td>Ships a half-closed feedback loop — the README currently advertises
+            it as "planned, not yet shipped," which is the kind of promise a new
+            reader checks</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-phase5',
+        'How does phase 5 relate to the existing annotation-watch plan?')">
+      Queue answer
+    </button>
+    <span class="queue-ack" id="ack-decision-phase5"></span>
+  </div>
+
+  <h3>Effort read</h3>
+  <p>Rough sizing, if you want to push back on it — drag and it queues:</p>
+  <p>
+    <label for="effort-phase4">Phase 4 (tests + CI) effort:</label>
+    <input type="range" min="1" max="5" value="2" id="effort-phase4"
+      oninput="document.getElementById('effort-phase4-out').textContent = this.value"
+      onchange="window.brain &amp;&amp; window.brain.queuePrompt({ tag: 'decision',
+        queueKey: 'effort-phase4', prompt: 'Effort estimate for Phase 4 (tests + CI): ' + this.value + '/5',
+        target: { type: 'decision', question: 'Effort estimate for Phase 4 (tests + CI)', choice: String(this.value) } })" />
+    <output id="effort-phase4-out">2</output>/5
+  </p>
+</section>
+
+<section id="plan-of-record" data-brain-section="plan-of-record">
+  <h2>Plan of record</h2>
+  <p>Tier boundaries land on phase boundaries: stop after 1 for thin, after 3 for
+  complete, after 5 for gold. Double-click any phase to rewrite it; <code>x</code>
+  to cut it.</p>
+  <ol>
+    <template>
+      <li data-brain-item>
+        <span data-item-text data-brain-action></span>
+        <span class="item-controls">
+          <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+          <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+        </span>
+      </li>
+    </template>
+    <li data-brain-item="0">
+      <strong>Phase 1 — publish.</strong>
+      <span data-item-text data-brain-action>Add a <code>files</code> allowlist
+      (<code>bin</code>, <code>lib</code>, <code>README.md</code>,
+      <code>LICENSE</code>) so the tarball stops carrying <code>.brain/</code>,
+      <code>plans/</code>, and stray root HTML; set the version; publish; smoke it
+      cold. Acceptance: <code>npm pack --dry-run</code> lists no
+      <code>.brain/</code> or <code>plans/</code> entry; <code>npm view brain-axi
+      version</code> returns the published version; from <code>/tmp/fresh</code>
+      with nothing on <code>PATH</code>, <code>npx -y brain-axi review
+      plan.html</code> exits 0 and opens a session (M1).</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="1">
+      <strong>Phase 2 — reposition the entry point.</strong>
+      <span data-item-text data-brain-action>README leads with the review
+      one-liner; <code>.brain/</code> moves to an "if you want it to remember"
+      section; the skill's opening section leads with review; <code>brain
+      review</code> run outside a brain repo gains a <code>help:</code> line
+      offering <code>brain init</code>. Acceptance: README's first code block is
+      the review command; <code>brain review</code> from a directory with no
+      <code>.brain/</code> prints that help line and still exits 0;
+      <code>brain skill --check</code> clean after regeneration.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="2">
+      <strong>Phase 3 — session hygiene.</strong>
+      <span data-item-text data-brain-action>Home hides sessions whose artifact
+      file is missing and reports the hidden count on one line; <code>brain review
+      prune</code> deletes them on request and reports what it removed;
+      <code>brain check</code> gains a row asserting every listed open session
+      resolves. Acceptance: home shows 0 dangling rows and a
+      <code>hidden: 6</code>-style line (M2); <code>review prune</code> reports 6
+      removed; the new <code>check</code> row appears and passes.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="3">
+      <strong>Phase 4 — self-verification.</strong>
+      <span data-item-text data-brain-action>A <code>node:test</code> suite of at
+      least 20 assertions covering the TOON encoder, <code>parseArgs</code>
+      unknown-flag rejection (exit 2), <code>parseProgress</code> separator
+      splitting, <code>set-status</code> one-in-progress enforcement, the 0/1/2
+      exit contract, <code>store.js</code> corrupt-<code>state.json</code>
+      recovery, and the no-<code>.brain/</code> review promise from product
+      decision 2; registered in <code>verify.json</code> as <code>tests</code>;
+      one GitHub Action running <code>check</code>, <code>verify</code>,
+      <code>skill --check</code>. Acceptance: <code>brain verify</code> reports
+      3/3; the Action is green on push; the amended rule is committed alongside
+      (M3).</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="4">
+      <strong>Phase 5 — close the annotate loop (gold).</strong>
+      <span data-item-text data-brain-action>Implement <code>brain shots poll
+      &lt;feature&gt;</code> per <code>feat-004</code>, with transport as decided
+      in plan <code>2026-07-17-annotation-watch-runner</code> — this plan does not
+      re-decide it. Acceptance: a pin sent from the <code>watch</code> carousel
+      returns from a blocking <code>shots poll</code> within 2s;
+      <code>annotation-watch</code> flips <code>shipped</code> with evidence; the
+      README's "planned, not yet shipped" note is deleted.
+      <details>
+        <summary>Why is this last rather than first?</summary>
+        <p>It is the most interesting engineering and the least urgent product
+        work. Nobody can reach it until phase 1 makes the tool installable, and
+        it is the one phase that depends on a separate plan's review round —
+        so it sits where a slip costs the least.</p>
+      </details></span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+  </ol>
+  <div class="list-add-row" data-brain-section-add="plan-of-record">
+    <input type="text" class="list-add-input" data-brain-action placeholder="Add a phase..." />
+    <button type="button" class="list-add-btn" data-brain-action>+ Add item</button>
+  </div>
+</section>
+
+<section id="files-changed">
+  <h2>Files that change</h2>
+  <table>
+    <thead><tr><th>Path</th><th>Change</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td><code>package.json</code></td><td>edit (p1)</td>
+        <td><code>files</code> allowlist + version; no <code>scripts</code> added
+          if technical decision 2 lands on the recommendation</td></tr>
+      <tr><td><code>README.md</code></td><td>edit (p2)</td>
+        <td>Review-first restructure; memory layer demoted to a later section</td></tr>
+      <tr><td><code>bin/brain.js</code></td><td>edit (p2, p3, p5)</td>
+        <td><code>review</code> help line outside a brain; <code>review
+          prune</code>; home session filter; <code>shots poll</code>;
+          <code>skillContent()</code> regenerated to match</td></tr>
+      <tr><td><code>lib/review/store.js</code></td><td>edit (p3)</td>
+        <td>Dangling-session detection + prune, without deleting round history</td></tr>
+      <tr><td><code>lib/review/brain-data.js</code></td><td>edit (p3)</td>
+        <td>New <code>brainCheck</code> row: every open session's file resolves</td></tr>
+      <tr><td><code>test/*.test.js</code></td><td>new (p4)</td>
+        <td>The ≥20 assertions behind M3</td></tr>
+      <tr><td><code>.github/workflows/ci.yml</code></td><td>new (p4)</td>
+        <td>First CI in the repo: check, verify, skill --check, tests</td></tr>
+      <tr><td><code>.brain/verify.json</code></td><td>edit (p4)</td>
+        <td>Register the <code>tests</code> check so the harness gates itself</td></tr>
+      <tr><td><code>.brain/codebase/programming-model.md</code>,
+        <code>.brain/HARNESS.md</code></td><td>edit (p4)</td>
+        <td>Amend the "no test framework" rule in both places it is asserted</td></tr>
+      <tr><td><code>.claude/skills/brain/SKILL.md</code></td><td>regenerated (p2, p3, p5)</td>
+        <td>Skill sync is enforced by <code>skill --check</code>; every command
+          change lands here too</td></tr>
+      <tr><td><code>docs/REVIEW-ARCHITECTURE.md</code></td><td>edit (p3, p5)</td>
+        <td>Session record shape and the new poll contract — the rule is
+          "change a shape there, change it everywhere"</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="golden-path">
+  <h2>Golden path</h2>
+  <p>The flow M1 measures: a stranger's agent, a directory with nothing in it,
+  one command.</p>
+  <pre class="mermaid">
+sequenceDiagram
+  participant A as Agent (fresh repo, no .brain/)
+  participant N as npm registry
+  participant S as review server (127.0.0.1:4517)
+  participant H as Human (browser)
+  A->>N: npx -y brain-axi review plan.html
+  N-->>A: brain-axi@0.2.0 (bin + lib only)
+  A->>S: POST /api/open {file, plan}
+  S->>S: session key -> ~/.brain-axi/state.json
+  S-->>H: opens chrome: artifact iframe + composer
+  A->>S: brain review poll plan.html (blocks)
+  H->>S: pins, decisions, Send
+  S-->>A: prompts[] with line + text anchors
+  A->>A: edit plan.html in place (hot reload)
+  A->>S: review poll --agent-reply "what changed"
+  </pre>
+</section>
+
+<section id="error-paths">
+  <h2>Error paths</h2>
+  <table>
+    <thead><tr><th>Failure</th><th>Detected by</th><th>Handled by</th><th>User sees</th></tr></thead>
+    <tbody data-brain-section="error-paths">
+      <template>
+        <tr data-brain-item>
+          <td colspan="4"><span data-item-text data-brain-action></span>
+            <span class="item-controls">
+              <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+              <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+            </span>
+          </td>
+        </tr>
+      </template>
+      <tr data-brain-item="0">
+        <td><span data-item-text data-brain-action>npm name is taken or squatted
+          between now and publish</span>
+          <span class="item-controls">
+            <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+            <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+          </span></td>
+        <td><code>npm publish</code> rejects (E403)</td>
+        <td>Fall back to product decision 3's scoped option; regenerate the skill
+          and every doc string in one commit</td>
+        <td>A different, longer install line — nothing broken</td>
+      </tr>
+      <tr data-brain-item="1">
+        <td><span data-item-text data-brain-action>Published tarball is missing
+          <code>lib/review/</code> because the allowlist was too tight</span>
+          <span class="item-controls">
+            <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+            <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+          </span></td>
+        <td>Phase 1's cold smoke from <code>/tmp/fresh</code> —
+          <code>review</code> throws on the missing import</td>
+        <td><code>npm pack --dry-run</code> reviewed before publish; patch
+          release if it escapes</td>
+        <td>Nothing, if the smoke ran. A hard crash on
+          <code>review</code>, if it didn't</td>
+      </tr>
+      <tr data-brain-item="2">
+        <td><span data-item-text data-brain-action>Port 4517 already bound in the
+          new user's environment</span>
+          <span class="item-controls">
+            <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+            <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+          </span></td>
+        <td><code>EADDRINUSE</code> from <code>ensureReviewServer</code></td>
+        <td>Today: <code>--port</code> by hand. Open question 1 asks whether to
+          auto-increment</td>
+        <td>An <code>error:</code> line plus a <code>help:</code> line naming
+          <code>--port</code></td>
+      </tr>
+      <tr data-brain-item="3">
+        <td><span data-item-text data-brain-action>A session's artifact lives on
+          an unmounted external volume, so it reads as dangling</span>
+          <span class="item-controls">
+            <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+            <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+          </span></td>
+        <td>File-existence check on home render</td>
+        <td>Home <em>hides</em>, never deletes (product decision 4); only
+          explicit <code>prune</code> removes</td>
+        <td>Row vanishes while the disk is out, returns when it is back</td>
+      </tr>
+      <tr data-brain-item="4">
+        <td><span data-item-text data-brain-action>Skill drifts from the CLI after
+          a phase 2/3/5 command change</span>
+          <span class="item-controls">
+            <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+            <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+          </span></td>
+        <td><code>brain skill --check</code> exits 1, now in CI</td>
+        <td><code>brain skill --write</code> and commit the regeneration</td>
+        <td>A red Action on the PR, not a stale skill in someone's repo</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="list-add-row" data-brain-section-add="error-paths">
+    <input type="text" class="list-add-input" data-brain-action placeholder="Add a failure mode..." />
+    <button type="button" class="list-add-btn" data-brain-action>+ Add item</button>
+  </div>
+</section>
+
+<section id="testing-plan" data-brain-section="testing-plan">
+  <h2>Testing plan</h2>
+  <ul class="checklist">
+    <template>
+      <li data-brain-item>
+        <label><input type="checkbox"> <span data-item-text data-brain-action></span></label>
+        <span class="item-controls">
+          <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+          <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+        </span>
+      </li>
+    </template>
+    <!-- Double-clicking label text toggles the checkbox twice on the way to edit
+         mode (click, click, dblclick all fire). It nets back to the original
+         state — do not "fix" it with preventDefault, that would break
+         click-to-check. -->
+    <li data-brain-item="0">
+      <label><input type="checkbox"> <span data-item-text data-brain-action>M1
+      cold start: <code>/tmp/fresh</code>, nothing on <code>PATH</code>, no
+      <code>.brain/</code> — <code>npx -y brain-axi review plan.html</code> exits
+      0 and the browser opens</span></label>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="1">
+      <label><input type="checkbox"> <span data-item-text data-brain-action>Tarball
+      contents: <code>npm pack --dry-run</code> shows <code>bin/</code> +
+      <code>lib/</code> + <code>README.md</code> and no <code>.brain/</code>,
+      <code>plans/</code>, or root HTML</span></label>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="2">
+      <label><input type="checkbox"> <span data-item-text data-brain-action>No-brain
+      promise: <code>review</code> in a directory with no <code>.brain/</code>
+      exits 0 and its <code>help:</code> block names <code>brain init</code>
+      (asserted in the test suite, not just by hand)</span></label>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="3">
+      <label><input type="checkbox"> <span data-item-text data-brain-action>M2:
+      home lists 0 dangling sessions; <code>review prune</code> reports exactly
+      the 6 known-dead keys; a hidden session whose file returns is listed
+      again</span></label>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="4">
+      <label><input type="checkbox"> <span data-item-text data-brain-action>M3:
+      <code>node --test</code> green with ≥20 assertions;
+      <code>brain verify</code> 3/3; the Action green on a pushed
+      branch</span></label>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="5">
+      <label><input type="checkbox"> <span data-item-text data-brain-action>Regression:
+      <code>brain check</code> still 13+ rows all passing;
+      <code>brain skill --check</code> clean; <code>brain context</code> still
+      silent with exit 0 outside a brain repo</span></label>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="6">
+      <label><input type="checkbox"> <span data-item-text data-brain-action>Phase 5
+      round trip: pin dropped in the <code>watch</code> carousel and sent returns
+      from a blocking <code>shots poll</code> within 2s</span></label>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+  </ul>
+  <div class="list-add-row" data-brain-section-add="testing-plan">
+    <input type="text" class="list-add-input" data-brain-action placeholder="Add a test..." />
+    <button type="button" class="list-add-btn" data-brain-action>+ Add item</button>
+  </div>
+</section>
+
+<section id="open-questions" data-brain-section="open-questions">
+  <h2>Open questions</h2>
+  <ul>
+    <template>
+      <li data-brain-item>
+        <span data-item-text data-brain-action></span>
+        <span class="item-controls">
+          <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+          <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+        </span>
+      </li>
+    </template>
+    <li data-brain-item="0">
+      <span data-item-text data-brain-action>Should the review server
+      auto-increment off 4517 on <code>EADDRINUSE</code> instead of erroring with
+      a <code>--port</code> hint? A stranger's first command failing on a port
+      collision is a bad first impression, but silently moving ports makes the
+      URL unpredictable.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="1">
+      <span data-item-text data-brain-action>Should <code>review</code> in a
+      non-brain repo <em>offer</em> <code>brain init</code> in a help line
+      (recommended in phase 2) or actually prompt for it in a TTY, the way
+      <code>init --agents-md</code> already does?</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="2">
+      <span data-item-text data-brain-action>How much of the memory layer stays in
+      the README at all? There is a version of "review-first" that buries
+      <code>.brain/</code> so deep that the thing this repo has spent 23
+      checkpoints on becomes invisible.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="3">
+      <span data-item-text data-brain-action>Sequencing against
+      <code>one_in_progress_at_a_time</code>: <code>ai-work</code> is currently
+      in-progress and <code>planning-ux</code> reads <code>planned</code> despite
+      PR #13 being open for it. Does <code>launch-readiness</code> wait, or does
+      the tracker get reconciled first?</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+  </ul>
+  <div class="list-add-row" data-brain-section-add="open-questions">
+    <input type="text" class="list-add-input" data-brain-action placeholder="Add an open question..." />
+    <button type="button" class="list-add-btn" data-brain-action>+ Add item</button>
+  </div>
+</section>
+
+<section id="verdict">
+  <h2>Verdict</h2>
+  <p>Queue the decisions above, then land a verdict — or annotate anything on the
+  page and send.</p>
+  <div>
+    <button type="button" class="btn-approve" data-brain-action
+      onclick="queueVerdict('approve')">Approve plan</button>
+    <button type="button" class="btn-request-changes" data-brain-action
+      onclick="queueVerdict('request-changes')">Request changes</button>
+  </div>
+</section>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "neutral" });
+</script>
+
+<script>
+  function queueDecision(cardId, question) {
+    var card = document.getElementById(cardId);
+    var checked = card.querySelector('input[type="radio"]:checked');
+    if (!checked) return;
+    var choice = checked.value;
+    if (window.brain && typeof window.brain.queuePrompt === "function") {
+      window.brain.queuePrompt({
+        tag: "decision",
+        queueKey: cardId,
+        prompt: question + ": " + choice,
+        target: { type: "decision", question: question, choice: choice }
+      });
+    }
+    var ack = document.getElementById("ack-" + cardId);
+    if (ack) ack.textContent = "Queued: " + choice;
+  }
+
+  function queueVerdict(verdict) {
+    if (!(window.brain && typeof window.brain.queuePrompt === "function")) return;
+    window.brain.queuePrompt({
+      tag: "message",
+      queueKey: "verdict",
+      prompt: verdict === "approve"
+        ? "Plan approved as written."
+        : "Requesting changes — see annotations."
+    });
+  }
+</script>
+
+<script>
+  (function () {
+    function queueList(section, queueKey, prompt, action, item, index) {
+      if (window.brain && typeof window.brain.queuePrompt === "function") {
+        window.brain.queuePrompt({
+          tag: "list-edit",
+          queueKey: queueKey,
+          prompt: prompt,
+          target: { type: "list-edit", section: section, action: action, item: item, index: index }
+        });
+      }
+    }
+
+    function slugify(s) {
+      return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "").slice(0, 60) || "item";
+    }
+
+    function itemText(el) {
+      var t = el.querySelector("[data-item-text]");
+      return (t || el).textContent.trim();
+    }
+
+    function addBadge(el, cls, label) {
+      var badge = el.querySelector("." + cls);
+      if (!badge) {
+        badge = document.createElement("span");
+        badge.className = "item-badge " + cls;
+        el.appendChild(badge);
+      }
+      badge.textContent = label;
+    }
+
+    function toggleRemoved(item, section) {
+      var index = Number(item.getAttribute("data-brain-item"));
+      var text = itemText(item);
+      var removed = item.classList.toggle("item-removed");
+      var xBtn = item.querySelector(".item-x");
+      var restoreBtn = item.querySelector(".item-restore");
+      if (xBtn) xBtn.hidden = removed;
+      if (restoreBtn) restoreBtn.hidden = !removed;
+      var key = section + ":remove:" + index;
+      if (removed) {
+        queueList(section, key, "Remove from " + section + ": \"" + text + "\"", "remove", text, index);
+      } else {
+        queueList(section, key, "Cancelled: keep \"" + text + "\" in " + section, "edit", text, index);
+      }
+    }
+
+    function startEdit(item, section) {
+      if (item.classList.contains("item-removed")) return;
+      var span = item.querySelector("[data-item-text]");
+      if (!span || span.isContentEditable) return;
+      var before = span.textContent;
+      span.setAttribute("contenteditable", "true");
+      span.focus();
+
+      function commit() {
+        span.removeAttribute("contenteditable");
+        span.removeEventListener("blur", commit);
+        span.removeEventListener("keydown", onKey);
+        var text = span.textContent.trim();
+        if (!text || text === before.trim()) { span.textContent = before; return; }
+        var index = Number(item.getAttribute("data-brain-item"));
+        addBadge(item, "item-badge-edited", "edited");
+        queueList(section, section + ":edit:" + index,
+          "Edit " + section + " item " + index + ": \"" + text + "\"", "edit", text, index);
+      }
+      function onKey(ev) {
+        if (ev.key === "Enter") { ev.preventDefault(); span.blur(); }
+        else if (ev.key === "Escape") { span.textContent = before; ev.preventDefault(); span.blur(); }
+      }
+      span.addEventListener("blur", commit);
+      span.addEventListener("keydown", onKey);
+    }
+
+    function commitAdd(addRow) {
+      var section = addRow.getAttribute("data-brain-section-add");
+      var input = addRow.querySelector(".list-add-input");
+      var text = input.value.trim();
+      if (!text) return;
+      var list = document.querySelector("[data-brain-section=\"" + section + "\"]");
+      var tpl = list && list.querySelector("template");
+      if (!list || !tpl) return;
+      var node = document.importNode(tpl.content, true);
+      var item = node.querySelector("[data-brain-item]") || node.firstElementChild;
+      item.setAttribute("data-brain-item", "new");
+      var span = item.querySelector("[data-item-text]");
+      if (span) span.textContent = text;
+      item.classList.add("item-proposed");
+      addBadge(item, "item-badge-proposed", "proposed");
+      list.insertBefore(node, tpl.nextSibling);
+      input.value = "";
+      queueList(section, section + ":add:" + slugify(text),
+        "Add to " + section + ": \"" + text + "\"", "add", text, null);
+    }
+
+    document.addEventListener("click", function (ev) {
+      var xBtn = ev.target.closest(".item-x");
+      var restoreBtn = ev.target.closest(".item-restore");
+      if (xBtn || restoreBtn) {
+        var item = ev.target.closest("[data-brain-item]");
+        var section = ev.target.closest("[data-brain-section]");
+        if (item && section) toggleRemoved(item, section.getAttribute("data-brain-section"));
+        return;
+      }
+      var addBtn = ev.target.closest(".list-add-btn");
+      if (addBtn) {
+        var addRow = ev.target.closest("[data-brain-section-add]");
+        if (addRow) commitAdd(addRow);
+      }
+    });
+
+    document.addEventListener("dblclick", function (ev) {
+      var item = ev.target.closest("[data-brain-item]");
+      if (!item) return;
+      var section = item.closest("[data-brain-section]");
+      if (section) startEdit(item, section.getAttribute("data-brain-section"));
+    });
+
+    document.addEventListener("keydown", function (ev) {
+      if (ev.key !== "Enter") return;
+      var addRow = ev.target.closest("[data-brain-section-add]");
+      if (addRow && ev.target.classList.contains("list-add-input")) {
+        ev.preventDefault();
+        commitAdd(addRow);
+      }
+    });
+  })();
+</script>
+
+</body>
+</html>

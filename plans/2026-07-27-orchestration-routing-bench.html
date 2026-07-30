@@ -1,0 +1,1024 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orchestration routing + benchmark — brain-axi</title>
+<style>
+  :root {
+    --bg: #faf9f5; --surface: #ffffff; --fg: #141413; --fg-secondary: #3d3d3a;
+    --muted: #73726c; --border: #dedcd1; --highlight: #fff7ca; --accent: #d97757;
+    --space-2: 8px; --space-3: 16px; --space-4: 24px; --space-6: 40px;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+      Helvetica, Arial, sans-serif;
+    font-size: 16px; background: var(--bg); color: var(--fg); line-height: 1.6;
+    max-width: 72ch; margin: 0 auto; padding: var(--space-6) var(--space-4);
+  }
+  h1, h2, h3 {
+    font-family: Charter, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    font-weight: 600; line-height: 1.25; color: var(--fg);
+  }
+  h1 { font-size: 1.75em; }
+  h2 { font-size: 1.3em; font-weight: 500; margin-top: var(--space-6);
+    border-bottom: 1px solid var(--border); padding-bottom: var(--space-2); }
+  h3 { font-size: 1.05em; font-weight: 500; }
+  p, li { color: var(--fg-secondary); }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; }
+  mark, .highlight { background: var(--highlight); color: var(--fg); padding: 0 2px; }
+  .chip { display: inline-block; padding: 2px 10px; border-radius: 999px;
+    font-size: 0.8em; font-weight: 600; border: 1px solid var(--border); }
+  .chip-status-draft { background: var(--surface); color: var(--muted); }
+  .chip-status-in-review { background: var(--highlight); color: var(--fg);
+    border-color: var(--highlight); }
+  .chip-status-reviewed { background: var(--fg); color: #fff; border-color: var(--fg); }
+  .chip-high { color: var(--accent); border-color: var(--accent); }
+  .chip-med { color: var(--fg-secondary); }
+  .chip-low { color: var(--muted); }
+  .decision-card { background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: var(--space-4); margin: var(--space-4) 0; }
+  table { width: 100%; border-collapse: collapse; margin: var(--space-3) 0;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    overflow: hidden; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid
+    var(--border); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  .tag-recommended { color: var(--accent); font-weight: 600; }
+  .btn-queue, .btn-approve, .btn-request-changes {
+    border: none; border-radius: 10px; padding: 8px 16px; font-weight: 600;
+    cursor: pointer; font-size: 0.95em;
+  }
+  .btn-queue, .btn-approve { background: var(--fg); color: #fff; }
+  .btn-request-changes { background: transparent; color: var(--fg);
+    border: 1px solid var(--border); }
+  .queue-ack { margin-left: var(--space-3); font-size: 0.9em; color: var(--muted); }
+  .checklist { list-style: none; padding: 0; }
+  .checklist li { margin: var(--space-2) 0; }
+  pre.mermaid { text-align: center; }
+  pre.mermaid svg { display: block; margin: 0 auto; }
+  pre.fallback { background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: var(--space-3); overflow-x: auto;
+    font-size: 0.85em; color: var(--fg-secondary); line-height: 1.45; }
+  .item-x, .item-restore, .list-add-btn { cursor: pointer; border: 1px solid var(--border);
+    background: var(--surface); border-radius: 6px; font-size: 0.85em; padding: 1px 8px;
+    color: var(--fg-secondary); }
+  [data-item-text] { cursor: text; }
+  .item-removed { opacity: 0.5; }
+  .item-removed [data-item-text] { text-decoration: line-through; }
+  .item-edited [data-item-text] { border-bottom: 2px dotted var(--accent); }
+  .item-badge { font-size: 0.75em; color: var(--muted); margin-left: 6px; font-style: italic; }
+  .item-badge-proposed { color: var(--accent); }
+  .item-proposed { border-left: 2px dashed var(--accent); padding-left: 6px; }
+  .list-add-row { display: flex; gap: 8px; margin-top: var(--space-2); }
+  .list-add-input { flex: 1; padding: 6px 10px; border: 1px solid var(--border);
+    border-radius: 6px; background: var(--surface); color: var(--fg); }
+  .note { color: var(--muted); font-size: 0.9em; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Orchestration routing + benchmark</h1>
+  <div class="note">
+    <span>2026-07-27</span> ·
+    <span>feature: orchestration-routing (new, feat-006)</span> ·
+    <span class="chip chip-status-draft">draft</span> ·
+    <span>round 0</span> ·
+    <span>branch <code>feat/orchestration-routing-bench</code></span>
+  </div>
+</header>
+
+<section id="tldr">
+  <h2>TL;DR</h2>
+  <p>Every brain plan gains a machine-readable <strong>orchestration block</strong> — which
+  agent and which model runs each phase — that the human edits in the review UI before
+  approving, and that the coordinator reads back after approval instead of improvising.
+  A routing policy (<code>.brain/orchestration.json</code>) makes those assignments repo
+  policy rather than vibes, and lets a phase dispatch to a <em>non-Anthropic</em> CLI
+  (Kimi, Codex) through a shell adapter. Then <mark>we prove it: <code>brain bench</code>
+  runs the same fixed task suite through competing routing arms in isolated worktrees and
+  scores them on pass rate and dollars-per-pass</mark> — an auditable, in-repo benchmark
+  that doubles as the marketing artifact.</p>
+</section>
+
+<section id="context">
+  <h2>Context</h2>
+  <p>Grounding, from the brain (<code>brain progress</code>, <code>brain plans</code>,
+  <code>brain features</code>):</p>
+  <ul>
+    <li>The delegation habit already exists but lives only in agent memory: after a plan is
+    approved the main agent switches to coordinator mode and delegates phases to Sonnet
+    sub-agents, one commit per phase. It was applied by hand on plan
+    <code>2026-07-17-2026-07-16-shot-carousel-annotation</code> ("Starting execution as
+    coordinator", checkpoint 2026-07-17). <mark>Nothing in the repo records it, checks it,
+    or measures it.</mark> This plan moves it from memory into the harness.</li>
+    <li>The harness already has the shape to hang this on: <code>feat-005 harness-mode</code>
+    shipped 2026-07-23 (PR #8) with <code>verify.json</code> — a <em>declared registry with a
+    shell <code>run</code> string per check</em>. The orchestration policy and the bench
+    arms are the same idea applied to "who does the work" and "how do we know it was
+    better".</li>
+    <li>Plan-review plumbing is done and dogfooded: 5 plans tracked, <code>brain review</code>
+    → <code>poll</code> → decision-card prompts, plus <code>brain watch</code> execution
+    dashboard (<code>feat-002 brain-review</code>, <code>feat-003 shot-review</code>, both
+    shipped). The orchestration block rides these rails — no new review surface.</li>
+    <li>Last checkpoint (2026-07-23) leaves no feature in-progress, so
+    <code>policy.one_in_progress_at_a_time</code> is free for <code>feat-006</code>.
+    <code>feat-004 annotation-watch</code> stays <code>planned</code> and untouched.</li>
+  </ul>
+</section>
+
+<section id="big-picture">
+  <h2>Big picture</h2>
+  <p>Two loops sharing one policy file. The <strong>plan loop</strong> (left) decides and records
+  who runs what. The <strong>bench loop</strong> (right) measures whether those choices were
+  actually better. The CLI never spawns a model — it recommends, records, and scores.</p>
+
+  <pre class="mermaid">
+flowchart TD
+  Policy["policy: .brain/orchestration.json<br/>routes + adapters"]
+
+  subgraph PlanLoop["plan loop — decide + record"]
+    Plan["plan artifact .html<br/>+ embedded orchestration JSON"]
+    Review["brain review UI<br/>human edits assignments"]
+    Orch["brain orchestrate plan &lt;slug&gt;"]
+    Coord["coordinator agent"]
+    Native["Anthropic sub-agents<br/>opus / sonnet / haiku"]
+    Ext["shell adapter<br/>kimi / codex CLI"]
+    Runs[("brain runs append<br/>--agent --model")]
+  end
+
+  subgraph BenchLoop["bench loop — measure"]
+    Bench["brain bench run --arm X"]
+    Tree["fresh git worktree<br/>pinned base ref"]
+    Check["check.sh<br/>deterministic acceptance"]
+    Results[(".brain/bench/&lt;date&gt;/*.json")]
+    Score["brain bench report --html<br/>scorecard → README"]
+  end
+
+  Plan --> Review --> Orch
+  Policy --> Orch
+  Orch --> Coord
+  Coord --> Native --> Runs
+  Coord --> Ext --> Runs
+  Policy --> Bench --> Tree --> Check --> Results --> Score
+  Runs -.attribution.-> Results
+  </pre>
+
+  <pre class="fallback">policy: .brain/orchestration.json (routes + adapters)
+   |
+   +--> PLAN LOOP:  plan.html (+embedded orchestration JSON)
+   |                  -> brain review (human edits assignments)
+   |                  -> brain orchestrate plan &lt;slug&gt;  [TOON directives]
+   |                  -> coordinator --+--> Anthropic sub-agents (opus/sonnet/haiku)
+   |                                   +--> shell adapter (kimi / codex CLI)
+   |                                          -> brain runs append --agent --model
+   |
+   +--> BENCH LOOP: brain bench run --arm X
+                      -> fresh git worktree @ pinned base ref
+                      -> check.sh (deterministic acceptance)
+                      -> .brain/bench/&lt;date&gt;/*.json
+                      -> brain bench report --html (scorecard -> README)</pre>
+</section>
+
+<section id="cross-vendor">
+  <h2>The cross-vendor constraint (read before D7)</h2>
+  <p>Checked, because the plan depends on it: <mark>Claude Code cannot run a non-Anthropic
+  model as a sub-agent.</mark> The Agent tool's <code>model</code> field is an enum of
+  Anthropic aliases (<code>opus</code>/<code>sonnet</code>/<code>haiku</code>/<code>fable</code>),
+  and <code>.claude/agents/*.md</code> frontmatter resolves against the same provider. So
+  "Kimi does the frontend phase" has exactly three implementations:</p>
+  <table>
+    <thead><tr><th>Path</th><th>How</th><th>Mixes vendors in one session?</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Shell adapter</strong></td>
+        <td>A sub-agent with Bash-only tools shells out to the vendor's own CLI in a worktree; returns a diff/commit.</td>
+        <td>Yes — per phase</td>
+        <td><span class="chip chip-high">chosen</span> only path with real file-editing agency</td></tr>
+      <tr><td>MCP wrapper</td>
+        <td>An MCP server exposing "ask model X" as a tool.</td>
+        <td>Yes</td>
+        <td>Advice only — no repo agency unless the server has it</td></tr>
+      <tr><td><code>ANTHROPIC_BASE_URL</code> proxy</td>
+        <td>LiteLLM / a vendor's Anthropic-compatible endpoint.</td>
+        <td><strong>No</strong> — swaps the whole session</td>
+        <td>Useless for mixed routing; fine as a whole-arm swap in the bench</td></tr>
+    </tbody>
+  </table>
+  <p class="note">Consequence for the policy schema: a route names an <em>adapter</em>, not a
+  model string, and every shell adapter carries a <code>probe</code> command plus a
+  <code>fallback</code> route. An un-probeable adapter must degrade to an Anthropic
+  sub-agent and say so in the output — never silently. Also: the exact Kimi model id and
+  endpoint get confirmed by probe at Phase 4, not hardcoded from memory now.</p>
+</section>
+
+<section id="decisions">
+  <h2>Decisions needed</h2>
+
+  <div class="decision-card" id="decision-bench-location" data-brain-action>
+    <p><strong>1. Where does the benchmark live?</strong> It is both engineering
+    instrumentation and the marketing artifact, and it writes result state.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-bench-location" id="opt-bench-split"
+            value="Suite+runner in bench/, results in .brain/bench/" checked data-brain-action></td>
+          <td><label for="opt-bench-split">Code in <code>bench/</code>, results in
+            <code>.brain/bench/</code> <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Code is code, state is brain state — matches how <code>verify.json</code>/runs already split; results show up in <code>timeline</code></td>
+          <td>Two places to look</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-bench-location" id="opt-bench-all-brain"
+            value="Everything under .brain/bench/" data-brain-action></td>
+          <td><label for="opt-bench-all-brain">All of it in <code>.brain/bench/</code></label></td>
+          <td>One directory; ships with <code>brain init</code></td>
+          <td>Puts executable task fixtures inside the harness dir — <code>.brain/</code> stops being just state</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-bench-location" id="opt-bench-pkg"
+            value="Separate npm package brain-bench" data-brain-action></td>
+          <td><label for="opt-bench-pkg">Separate <code>brain-bench</code> package</label></td>
+          <td>Keeps zero-dep CLI lean; benchmarks other harnesses too</td>
+          <td>Second release surface; loses <code>brain</code> ergonomics and brain state access</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-bench-location','Where does the benchmark live?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-bench-location"></span>
+  </div>
+
+  <div class="decision-card" id="decision-plan-binding" data-brain-action>
+    <p><strong>2. How does the orchestration block attach to a plan artifact?</strong> The CLI
+    has to read phase assignments back out after approval.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-plan-binding" id="opt-embed-json"
+            value="Embedded <script type=application/json id=brain-orchestration> in the artifact" checked data-brain-action></td>
+          <td><label for="opt-embed-json">Embedded JSON block in the HTML
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Single self-contained artifact (playbook rule); one source of truth the visible table renders from; trivial, robust extraction by id</td>
+          <td>Agent must keep block and table in sync</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-plan-binding" id="opt-sidecar"
+            value="Sidecar orchestration.json next to the plan" data-brain-action></td>
+          <td><label for="opt-sidecar">Sidecar <code>&lt;plan&gt;.orchestration.json</code></label></td>
+          <td>No HTML parsing at all; easy to diff</td>
+          <td>Artifact stops being self-contained; two files to keep together</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-plan-binding" id="opt-scrape"
+            value="Scrape the plan-of-record HTML" data-brain-action></td>
+          <td><label for="opt-scrape">Scrape <code>#plan-of-record</code> markup</label></td>
+          <td>Nothing new for the plan author to write</td>
+          <td>Fragile regex over freeform HTML — rejected on principle</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-plan-binding','How does the orchestration block attach to a plan artifact?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-plan-binding"></span>
+  </div>
+
+  <div class="decision-card" id="decision-human-edit" data-brain-action>
+    <p><strong>3. How does the human change an assignment in the review UI?</strong> ("phase 2
+    should be Kimi, not Sonnet")</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-human-edit" id="opt-cards"
+            value="Per-phase decision cards; agent rewrites artifact + JSON on poll" checked data-brain-action></td>
+          <td><label for="opt-cards">Per-phase decision cards, agent applies
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Zero new server routes or trust surface; click-only per playbook; agent sees the change and can push back</td>
+          <td>Round-trip through the agent; assignment isn't authoritative until the agent writes it</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-human-edit" id="opt-route"
+            value="New review-server route patches the orchestration JSON directly" data-brain-action></td>
+          <td><label for="opt-route">Server route patches the JSON</label></td>
+          <td>Human edit is authoritative immediately; no agent turn needed</td>
+          <td>New HTTP route + trust boundary in <code>lib/review/server.js</code>; artifact and store can diverge</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-human-edit','How does the human change an assignment in the review UI?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-human-edit"></span>
+  </div>
+
+  <div class="decision-card" id="decision-arm-invocation" data-brain-action>
+    <p><strong>4. How does the bench actually invoke an arm?</strong> This is the credibility
+    hinge — the numbers are only as good as the isolation and the usage accounting.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-arm-invocation" id="opt-headless"
+            value="Headless CLI per arm: arm.entry command template, e.g. claude -p --output-format json" checked data-brain-action></td>
+          <td><label for="opt-headless">Headless CLI per arm, from an
+            <code>arm.entry</code> template <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Vendor-agnostic — a pure-Kimi or pure-Codex arm costs one JSON file; clean process isolation; structured usage/duration in the result payload</td>
+          <td>Nested agent invocation; auth/rate-limit exposure; usage fields must be confirmed by the Phase 0 spike</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-arm-invocation" id="opt-insession"
+            value="In-session Agent-tool runs with manual bookkeeping" data-brain-action></td>
+          <td><label for="opt-insession">In-session Agent-tool runs</label></td>
+          <td>No nesting; reuses this harness</td>
+          <td>Can't isolate or replay; no per-arm usage accounting; can never include a non-Anthropic arm — kills the whole thesis</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-arm-invocation" id="opt-sdk"
+            value="Agent SDK driver process" data-brain-action></td>
+          <td><label for="opt-sdk">Agent SDK driver</label></td>
+          <td>Finest-grained telemetry</td>
+          <td>Adds a runtime dependency to a zero-dep repo; Anthropic-only again</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-arm-invocation','How does the bench invoke an arm?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-arm-invocation"></span>
+  </div>
+
+  <div class="decision-card" id="decision-suite-target" data-brain-action>
+    <p><strong>5. What repo do bench tasks run against?</strong> Needs a pinned base and a
+    deterministic pass/fail script.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-suite-target" id="opt-self"
+            value="brain-axi itself at a pinned commit" checked data-brain-action></td>
+          <td><label for="opt-self">brain-axi itself, pinned commit
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>No external dep; acceptance can reuse <code>brain verify</code>/<code>check</code>; dogfooding is the story; real code, not toy code</td>
+          <td>Tasks skew CLI-shaped; the frontend-UI task is limited to the review chrome</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-suite-target" id="opt-starter"
+            value="cf-saas-starter template repo" data-brain-action></td>
+          <td><label for="opt-starter">cf-saas-starter template</label></td>
+          <td>Genuine React/UI surface — the strongest test of a frontend-routing claim</td>
+          <td>External pin, install time, network flakiness inside every run</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-suite-target" id="opt-synthetic"
+            value="Synthetic mini-repo fixture in bench/" data-brain-action></td>
+          <td><label for="opt-synthetic">Synthetic mini-repo</label></td>
+          <td>Fastest, fully controlled, cheap to run often</td>
+          <td>Toy tasks — results won't convince anyone, including us</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-suite-target','What repo do bench tasks run against?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-suite-target"></span>
+  </div>
+
+  <div class="decision-card" id="decision-headline-metric" data-brain-action>
+    <p><strong>6. What is the headline number on the scorecard?</strong> One metric goes in the
+    README; the rest live in the table.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-headline-metric" id="opt-dollars-pass"
+            value="Median USD per passing task (pass rate shown alongside)" checked data-brain-action></td>
+          <td><label for="opt-dollars-pass">USD per <em>passing</em> task
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Can't be gamed by being cheap-and-wrong; directly answers "is routing worth it"</td>
+          <td>Meaningless if the spike can't recover real cost — falls back to tokens-per-pass</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-headline-metric" id="opt-passrate"
+            value="Pass rate only" data-brain-action></td>
+          <td><label for="opt-passrate">Pass rate only</label></td>
+          <td>Simplest, hardest to dispute</td>
+          <td>Ignores the efficiency claim, which is the actual thesis</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-headline-metric" id="opt-composite"
+            value="Weighted composite score" data-brain-action></td>
+          <td><label for="opt-composite">Weighted composite score</label></td>
+          <td>One tidy number for marketing</td>
+          <td>Arbitrary weights = the arm we like wins; reads as a rigged benchmark</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-headline-metric','What is the headline benchmark metric?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-headline-metric"></span>
+  </div>
+
+  <div class="decision-card" id="decision-arms-v1" data-brain-action>
+    <p><strong>7. Which arms ship in v1?</strong> Each arm × task × repeat is real money.
+    Full 4×5×3 matrix = 60 runs.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-arms-v1" id="opt-arms-four"
+            value="A solo-opus, B coord+sonnet, C policy-routed (incl. kimi), D cheap-haiku" checked data-brain-action></td>
+          <td><label for="opt-arms-four">Four arms: solo-opus, coord+sonnet, policy-routed
+            (with Kimi), cheap-haiku <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Tests the actual claim (routing &gt; flat delegation) and bounds it top and bottom; one non-Anthropic adapter proves the mechanism</td>
+          <td>Most expensive; the Kimi arm is probe-gated and may skip on a given machine</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-arms-v1" id="opt-arms-two"
+            value="Two arms: solo-opus vs coord+sonnet; external models deferred" data-brain-action></td>
+          <td><label for="opt-arms-two">Two Anthropic-only arms; defer external</label></td>
+          <td>Cheapest, fastest to green, no vendor auth to solve</td>
+          <td>Proves delegation, not <em>routing</em> — and skips the cross-vendor question that started this</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-arms-v1" id="opt-arms-vendor"
+            value="Vendor bake-off: solo claude vs solo kimi vs solo codex" data-brain-action></td>
+          <td><label for="opt-arms-vendor">Vendor bake-off (solo per vendor)</label></td>
+          <td>Loudest marketing table</td>
+          <td>Measures models, not our harness — and invites "your benchmark is unfair" fights we'd lose</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-arms-v1','Which benchmark arms ship in v1?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-arms-v1"></span>
+  </div>
+</section>
+
+<section id="fairness">
+  <h2>Benchmark fairness rules (non-negotiable)</h2>
+  <p>These are what separate a benchmark from a marketing chart. They get written into
+  <code>.brain/rules/orchestration.md</code> and enforced where enforceable.</p>
+  <table>
+    <thead><tr><th>Rule</th><th>Enforced by</th></tr></thead>
+    <tbody>
+      <tr><td>Identical task prompt across arms; only the orchestration directive differs</td>
+        <td>Task prompt lives in <code>task.md</code>, arms may only prepend their directive; runner hashes the prompt and records the digest</td></tr>
+      <tr><td>Fresh <code>git worktree</code> off a pinned base ref per run — no carryover</td>
+        <td>Runner creates and destroys the worktree; records base SHA in the result</td></tr>
+      <tr><td><code>check.sh</code> is written before any arm runs, and never edited to make an arm pass</td>
+        <td>Acceptance script committed in its own commit ahead of the arm configs; result records the check's file hash</td></tr>
+      <tr><td>n ≥ 3 repeats; report median with min/max and state n. LLM runs are nondeterministic — a single run is an anecdote</td>
+        <td>Runner refuses to emit a scorecard below n=3 unless <code>--preliminary</code>, which stamps the label onto the HTML</td></tr>
+      <tr><td>Failures publish. No quiet dropping of a bad arm or a bad run</td>
+        <td>Every run's raw JSONL committed under <code>.brain/bench/</code>; report prints an <code>excluded[]</code> block with reasons or none at all</td></tr>
+      <tr><td>An arm that vandalizes the harness doesn't get credit for passing</td>
+        <td>Post-run <code>brain check</code> + <code>brain verify</code> in the worktree; a dirty harness downgrades the run to FAIL</td></tr>
+      <tr><td>Skipped external arms are visible, never silent</td>
+        <td>Adapter <code>probe</code> failure records <code>status: skipped-unavailable</code> and prints in the report</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="plan-of-record" data-brain-section="plan-of-record">
+  <h2>Plan of record</h2>
+  <p class="note">Double-click a phase to rewrite it, <code>x</code> to drop it, or add one below.
+  Phase 0 is a gate: if it fails, phases 4–5 change shape and we say so instead of building on a
+  guess.</p>
+  <ol>
+    <template>
+      <li data-brain-item>
+        <span data-item-text></span>
+        <button type="button" class="item-x" data-brain-action>x</button>
+        <button type="button" class="item-restore" data-brain-action hidden>restore</button>
+      </li>
+    </template>
+    <li data-brain-item="0">
+      <span data-item-text><strong>Phase 0 — spike, the metrics gate.</strong> One throwaway
+      headless run of one arm on one task in a worktree. Acceptance: we can name, from real
+      output, the pass/fail, wall-clock, token counts and (if available) cost of a run —
+      or we document which of those is unobtainable and pick the fallback metric before
+      writing any runner code.</span>
+      <button type="button" class="item-x" data-brain-action>x</button>
+      <button type="button" class="item-restore" data-brain-action hidden>restore</button>
+    </li>
+    <li data-brain-item="1">
+      <span data-item-text><strong>Phase 1 — routing policy + <code>brain orchestrate</code>.</strong>
+      <code>.brain/orchestration.json</code> (adapters, routes, probes, fallbacks) plus
+      <code>orchestrate</code> / <code>orchestrate probe</code>. Acceptance: <code>brain
+      orchestrate</code> prints the routes as TOON with a <code>help:</code> list;
+      <code>probe</code> reports each adapter available/unavailable and never exits nonzero
+      for a missing optional CLI; unknown flags exit 2; <code>skill --check</code> passes
+      after <code>skillContent()</code> is updated.</span>
+      <button type="button" class="item-x" data-brain-action>x</button>
+      <button type="button" class="item-restore" data-brain-action hidden>restore</button>
+    </li>
+    <li data-brain-item="2">
+      <span data-item-text><strong>Phase 2 — plan integration.</strong> Orchestration section
+      added to the plan playbook, embedded JSON block read by <code>brain orchestrate plan
+      &lt;slug&gt;</code>, <code>brain check</code> warns (never fails) on a plan with no
+      block. Acceptance: this very plan's block round-trips — <code>orchestrate plan
+      2026-07-27-orchestration-routing-bench</code> prints the phase→agent→model table; the
+      5 existing plans still pass <code>brain check</code>.</span>
+      <button type="button" class="item-x" data-brain-action>x</button>
+      <button type="button" class="item-restore" data-brain-action hidden>restore</button>
+    </li>
+    <li data-brain-item="3">
+      <span data-item-text><strong>Phase 3 — execution attribution.</strong> <code>runs
+      append</code> records which agent/model produced a step; <code>brain watch</code>
+      surfaces it. Acceptance: a step appended with <code>--agent builder --model sonnet</code>
+      renders in the run note and the dashboard; omitting the flags stays valid (backward
+      compatible with existing run notes).</span>
+      <button type="button" class="item-x" data-brain-action>x</button>
+      <button type="button" class="item-restore" data-brain-action hidden>restore</button>
+    </li>
+    <li data-brain-item="4">
+      <span data-item-text><strong>Phase 4 — bench runner + task suite.</strong> Two tasks
+      first (one CLI-shaped, one UI-shaped), the v1 arms, <code>brain bench run</code> with
+      <code>--max-usd</code> / <code>--dry-run</code> / <code>--repeat</code>. Acceptance:
+      a dry run prints the full run matrix and cost ceiling without spending a cent; a real
+      2-arm × 1-task × n3 run produces 6 result JSONs with acceptance verdicts, and a
+      deliberately-sabotaged arm is recorded FAIL rather than crashing the runner.</span>
+      <button type="button" class="item-x" data-brain-action>x</button>
+      <button type="button" class="item-restore" data-brain-action hidden>restore</button>
+    </li>
+    <li data-brain-item="5">
+      <span data-item-text><strong>Phase 5 — scorecard + README.</strong>
+      <code>bench report</code> (TOON) and <code>--html</code> (standalone scorecard, same
+      editorial palette), README section with the real numbers and the fairness rules linked.
+      Acceptance: scorecard renders offline with n, medians and spread per arm; refuses to
+      drop the <code>preliminary</code> stamp below n=3; README quotes only numbers present
+      in committed result files.</span>
+      <button type="button" class="item-x" data-brain-action>x</button>
+      <button type="button" class="item-restore" data-brain-action hidden>restore</button>
+    </li>
+  </ol>
+  <div class="list-add-row" data-brain-section-add="plan-of-record">
+    <input class="list-add-input" placeholder="Add a phase…">
+    <button type="button" class="list-add-btn" data-brain-action>+ Add</button>
+  </div>
+  <details>
+    <summary>Why not build the bench first, since it's the point?</summary>
+    <p>The bench needs something to compare. Arms are defined in terms of the routing policy
+    (Phase 1) and the orchestration directive (Phase 2) — without those, "policy-routed" isn't
+    a configuration, it's a prompt written by hand differently each run, which is exactly the
+    unmeasurable state we're trying to leave. Phase 0 still de-risks the expensive part first.</p>
+  </details>
+</section>
+
+<section id="orchestration">
+  <h2>Orchestration for this plan (dogfood)</h2>
+  <p>The extra step, applied to itself. This is the human-editable assignment table; the same
+  data lives in the embedded JSON block at the bottom of this file. Routing rationale: schema
+  and CLI surface decisions stay with the coordinator (they set the contract everything else
+  depends on); mechanical CLI work and docs go cheap; the runner is the one phase worth a
+  strong model on its own; the UI-shaped bench task is where the non-Anthropic adapter earns
+  its keep or doesn't.</p>
+  <table>
+    <thead><tr><th>Phase</th><th>Agent</th><th>Model / adapter</th><th>Mode</th><th>Isolation</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>0 — spike</td><td>coordinator, inline</td><td>opus</td><td>—</td><td>worktree</td>
+        <td>Gate decision; cheap; its finding rewrites later phases</td></tr>
+      <tr><td>1 — policy + <code>orchestrate</code></td><td>coordinator, inline</td><td>opus</td><td>seq</td><td>inline</td>
+        <td>Defines the schema every other phase consumes — not delegable</td></tr>
+      <tr><td>2 — plan integration</td><td>builder</td><td>sonnet</td><td>seq</td><td>inline</td>
+        <td>Playbook text + JSON extraction against a fixed schema</td></tr>
+      <tr><td>3 — attribution flags</td><td>builder</td><td>sonnet</td><td>par with 2</td><td>worktree</td>
+        <td>Touches <code>runs</code>/<code>watch</code> only — disjoint from phase 2's files</td></tr>
+      <tr><td>4 — bench runner</td><td>builder</td><td>opus</td><td>seq</td><td>inline</td>
+        <td>Process isolation, worktree lifecycle, budget guard — the phase where a subtle bug silently corrupts every number</td></tr>
+      <tr><td>4b — UI-shaped bench task fixture</td><td>builder</td><td>kimi <span class="chip chip-low">probe-gated</span> → sonnet</td><td>par with 4</td><td>worktree</td>
+        <td>First real exercise of the shell adapter; falls back if <code>probe</code> fails</td></tr>
+      <tr><td>5 — scorecard + README</td><td>builder</td><td>sonnet</td><td>seq</td><td>inline</td>
+        <td>Static HTML in an established palette + prose</td></tr>
+      <tr><td>review pass</td><td>reviewer</td><td>opus (different context than author)</td><td>final</td><td>inline</td>
+        <td>Fairness rules and budget guards deserve an adversarial read</td></tr>
+    </tbody>
+  </table>
+  <p class="note">One commit per phase, per the standing convention. Full acceptance run once at
+  the end, not between phases.</p>
+</section>
+
+<section id="files-changed">
+  <h2>Files that change</h2>
+  <table>
+    <thead><tr><th>Path</th><th>Change</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td><code>.brain/orchestration.json</code></td><td>new</td><td>Routing policy: adapters, routes, probes, fallbacks</td></tr>
+      <tr><td><code>.brain/rules/orchestration.md</code></td><td>new</td><td>Layer rule: routing conventions + benchmark fairness rules</td></tr>
+      <tr><td><code>.brain/rules/index.md</code></td><td>edit</td><td>Register rule #5 in the layer table</td></tr>
+      <tr><td><code>lib/orchestrate/policy.js</code></td><td>new</td><td>Load/validate policy, resolve a route, probe adapters, extract a plan's embedded block</td></tr>
+      <tr><td><code>lib/bench/runner.js</code></td><td>new</td><td>Worktree lifecycle, arm invocation, acceptance, budget guard, result writing</td></tr>
+      <tr><td><code>lib/bench/report.js</code></td><td>new</td><td>Rollup stats (median/min/max, n) + TOON and HTML scorecard</td></tr>
+      <tr><td><code>bin/brain.js</code></td><td>edit</td><td><code>cmdOrchestrate</code>, <code>cmdBench</code>, <code>COMMANDS</code> entries, <code>runs append</code> flags, <code>check</code> warning, <code>skillContent()</code> sync</td></tr>
+      <tr><td><code>lib/review/playbooks.js</code></td><td>edit</td><td>Orchestration section in the plan playbook; new <code>orchestrate</code> + <code>bench</code> playbooks</td></tr>
+      <tr><td><code>lib/review/dashboard.{html,js}</code></td><td>edit</td><td>Show agent/model attribution on run steps</td></tr>
+      <tr><td><code>bench/tasks/&lt;id&gt;/{task.md,check.sh,meta.json}</code></td><td>new</td><td>The suite; <code>check.sh</code> is the deterministic verdict</td></tr>
+      <tr><td><code>bench/arms/*.json</code></td><td>new</td><td>One file per arm: entry command template + orchestration directive</td></tr>
+      <tr><td><code>.brain/bench/&lt;date&gt;/*.json</code></td><td>new (generated)</td><td>Raw per-run results, committed for auditability</td></tr>
+      <tr><td><code>.brain/verify.json</code></td><td>edit</td><td>Add a policy-lint check (schema valid, every shell adapter has a probe + fallback)</td></tr>
+      <tr><td><code>README.md</code></td><td>edit</td><td>Scorecard section + fairness rules link</td></tr>
+      <tr><td><code>CLAUDE.md</code></td><td>edit</td><td>New layers (<code>lib/orchestrate/</code>, <code>lib/bench/</code>) and the two new data files</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="golden-path">
+  <h2>Golden path</h2>
+  <p>Plan approved at 10:00, phases dispatched by policy, benchmark answers "was that shape
+  actually better" later the same week.</p>
+  <pre class="mermaid">
+sequenceDiagram
+  participant H as Human
+  participant C as Coordinator
+  participant B as brain CLI
+  participant S as Sub-agent (sonnet)
+  participant K as kimi CLI (adapter)
+  H->>C: "plan this"
+  C->>B: brain progress / plans / orchestrate
+  B-->>C: state + routing policy
+  C->>C: write plan.html + embedded orchestration JSON
+  C->>B: brain review plan.html
+  B-->>H: review UI (plan + brain memory)
+  H-->>C: "phase 4b → kimi" (decision card)
+  C->>C: patch table + JSON, reply, poll again
+  H-->>C: Approve plan
+  C->>B: brain orchestrate plan &lt;slug&gt;
+  B-->>C: phase→agent→model directives (TOON)
+  C->>S: phase 2 (Agent tool, sonnet)
+  C->>K: phase 4b (Bash adapter, probed)
+  S-->>B: runs append --agent builder --model sonnet
+  K-->>B: runs append --agent builder --model kimi
+  C->>B: brain bench run --arm B --arm C --repeat 3
+  B-->>C: results + scorecard (USD/pass, n=3)
+  </pre>
+  <pre class="fallback">Human "plan this" -> Coordinator reads brain state + policy
+  -> writes plan.html (+ embedded orchestration JSON)
+  -> brain review plan.html -> review UI
+  -> Human: "phase 4b should be kimi" (decision card) -> agent patches table + JSON -> poll
+  -> Human: Approve -> brain orchestrate plan &lt;slug&gt; -> TOON directives
+  -> Coordinator dispatches: phase 2 -> sonnet sub-agent | phase 4b -> kimi via Bash adapter
+  -> each records: brain runs append --agent ... --model ...
+  -> brain bench run --arm B --arm C --repeat 3 -> scorecard (USD/pass, n=3)</pre>
+</section>
+
+<section id="error-paths">
+  <h2>Error paths</h2>
+  <table>
+    <thead><tr><th>Failure</th><th>Detected by</th><th>Handled by</th><th>Human sees</th></tr></thead>
+    <tbody>
+      <tr><td>External CLI not installed (no <code>kimi</code> on PATH)</td>
+        <td>adapter <code>probe</code> exits nonzero</td>
+        <td>route degrades to its declared <code>fallback</code></td>
+        <td><code>adapter: kimi (unavailable) → fallback sonnet</code> in the orchestrate output; exit 0</td></tr>
+      <tr><td>No <code>.brain/orchestration.json</code> in a brain</td>
+        <td>policy loader finds no file</td>
+        <td>built-in default routes used</td>
+        <td>TOON marked <code>source: default</code> + <code>help:</code> line offering to scaffold one; exit 0</td></tr>
+      <tr><td>Plan artifact has no orchestration block</td>
+        <td><code>orchestrate plan</code> / <code>check</code> finds no <code>#brain-orchestration</code></td>
+        <td>warning, not failure — all 5 existing plans predate this</td>
+        <td><code>warn: plan &lt;slug&gt; has no orchestration block</code>; <code>check</code> stays exit 0</td></tr>
+      <tr><td>Malformed policy (shell adapter with no probe, unknown route kind)</td>
+        <td>schema validation in <code>policy.js</code>, run as a <code>verify.json</code> check</td>
+        <td>refuse to dispatch</td>
+        <td><code>error:</code> + the offending key path, exit 1</td></tr>
+      <tr><td>Bench run exceeds the budget ceiling</td>
+        <td>runner sums per-run cost against <code>--max-usd</code> before each launch</td>
+        <td>stop launching; keep completed results</td>
+        <td><code>halted: budget</code> with the count run vs planned; partial results still reported</td></tr>
+      <tr><td>Arm hangs</td>
+        <td>per-run timeout (default 15 min, like <code>verify</code>'s per-check timeout)</td>
+        <td>kill the process tree, tear down the worktree, record <code>status: timeout</code></td>
+        <td>timeout row in the report, counted as a failure not a skip</td></tr>
+      <tr><td>Arm leaves the worktree dirty or breaks the harness</td>
+        <td>post-run <code>brain check</code> + <code>brain verify</code> inside the worktree</td>
+        <td>downgrade the run to FAIL with <code>reason: harness-dirty</code></td>
+        <td>FAIL row naming the failed invariant — passing by vandalism doesn't count</td></tr>
+      <tr><td>Worktree cleanup fails (locked, disk full)</td>
+        <td>nonzero <code>git worktree remove</code></td>
+        <td>record the leaked path; keep going</td>
+        <td><code>leaked_worktrees[]</code> block + the <code>git worktree prune</code> command to run</td></tr>
+      <tr><td>Cost/usage unavailable from an arm's output</td>
+        <td>Phase 0 spike, or a null usage field at runtime</td>
+        <td>fall back to the tokens-per-pass metric; mark the arm's cost column <code>unknown</code></td>
+        <td>scorecard shows <code>unknown</code> — never an imputed dollar figure</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="testing-plan" data-brain-section="testing-plan">
+  <h2>Testing plan</h2>
+  <p class="note">No test framework in this repo — every line is a CLI invocation with an
+  asserted exit code and eyeballed TOON, per <code>CLAUDE.md</code>. Add or edit items inline.</p>
+  <ul class="checklist">
+    <template>
+      <li data-brain-item>
+        <span data-item-text></span>
+        <button type="button" class="item-x" data-brain-action>x</button>
+        <button type="button" class="item-restore" data-brain-action hidden>restore</button>
+      </li>
+    </template>
+    <li data-brain-item="0"><span data-item-text>Golden: <code>brain orchestrate</code> prints
+      routes as TOON with a <code>help:</code> list; <code>--help</code> and <code>--brain</code>
+      both work; an unknown flag exits 2</span>
+      <button type="button" class="item-x" data-brain-action>x</button>
+      <button type="button" class="item-restore" data-brain-action hidden>restore</button></li>
+    <li data-brain-item="1"><span data-item-text>Golden: <code>orchestrate plan
+      2026-07-27-orchestration-routing-bench</code> round-trips this file's embedded block into
+      the phase table</span>
+      <button type="button" class="item-x" data-brain-action>x</button>
+      <button type="button" class="item-restore" data-brain-action hidden>restore</button></li>
+    <li data-brain-item="2"><span data-item-text>Error: probe with <code>kimi</code> absent from
+      PATH → fallback row, exit 0, no stack trace</span>
+      <button type="button" class="item-x" data-brain-action>x</button>
+      <button type="button" class="item-restore" data-brain-action hidden>restore</button></li>
+    <li data-brain-item="3"><span data-item-text>Error: malformed <code>orchestration.json</code>
+      (shell adapter, no probe) → exit 1 naming the key path</span>
+      <button type="button" class="item-x" data-brain-action>x</button>
+      <button type="button" class="item-restore" data-brain-action hidden>restore</button></li>
+    <li data-brain-item="4"><span data-item-text>Regression: all 5 existing plans and
+      <code>brain check</code> stay exit 0 with no orchestration blocks present</span>
+      <button type="button" class="item-x" data-brain-action>x</button>
+      <button type="button" class="item-restore" data-brain-action hidden>restore</button></li>
+    <li data-brain-item="5"><span data-item-text>Regression: <code>runs append</code> without the
+      new <code>--agent</code>/<code>--model</code> flags still writes a valid step; existing run
+      notes still render in <code>watch</code></span>
+      <button type="button" class="item-x" data-brain-action>x</button>
+      <button type="button" class="item-restore" data-brain-action hidden>restore</button></li>
+    <li data-brain-item="6"><span data-item-text>Regression: <code>brain skill --check</code> and
+      <code>brain verify --brain .brain</code> both exit 0 after the new commands land</span>
+      <button type="button" class="item-x" data-brain-action>x</button>
+      <button type="button" class="item-restore" data-brain-action hidden>restore</button></li>
+    <li data-brain-item="7"><span data-item-text>Golden: <code>bench run --dry-run</code> prints
+      the full matrix + cost ceiling and spends nothing</span>
+      <button type="button" class="item-x" data-brain-action>x</button>
+      <button type="button" class="item-restore" data-brain-action hidden>restore</button></li>
+    <li data-brain-item="8"><span data-item-text>Error: sabotage drill — an arm that deletes a
+      tracked file is recorded FAIL <code>harness-dirty</code>, and the runner survives it</span>
+      <button type="button" class="item-x" data-brain-action>x</button>
+      <button type="button" class="item-restore" data-brain-action hidden>restore</button></li>
+    <li data-brain-item="9"><span data-item-text>Error: budget drill — <code>--max-usd</code> set
+      below one run's cost halts before launch with partial results intact</span>
+      <button type="button" class="item-x" data-brain-action>x</button>
+      <button type="button" class="item-restore" data-brain-action hidden>restore</button></li>
+    <li data-brain-item="10"><span data-item-text>Golden: real 2-arm × 1-task × n3 run produces 6
+      result files; <code>bench report</code> shows medians + spread + n; the HTML scorecard
+      renders offline (no network)</span>
+      <button type="button" class="item-x" data-brain-action>x</button>
+      <button type="button" class="item-restore" data-brain-action hidden>restore</button></li>
+    <li data-brain-item="11"><span data-item-text>Error: <code>bench report</code> below n=3
+      refuses to drop the <code>preliminary</code> stamp</span>
+      <button type="button" class="item-x" data-brain-action>x</button>
+      <button type="button" class="item-restore" data-brain-action hidden>restore</button></li>
+    <li data-brain-item="12"><span data-item-text>Verification doc per <code>playbook verify</code>
+      for the review-UI change (orchestration section + attribution in <code>watch</code>), with
+      screenshots</span>
+      <button type="button" class="item-x" data-brain-action>x</button>
+      <button type="button" class="item-restore" data-brain-action hidden>restore</button></li>
+  </ul>
+  <div class="list-add-row" data-brain-section-add="testing-plan">
+    <input class="list-add-input" placeholder="Add a test…">
+    <button type="button" class="list-add-btn" data-brain-action>+ Add</button>
+  </div>
+</section>
+
+<section id="open-questions" data-brain-section="open-questions">
+  <h2>Open questions</h2>
+  <ul>
+    <template>
+      <li data-brain-item>
+        <span data-item-text></span>
+        <button type="button" class="item-x" data-brain-action>x</button>
+        <button type="button" class="item-restore" data-brain-action hidden>restore</button>
+      </li>
+    </template>
+    <li data-brain-item="0"><span data-item-text>Who pays for bench runs, and does it ever run in
+      CI? A nightly matrix is a real recurring bill; local-only-on-demand is free but the numbers
+      go stale and nobody trusts a stale benchmark.</span>
+      <button type="button" class="item-x" data-brain-action>x</button>
+      <button type="button" class="item-restore" data-brain-action hidden>restore</button></li>
+    <li data-brain-item="1"><span data-item-text>Do external-vendor API keys belong anywhere near
+      this repo's config, or must adapters read only from the ambient environment? (Leaning
+      strictly ambient — the policy file names a probe and a command, never a secret.)</span>
+      <button type="button" class="item-x" data-brain-action>x</button>
+      <button type="button" class="item-restore" data-brain-action hidden>restore</button></li>
+    <li data-brain-item="2"><span data-item-text>Is the routing taxonomy (<code>architecture</code>,
+      <code>frontend-ui</code>, <code>tests</code>, <code>mechanical</code>, <code>docs</code>,
+      <code>review</code>) the right cut, and who assigns a phase's kind — the plan author, or
+      inferred from the files it touches?</span>
+      <button type="button" class="item-x" data-brain-action>x</button>
+      <button type="button" class="item-restore" data-brain-action hidden>restore</button></li>
+    <li data-brain-item="3"><span data-item-text>Should the bench also measure the human cost —
+      review rounds, prompts per plan, interventions — since "fewer rounds to approval" may be the
+      more honest harness win than dollars per task?</span>
+      <button type="button" class="item-x" data-brain-action>x</button>
+      <button type="button" class="item-restore" data-brain-action hidden>restore</button></li>
+    <li data-brain-item="4"><span data-item-text>Does a published benchmark naming other vendors
+      create a claims-accuracy obligation we want (reproducible, auditable) or a fight we don't
+      (vendor pushback on task selection)?</span>
+      <button type="button" class="item-x" data-brain-action>x</button>
+      <button type="button" class="item-restore" data-brain-action hidden>restore</button></li>
+  </ul>
+  <div class="list-add-row" data-brain-section-add="open-questions">
+    <input class="list-add-input" placeholder="Add an open question…">
+    <button type="button" class="list-add-btn" data-brain-action>+ Add</button>
+  </div>
+</section>
+
+<section id="verdict">
+  <h2>Verdict</h2>
+  <div>
+    <button type="button" class="btn-approve" data-brain-action
+      onclick="queueVerdict('approve')">Approve plan</button>
+    <button type="button" class="btn-request-changes" data-brain-action
+      onclick="queueVerdict('request-changes')">Request changes</button>
+  </div>
+</section>
+
+<script type="application/json" id="brain-orchestration">
+{
+  "version": 1,
+  "plan": "2026-07-27-orchestration-routing-bench",
+  "coordinator": { "model": "opus", "commit_per_phase": true, "acceptance": "end-only" },
+  "phases": [
+    { "n": 0, "phase": "spike-metrics-gate", "kind": "architecture", "agent": "inline", "model": "opus", "mode": "seq", "isolation": "worktree", "gate": true },
+    { "n": 1, "phase": "routing-policy-and-orchestrate", "kind": "architecture", "agent": "inline", "model": "opus", "mode": "seq", "isolation": "inline" },
+    { "n": 2, "phase": "plan-integration", "kind": "cli", "agent": "builder", "model": "sonnet", "mode": "seq", "isolation": "inline" },
+    { "n": 3, "phase": "execution-attribution", "kind": "cli", "agent": "builder", "model": "sonnet", "mode": "par:2", "isolation": "worktree" },
+    { "n": 4, "phase": "bench-runner-and-suite", "kind": "architecture", "agent": "builder", "model": "opus", "mode": "seq", "isolation": "inline" },
+    { "n": 4.5, "phase": "ui-bench-task-fixture", "kind": "frontend-ui", "agent": "builder", "adapter": "kimi", "fallback": { "agent": "builder", "model": "sonnet" }, "mode": "par:4", "isolation": "worktree" },
+    { "n": 5, "phase": "scorecard-and-readme", "kind": "docs", "agent": "builder", "model": "sonnet", "mode": "seq", "isolation": "inline" },
+    { "n": 6, "phase": "adversarial-review", "kind": "review", "agent": "reviewer", "model": "opus", "mode": "final", "isolation": "inline" }
+  ]
+}
+</script>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "neutral" });
+  document.querySelectorAll("pre.fallback").forEach(function (el) { el.hidden = true; });
+</script>
+
+<script>
+  function queueDecision(cardId, question) {
+    var card = document.getElementById(cardId);
+    var checked = card.querySelector('input[type="radio"]:checked');
+    if (!checked) return;
+    var choice = checked.value;
+    if (window.brain && typeof window.brain.queuePrompt === "function") {
+      window.brain.queuePrompt({
+        tag: "decision",
+        queueKey: cardId,
+        prompt: question + ": " + choice,
+        target: { type: "decision", question: question, choice: choice }
+      });
+    }
+    var ack = document.getElementById("ack-" + cardId);
+    if (ack) ack.textContent = "Queued: " + choice;
+  }
+
+  function queueVerdict(verdict) {
+    if (!(window.brain && typeof window.brain.queuePrompt === "function")) return;
+    window.brain.queuePrompt({
+      tag: "message",
+      queueKey: "verdict",
+      prompt: verdict === "approve"
+        ? "Plan approved as written."
+        : "Requesting changes — see annotations."
+    });
+  }
+</script>
+
+<script>
+  (function () {
+    function queueList(section, queueKey, prompt, action, item, index) {
+      if (window.brain && typeof window.brain.queuePrompt === "function") {
+        window.brain.queuePrompt({
+          tag: "list-edit",
+          queueKey: queueKey,
+          prompt: prompt,
+          target: { type: "list-edit", section: section, action: action, item: item, index: index }
+        });
+      }
+    }
+
+    function slugify(s) {
+      return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "").slice(0, 60) || "item";
+    }
+
+    function itemText(el) {
+      var t = el.querySelector("[data-item-text]");
+      return (t || el).textContent.trim();
+    }
+
+    function addBadge(el, cls, label) {
+      var badge = el.querySelector("." + cls);
+      if (!badge) {
+        badge = document.createElement("span");
+        badge.className = "item-badge " + cls;
+        el.appendChild(badge);
+      }
+      badge.textContent = label;
+    }
+
+    function toggleRemoved(item, section) {
+      var index = Number(item.getAttribute("data-brain-item"));
+      var text = itemText(item);
+      var removed = item.classList.toggle("item-removed");
+      var xBtn = item.querySelector(".item-x");
+      var restoreBtn = item.querySelector(".item-restore");
+      if (xBtn) xBtn.hidden = removed;
+      if (restoreBtn) restoreBtn.hidden = !removed;
+      var key = section + ":remove:" + index;
+      if (removed) {
+        queueList(section, key, "Remove from " + section + ": \"" + text + "\"", "remove", text, index);
+      } else {
+        queueList(section, key, "Cancelled: keep \"" + text + "\" in " + section, "edit", text, index);
+      }
+    }
+
+    function startEdit(item, section) {
+      if (item.classList.contains("item-removed")) return;
+      var span = item.querySelector("[data-item-text]");
+      if (!span || span.isContentEditable) return;
+      var before = span.textContent;
+      span.setAttribute("contenteditable", "true");
+      span.focus();
+
+      function commit() {
+        span.removeAttribute("contenteditable");
+        span.removeEventListener("blur", commit);
+        span.removeEventListener("keydown", onKey);
+        var text = span.textContent.trim();
+        if (!text || text === before.trim()) { span.textContent = before; return; }
+        var index = Number(item.getAttribute("data-brain-item"));
+        addBadge(item, "item-badge-edited", "edited");
+        queueList(section, section + ":edit:" + index,
+          "Edit " + section + " item " + index + ": \"" + text + "\"", "edit", text, index);
+      }
+      function onKey(ev) {
+        if (ev.key === "Enter") { ev.preventDefault(); span.blur(); }
+        else if (ev.key === "Escape") { span.textContent = before; ev.preventDefault(); span.blur(); }
+      }
+      span.addEventListener("blur", commit);
+      span.addEventListener("keydown", onKey);
+    }
+
+    function commitAdd(addRow) {
+      var section = addRow.getAttribute("data-brain-section-add");
+      var input = addRow.querySelector(".list-add-input");
+      var text = input.value.trim();
+      if (!text) return;
+      var list = document.querySelector("[data-brain-section=\"" + section + "\"]");
+      var tpl = list && list.querySelector("template");
+      if (!list || !tpl) return;
+      var node = document.importNode(tpl.content, true);
+      var item = node.querySelector("[data-brain-item]") || node.firstElementChild;
+      item.setAttribute("data-brain-item", "new");
+      var span = item.querySelector("[data-item-text]");
+      if (span) span.textContent = text;
+      item.classList.add("item-proposed");
+      addBadge(item, "item-badge-proposed", "proposed");
+      list.insertBefore(node, tpl.nextSibling);
+      input.value = "";
+      queueList(section, section + ":add:" + slugify(text),
+        "Add to " + section + ": \"" + text + "\"", "add", text, null);
+    }
+
+    document.addEventListener("click", function (ev) {
+      var xBtn = ev.target.closest(".item-x");
+      var restoreBtn = ev.target.closest(".item-restore");
+      if (xBtn || restoreBtn) {
+        var item = ev.target.closest("[data-brain-item]");
+        var section = ev.target.closest("[data-brain-section]");
+        if (item && section) toggleRemoved(item, section.getAttribute("data-brain-section"));
+        return;
+      }
+      var addBtn = ev.target.closest(".list-add-btn");
+      if (addBtn) {
+        var addRow = ev.target.closest("[data-brain-section-add]");
+        if (addRow) commitAdd(addRow);
+      }
+    });
+
+    document.addEventListener("dblclick", function (ev) {
+      var item = ev.target.closest("[data-brain-item]");
+      if (!item) return;
+      var section = item.closest("[data-brain-section]");
+      if (section) startEdit(item, section.getAttribute("data-brain-section"));
+    });
+
+    document.addEventListener("keydown", function (ev) {
+      if (ev.key !== "Enter") return;
+      var addRow = ev.target.closest("[data-brain-section-add]");
+      if (addRow && ev.target.classList.contains("list-add-input")) {
+        ev.preventDefault();
+        commitAdd(addRow);
+      }
+    });
+  })();
+</script>
+
+</body>
+</html>
