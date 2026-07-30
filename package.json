@@ -1,13 +1,40 @@
 {
   "name": "brain-axi",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "AXI-compliant CLI for querying and updating a .brain agent harness directory",
   "type": "module",
   "bin": {
     "brain": "./bin/brain.js"
   },
+  "files": [
+    "bin",
+    "lib",
+    "README.md",
+    "LICENSE",
+    "THIRD-PARTY-NOTICES.md"
+  ],
   "engines": {
     "node": ">=18"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SeanningTatum/brain-axi.git"
+  },
+  "homepage": "https://github.com/SeanningTatum/brain-axi#readme",
+  "bugs": {
+    "url": "https://github.com/SeanningTatum/brain-axi/issues"
+  },
+  "keywords": [
+    "agent",
+    "coding-agent",
+    "claude-code",
+    "agent-skills",
+    "plan-review",
+    "human-in-the-loop",
+    "agent-memory",
+    "harness",
+    "toon",
+    "cli"
+  ],
   "license": "MIT"
 }
