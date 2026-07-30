@@ -21,6 +21,14 @@
 
 ---
 
+## 2026-07-30 — PR #15: README Who-this-is-for + mermaid flow diagram — https://github.com/SeanningTatum/brain-axi/pull/15
+- branch: `docs/who-its-for`
+- in-progress feature: none
+- run note: none
+- next: merge #14 then #15 (both touch README, different regions — #15 may need a trivial rebase)
+
+---
+
 ## 2026-07-29 — Phases 1-3 of ai-work shipped as PR #12 (feat/ai-work-harness). Pre-PR review: 4 subagent reviewers (Greptile API down), 0 P1 / 4 P2 / 8 P3 all fixed in bc6fa4f. Verification: 3x agreed CLI battery, gate 31/31 1.000.
 - branch: `feat/ai-work-harness`
 - in-progress feature: ai-work
