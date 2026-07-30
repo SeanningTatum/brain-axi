@@ -94,6 +94,23 @@
       "owners": [
         "sean"
       ]
+    },
+    {
+      "id": "feat-007",
+      "name": "planning-ux — product-grade planning (mockups, UX flows, product playbook)",
+      "slug": "planning-ux",
+      "doc": ".brain/features/planning-ux/planning-ux.md",
+      "description": "Adds two standing playbooks — `product` (problem/evidence, user + JTBD, success metric, non-goals, scope tiers, prior art, recommendation-with-rationale) and `ux` (wireframe CSS kit, screen inventory, screen-state matrix, user-journey flow, variant decision cards) — plus conditional branches in plan/start/done, skill regeneration, rules doc, and skill-coverage eval cases. Phase 4 (gated): approved mockup persisted as verify evidence. Per plan product-planning-mockups (2026-07-30, approved round 1, all 6 decisions at recommended).",
+      "dependencies": [
+        "core-cli",
+        "brain-review",
+        "ai-work"
+      ],
+      "status": "planned",
+      "evidence": "",
+      "owners": [
+        "sean"
+      ]
     }
   ]
 }

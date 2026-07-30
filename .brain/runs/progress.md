@@ -45,6 +45,39 @@
 
 ---
 
+## 2026-07-30 — PR opened for planning-ux: https://github.com/SeanningTatum/brain-axi/pull/13
+- branch: `feat/planning-ux`
+- in-progress feature: none
+- run note: none
+
+---
+
+## 2026-07-30 — vendored the AXI standard into the repo as the installable brain-axi skill; rewired the 3 references that pointed at the global axi skill
+- branch: `feat/planning-ux`
+- in-progress feature: none
+- run note: none
+- next: commit and push so npx skills add SeanningTatum/brain-axi --skill brain-axi resolves from GitHub
+
+---
+
+## 2026-07-30 — planning-ux phase 4: mockup reconciliation. listSnapshots + snapshot: line in plans view surfaces the frozen per-round vN.html; verify playbook 5b + mockup-reconciliation table in the verdict doc consume it. No new persistence needed — recordReviewRound already snapshots per round. All 4 phases of plan product-planning-mockups complete.
+- branch: `feat/planning-ux`
+- in-progress feature: none
+- run note: none
+- eval: skill-coverage 1.000 (+0.000), 37/37 pass, no frozen failures, cost 0, run 2026-07-30T15:20:38.467Z
+- next: Open PR for feat/planning-ux (3 commits off main). Feature planning-ux stays 'planned' until ai-work ships — one-in-progress policy.
+
+---
+
+## 2026-07-30 — planning-ux phases 1-3: new product + ux playbooks, plan artifact restructured 0-16 with three conditional sections (3 product brief, 6 UI mockups + UX flows, 7 product decisions), start 2b + done 2c bookends, skill regenerated, rules/planning-ux.md, 5 new skill-coverage cases. Plan product-planning-mockups approved round 1 at all six recommended options.
+- branch: `feat/planning-ux`
+- in-progress feature: none
+- run note: none
+- eval: skill-coverage 1.000 (+0.000), 36/36 pass, no frozen failures, cost 0, run 2026-07-30T15:16:06.576Z
+- next: Phase 4 (gated on decision 6): persist an approved mockup as verification evidence + verify playbook comparison step. Then open PR for feat/planning-ux.
+
+---
+
 ## 2026-07-29 — Phases 1-3 of ai-work shipped as PR #12 (feat/ai-work-harness). Pre-PR review: 4 subagent reviewers (Greptile API down), 0 P1 / 4 P2 / 8 P3 all fixed in bc6fa4f. Verification: 3x agreed CLI battery, gate 31/31 1.000.
 - branch: `feat/ai-work-harness`
 - in-progress feature: ai-work

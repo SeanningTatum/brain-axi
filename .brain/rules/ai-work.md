@@ -21,7 +21,7 @@ Boundaries that matter: **`evals.js` never spawns, writes prompts, or calls a mo
 | Surface | Where | Contains |
 |---------|-------|----------|
 | `brain playbook ai` | `PLAYBOOKS.ai` in `lib/review/playbooks.js` | Full AI-work standard: prompt contract, prompting practice, golden sets, synthesis rules, eval design, the change loop, pipelines/guardrails, agent topology, human loop, anti-patterns, readiness |
-| Plan §13 | `PLAYBOOKS.plan` | AI addendum — four extra plan sections + two stock decision cards (model choice, eval kind) |
+| Plan §16 | `PLAYBOOKS.plan` | AI addendum — four extra plan sections + two stock decision cards (model choice, eval kind) |
 | Start §3, §5 | `PLAYBOOKS.start` | Read `.brain/evals/` state; take an eval baseline before editing prompts |
 | Execute step 3b | `PLAYBOOKS.execute` | Re-run the suite per prompt change; record per-case delta; a red frozen case kills the change |
 | Done §2b + DoD | `PLAYBOOKS.done` | Suite re-run after the last edit, no failing frozen case, every fixed bug encoded as a frozen case, human eval feedback answered |
@@ -50,7 +50,7 @@ Boundaries that matter: **`evals.js` never spawns, writes prompts, or calls a mo
 - New eval command lands → update `playbook ai` §5 + `execute` 3b + `done` §2b to name it, then `skill --write`
 - New adapter → `EVAL_ADAPTERS` + `adaptRunOutput` + the skill's runner/adapter contract paragraph + a case in `skill-coverage`
 - `.brain/evals/` shape changes → `validateSuiteShape`/`loadCases` + `playbook ai` §3 + `initEvalsIndexMd` + this doc
-- Agent topology state lands (`.brain/agents/`) → `playbook ai` §7 + `plan` §13 + new `brain check` rows
+- Agent topology state lands (`.brain/agents/`) → `playbook ai` §7 + `plan` §16 + new `brain check` rows
 - Any new AI branch in a playbook → add a row to the surface table above
 
 ## Provenance

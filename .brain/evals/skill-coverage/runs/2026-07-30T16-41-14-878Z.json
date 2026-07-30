@@ -1,0 +1,353 @@
+{
+  "ts": "2026-07-30T16:41:14.878Z",
+  "suite": "skill-coverage",
+  "branch": "feat/planning-ux",
+  "commit": "b714389",
+  "runner": "node scripts/eval-skill-coverage.mjs",
+  "adapter": "envelope",
+  "model": "n/a — deterministic assertions, no model call",
+  "summary": {
+    "pass": 37,
+    "total": 37,
+    "score": 1,
+    "failing": [],
+    "frozen_failing": [],
+    "partial": false
+  },
+  "unknown_case_ids": [],
+  "cases": [
+    {
+      "id": "cmd-init",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: brain-axi init",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "cmd-features",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: brain features",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "cmd-progress",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: brain progress",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "cmd-runs",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: brain runs",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "cmd-docs",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: brain docs",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "cmd-evals",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: brain evals",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "cmd-search",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: brain search",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "cmd-context",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: brain context",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "cmd-setup",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: brain setup",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "cmd-skill",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: brain skill",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "cmd-review",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: brain review",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "cmd-plans",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: brain plans",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "cmd-shots",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: brain shots",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "cmd-verifications",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: brain verifications",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "cmd-timeline",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: brain timeline",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "cmd-playbook",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: brain playbook",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "cmd-check",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: brain check",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "cmd-verify",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: brain verify",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "cmd-ship",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: brain ship",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "cmd-watch",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: brain-axi watch",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "cmd-pr",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: brain-axi pr",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "contract-toon",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: TOON",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "contract-playbook-ai",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: playbook ai",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "contract-frozen-case",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: frozen regression case",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "contract-review-poll",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: review poll",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "contract-verify-stages",
+      "frozen": false,
+      "pass": true,
+      "score": 1,
+      "output": "found: --stage baseline",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "edge-no-npm-test",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "absent as required: npm test",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "edge-no-npm-run-build",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "absent as required: npm run build",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "edge-npx-form",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: npx -y brain-axi",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "quality-init-guidance",
+      "frozen": false,
+      "pass": true,
+      "score": 1,
+      "output": "found: No `.brain/` yet",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "quality-one-in-progress",
+      "frozen": false,
+      "pass": true,
+      "score": 1,
+      "output": "found: one-in-progress",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "cmd-playbook-product",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: npx -y brain-axi playbook product",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "cmd-playbook-ux",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: npx -y brain-axi playbook ux",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "contract-product-brief",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: product brief",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "contract-ux-mockups",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: UI mockups + UX flows",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "quality-plan-section-count",
+      "frozen": false,
+      "pass": true,
+      "score": 1,
+      "output": "found: 17-section structure",
+      "notes": "",
+      "missing": false
+    },
+    {
+      "id": "contract-mockup-snapshot",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "found: the FROZEN copy the human approved",
+      "notes": "",
+      "missing": false
+    }
+  ]
+}
