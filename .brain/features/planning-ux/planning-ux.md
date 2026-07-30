@@ -10,7 +10,7 @@ Plans produced by this harness are engineering-shaped: architecture, phases, fil
 
 - `brain playbook product` — before writing any plan for user-facing work: problem + evidence, user + job-to-be-done, success metric with a number, non-goals, scope tiers (thin / complete / gold), prior art, and a recommendation-with-rationale on every product decision.
 - `brain playbook ux` — whenever a plan changes or adds a screen: wireframe CSS kit, screen inventory, screen-state matrix (empty / loading / error / success), user-journey flow diagram, variant A/B decision cards.
-- `brain playbook plan` — conditional branches pointing at both, in the same idiom §13 (AI addendum) already uses.
+- `brain playbook plan` — conditional branches pointing at both, in the same idiom §16 (the AI addendum) already uses.
 - `brain playbook start` / `done` — product framing at kickoff, "product claims still true" at close.
 
 ## Decisions (plan `product-planning-mockups`, 2026-07-30, approved round 1)
