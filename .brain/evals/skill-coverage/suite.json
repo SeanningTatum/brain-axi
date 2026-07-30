@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "kind": "assertions",
+  "description": "The generated agent skill (.claude/skills/brain/SKILL.md) is brain-axi's own agent-facing prompt. This suite scores it the way any other prompt gets scored: every command reachable, the output contract stated, the AI rules present, and no fabricated tooling.",
+  "runner": "node scripts/eval-skill-coverage.mjs",
+  "adapter": "envelope",
+  "model": "n/a — deterministic assertions, no model call",
+  "prompts": [
+    { "name": "generated-skill", "path": ".claude/skills/brain/SKILL.md" },
+    { "name": "skill-source", "path": "bin/brain.js" }
+  ],
+  "thresholds": {
+    "min_pass_rate": 1,
+    "aggregate_tolerance": 0
+  },
+  "max_output_chars": 4000
+}
