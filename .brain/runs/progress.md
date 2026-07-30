@@ -21,6 +21,14 @@
 
 ---
 
+## 2026-07-30 — PR #15: README Who-this-is-for + mermaid flow diagram — https://github.com/SeanningTatum/brain-axi/pull/15
+- branch: `docs/who-its-for`
+- in-progress feature: none
+- run note: none
+- next: merge #14 then #15 (both touch README, different regions — #15 may need a trivial rebase)
+
+---
+
 ## 2026-07-30 — PR #14: vendored kunchenguid/axi (MIT) as the installable brain-axi skill — https://github.com/SeanningTatum/brain-axi/pull/14
 - branch: `feat/brain-axi-skill`
 - in-progress feature: none

@@ -14,6 +14,58 @@ Every new agent session starts from zero. It re-reads the codebase, re-derives w
 
 The output is [TOON](https://toonformat.dev/), not JSON or prose: minimal default schemas, pre-computed counts, truncated bodies with a `--full` escape hatch, definitive empty states, and a `help:` block at the end of *every* command teaching the agent what to run next. That last part matters — the CLI's own output is how agents learn to use it, so a fresh agent with no prior context can bootstrap correctly on the first invocation.
 
+## Who this is for
+
+You work with coding agents every day — not for toy scripts, but for real features that take more than one sitting.
+
+So you know the tax. Session one, you explain the codebase, the constraints, the thing you tried last week that didn't work. The agent gets it, does good work, and then the context window ends. Session two, you explain it again. By session five you're not designing software, you're a human cache with a bad eviction policy — and the agent has quietly re-litigated a decision you settled on Tuesday, because nothing ever told it the decision existed.
+
+`brain-axi` moves that memory out of your head and out of the context window, into a directory in your repo.
+
+**It's for you if:**
+
+- You start most days re-briefing an agent on work *the same agent* did yesterday.
+- You've watched an agent confidently redo something you already ruled out.
+- You want project decisions in git, reviewable in a PR — not buried in a chat log you can't grep.
+- You're the only one who knows why the code is shaped this way, and that's a bus-factor problem.
+- You run more than one agent (Claude Code, Codex, OpenCode) and want them working from the same state.
+
+**It's not for you if:** you're doing one-off scripts, or the whole project already fits in one context window. The overhead won't pay for itself.
+
+## How it works
+
+Install once. After that you rarely type `brain` — the agent does, because the CLI's own output teaches it the next command.
+
+```mermaid
+flowchart LR
+    I["<b>Setup, once per repo</b><br/>npx skills add …--skill brain<br/>brain setup --app claude"]
+
+    I --> S
+
+    S["<b>New session</b><br/>context: empty"]
+    S --> H["<b>brain context</b><br/>dashboard injected<br/>before the agent acts"]
+    H --> R["<b>Agent orients</b><br/>features · progress<br/>search · docs"]
+    R --> W["<b>Agent works</b><br/>rules and past decisions<br/>already in hand"]
+    W --> C["<b>Agent records</b><br/>progress add<br/>set-status · ship"]
+    C --> B[("<b>.brain/</b><br/>md + json<br/>lives in git")]
+    B -.->|"next session starts warm"| H
+
+    style I fill:#f8fafc,stroke:#94a3b8,color:#0f172a
+    style S fill:#7f1d1d,stroke:#b91c1c,color:#fef2f2
+    style W fill:#14532d,stroke:#16a34a,color:#f0fdf4
+    style B fill:#1f2937,stroke:#4b5563,color:#f9fafb
+```
+
+The dotted line is the whole product. Everything the agent learns on the way down gets written to `.brain/`, so the next cold session starts where the last one stopped.
+
+|  | Without `.brain/` | With `.brain/` |
+|---|---|---|
+| **Session start** | "Let me read the codebase first…" | Feature status, last checkpoint, and next step, before the first tool call |
+| **Mid-task** | Re-derives conventions from the code | `brain search "auth"` hits the rule you wrote in March |
+| **Settled decisions** | Re-litigated, silently | Written down, cited, linked in the PR |
+| **Session end** | Evaporates | A checkpoint you can read six weeks later |
+| **Handoff** | Only you know why | The repo knows why |
+
 ## The intended way to use it
 
 Don't drive `brain` by hand. **Install the skill and let a coding agent use it.**
