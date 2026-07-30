@@ -7,6 +7,12 @@ description: >
 
 # Agent eXperience Interface (AXI)
 
+> Vendored from [kunchenguid/axi](https://github.com/kunchenguid/axi) — MIT, Copyright (c) 2026 Kun Chen.
+> Body unmodified; only the frontmatter `name` differs (`axi` → `brain-axi`) so it does not collide with an
+> upstream install. Full license: [upstream LICENSE](https://github.com/kunchenguid/axi/blob/main/LICENSE),
+> also reproduced in [`THIRD-PARTY-NOTICES.md`](https://github.com/SeanningTatum/brain-axi/blob/main/THIRD-PARTY-NOTICES.md).
+> Upstream is installable on its own with `npx skills add kunchenguid/axi`.
+
 AXI defines ergonomic standards for building CLI tools that autonomous agents interact with through shell execution.
 
 ## Before you start
