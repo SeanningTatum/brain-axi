@@ -14,6 +14,8 @@ Read when: editing the `product` or `ux` playbook, adding/renumbering a section 
 | Plan §6 | `PLAYBOOKS.plan` | Thin conditional branch into `playbook ux` — UI mockups + UX flows |
 | Start §2b | `PLAYBOOKS.start` | Two-sentence product framing at kickoff (who + how you'll know it worked) |
 | Done §2c + DoD | `PLAYBOOKS.done` | Metric observed, non-goals held, shipped UI reconciled against approved mockups |
+| Verify §5b + verdict table | `PLAYBOOKS.verify` | Reconcile shipped screenshots against the approved `vN.html` snapshot; undisclosed differences fail |
+| Snapshot surfacing | `listSnapshots` in `lib/review/brain-data.js` + `cmdPlansView` | Per-round `snapshot:` path in `brain plans view`, plus the help line pointing at the frozen copy |
 | Skill playbook index | `skillContent()` in `bin/brain.js` | Eight playbook rows + the conditional-section map in the plan-review flow |
 
 ## The plan artifact's section numbering (0-16)
@@ -63,7 +65,7 @@ Section numbers are cross-referenced from inside the playbook text, from the `ai
 - New or renumbered plan section → this doc's numbering table + every cross-reference in `PLAYBOOKS.plan`, `PLAYBOOKS.ai`, `skillContent()`, `.brain/rules/ai-work.md`, then `skill --write`
 - New `.wf-*` class or kit change → `PLAYBOOKS.ux` section 1 + plan §0's style block guidance
 - Annotation behaviour changes in `lib/review/sdk.js` → `PLAYBOOKS.ux` section 6 (it documents the real `shouldSkip` / pin-drop rules; stale text there is worse than none) + `.brain/rules/review-browser.md`
-- Mockup sign-off persistence lands (phase 4) → `PLAYBOOKS.ux` + `PLAYBOOKS.verify` + `PLAYBOOKS.done` §2c + new `brain check` rows
+- Plan snapshot naming (`vN.html`) or location changes → `listSnapshots` + `PLAYBOOKS.verify` §5b + the `plans view` help line + `skillContent()`
 - Any new playbook id → `skillContent()`'s playbook list + a `skill-coverage` eval case
 
 ## Provenance

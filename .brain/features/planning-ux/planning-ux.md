@@ -26,10 +26,12 @@ All six decision cards were answered at the recommended option:
 
 ## Phases
 
-1. `product` playbook + product sections/branch in `plan`.
-2. `ux` playbook + wireframe kit folded into `plan` §0's style block.
-3. Bookend wiring (`start`, `done`), `skillContent()` regeneration, `.brain/rules/planning-ux.md`, new `skill-coverage` eval cases.
-4. (Gated) approved mockup persisted as verification evidence; `verify` playbook comparison step.
+1. **Done** — `product` playbook + `plan` §3 and §7 conditional branches.
+2. **Done** — `ux` playbook + wireframe kit; `plan` §6 conditional branch.
+3. **Done** — bookend wiring (`start` §2b, `done` §2c + DoD row), `skillContent()` regenerated, `.brain/rules/planning-ux.md`, 6 new `skill-coverage` cases (5 frozen).
+4. **Done** — mockup sign-off as verification evidence. No new persistence surface was needed: `recordReviewRound` already freezes a per-round `vN.html` snapshot, so the work was surfacing it (`listSnapshots` in `brain-data.js`, a `snapshot:` line per round in `brain plans view`) and consuming it (`verify` §5b + a mockup-reconciliation table in the verdict doc).
+
+The plan estimated a new persistence surface for phase 4. It was already there — the phase shrank to plumbing.
 
 ## Constraints
 

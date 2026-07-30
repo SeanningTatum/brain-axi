@@ -2590,6 +2590,8 @@ function cmdPlansView(argv) {
   if (shownRounds.length) {
     for (const r of [...shownRounds].reverse()) {
       lines.push(`round ${r.round} (${r.at}${r.ended_by ? `, ended by ${r.ended_by}` : ""}):`);
+      const snap = (plan.snapshots || []).find((s) => s.round === r.round);
+      if (snap) lines.push(kv("snapshot", snap.path, 2));
       const prompts = (r.prompts || []).map((p) => ({
         tag: p.tag,
         selector: p.selector || "",
@@ -2605,6 +2607,11 @@ function cmdPlansView(argv) {
   const help = [];
   if (!flags.full && allRounds.length > shownRounds.length)
     help.push(`Run \`brain plans view ${slug} --full\` for all ${allRounds.length} rounds with complete prompt text`);
+  const lastSnap = (plan.snapshots || []).slice(-1)[0];
+  if (lastSnap)
+    help.push(
+      `Approved artifact for round ${lastSnap.round} is frozen at \`${lastSnap.path}\` — compare shipped UI against that snapshot, not the live file`
+    );
   help.push(`Run \`brain review ${plan.file}\` to open or resume this plan`);
   lines.push(...toonList("help", help));
   print(lines);
@@ -3692,7 +3699,7 @@ Rules:
 - A poll's DOM snapshot is a compact outline, not the raw page — it prints as \`snapshot_chars: N\` by default; pass \`--snapshot\` to see the full outline block only when you actually need it.
 - \`npx -y brain-axi review end <plan.html>\` — end the session yourself once the plan is fully approved
 - \`npx -y brain-axi shots add <img> --feature <slug> --step <NN-name>\` — attach a screenshot to a feature (\`--scope <plan-or-feature>\` is the legacy form)
-- \`npx -y brain-axi plans\` / \`plans view <slug>\` — see past plan artifacts and their review rounds
+- \`npx -y brain-axi plans\` / \`plans view <slug>\` — see past plan artifacts and their review rounds. Each round prints a \`snapshot:\` path (\`plans/<slug>/vN.html\`) — the FROZEN copy the human approved. When verifying a feature whose plan carried wireframes, compare the shipped UI against that snapshot, never against the live artifact path (the agent has been editing it); record each difference in the verification doc's mockup-reconciliation table per \`playbook verify\` 5b.
 - \`npx -y brain-axi timeline\` — merged history across checkpoints, run notes, plan reviews, and verifications
 
 ## Install & session hooks (run once per repo)
