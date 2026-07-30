@@ -4,7 +4,7 @@
 
 `brain` is a single-file, zero-dependency Node tool that reads and writes a `.brain/` directory — the durable knowledge layer (features, progress checkpoints, rules, recipes, run notes, plan reviews, screenshot feedback) that survives across agent sessions. Agents shell out to it; humans get a queryable project brain for free.
 
-<img src="docs/assets/demo.gif" alt="Terminal recording of an agent running brain commands: brain features, brain progress, brain search, and brain shots notes, each returning compact TOON output" width="760">
+<img src="https://raw.githubusercontent.com/SeanningTatum/brain-axi/main/docs/assets/demo.gif" alt="Terminal recording of an agent running brain commands: brain features, brain progress, brain search, and brain shots notes, each returning compact TOON output" width="760">
 
 ## Why
 
@@ -38,6 +38,19 @@ This installs `.claude/skills/brain/SKILL.md` into your repo via the
 loads it on demand and learns the whole command surface from it — no
 `package.json` dependency, no session hook required.
 
+Two more skills ship from the same repo, install them the same way:
+
+| Skill | Install | What it's for |
+| --- | --- | --- |
+| `brain` | `npx skills add SeanningTatum/brain-axi --skill brain` | Operate an existing `.brain/` — the main one |
+| `init-brain` | `npx skills add SeanningTatum/brain-axi --skill init-brain` | Scaffold a `.brain/` into a repo that has none |
+| `brain-axi` | `npx skills add SeanningTatum/brain-axi --skill brain-axi` | The AXI standard itself — read it when building *any* agent-facing CLI, not just this one |
+
+`brain-axi` is vendored from [kunchenguid/axi](https://github.com/kunchenguid/axi)
+(MIT) so this repo's own rules resolve for anyone who clones it — see
+[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md). If you only want the standard
+and not this CLI, install it straight from the source: `npx skills add kunchenguid/axi`.
+
 **Or run the CLI straight from a checkout**, no skill involved:
 
 ```sh
@@ -68,7 +81,7 @@ help[7]:
   Run `brain setup --app claude` to install a session-start context hook
 ```
 
-<img src="docs/assets/home.png" alt="Screenshot of the brain home dashboard TOON output in a terminal" width="620">
+<img src="https://raw.githubusercontent.com/SeanningTatum/brain-axi/main/docs/assets/home.png" alt="Screenshot of the brain home dashboard TOON output in a terminal" width="620">
 
 No `.brain/` yet? Scaffold one from a base template with the `init-brain` skill, or hand-roll the [layout below](#the-brain-layout).
 
@@ -136,7 +149,7 @@ $ brain search "wrangler"
 matches: 0 matches for "wrangler" in .brain
 ```
 
-<img src="docs/assets/search.png" alt="Screenshot of brain search output in a terminal, showing zero matches for a query" width="620">
+<img src="https://raw.githubusercontent.com/SeanningTatum/brain-axi/main/docs/assets/search.png" alt="Screenshot of brain search output in a terminal, showing zero matches for a query" width="620">
 
 An empty result is still a definitive answer — no ambiguity about whether the search ran.
 
@@ -151,21 +164,21 @@ Two complementary paths — install either or both:
 
 `brain review <plan.html>` opens an HTML plan artifact in the browser next to a composer sidebar — round indicator, draft badge, the decisions and context queued for this round, and a message box for sending feedback straight back to the agent. The agent's own long-poll (`brain review poll`) picks up whatever gets sent, so review happens without either side leaving their tool.
 
-<img src="docs/assets/plan-review.png" alt="Screenshot of a brain review session: a rendered HTML plan on the left, composer sidebar with round indicator and message box on the right" width="700">
+<img src="https://raw.githubusercontent.com/SeanningTatum/brain-axi/main/docs/assets/plan-review.png" alt="Screenshot of a brain review session: a rendered HTML plan on the left, composer sidebar with round indicator and message box on the right" width="700">
 
 ## Screenshot review loop
 
 `brain watch <feature>` opens a live execution dashboard for a feature: its status pipeline (plan approved → in-progress → run steps → verification → shipped → PR opened), run-step logs, checkpoints, and screenshots — everything an agent produced while working the feature, in one page.
 
-<img src="docs/assets/execution-dashboard.png" alt="Screenshot of the brain watch execution dashboard showing a feature's status pipeline, run steps, checkpoints, and screenshot filmstrip" width="700">
+<img src="https://raw.githubusercontent.com/SeanningTatum/brain-axi/main/docs/assets/execution-dashboard.png" alt="Screenshot of the brain watch execution dashboard showing a feature's status pipeline, run steps, checkpoints, and screenshot filmstrip" width="700">
 
 Screenshots captured with `brain shots add <img> --feature <slug> --step NN-name` are never opened one-tab-per-image: the dashboard above and a `brain review` session's execution sidebar both render them in a shared in-page carousel — arrows, ←/→/Esc, counter, captions, filmstrip, and a placeholder for a missing file.
 
-<img src="docs/assets/carousel-lightbox.png" alt="Screenshot of the shared lightbox carousel open over a screenshot, with arrow navigation and a filmstrip of thumbnails" width="700">
+<img src="https://raw.githubusercontent.com/SeanningTatum/brain-axi/main/docs/assets/carousel-lightbox.png" alt="Screenshot of the shared lightbox carousel open over a screenshot, with arrow navigation and a filmstrip of thumbnails" width="700">
 
 Toggle **Annotate** in the carousel and click a screenshot to drop a numbered pin at that x/y and write a note:
 
-<img src="docs/assets/annotate-pin.png" alt="Screenshot of the lightbox in Annotate mode with a numbered pin dropped on the screenshot" width="700">
+<img src="https://raw.githubusercontent.com/SeanningTatum/brain-axi/main/docs/assets/annotate-pin.png" alt="Screenshot of the lightbox in Annotate mode with a numbered pin dropped on the screenshot" width="700">
 
 - On the dashboard, the pin saves as an unsent draft. "Send N pins to Claude" (the topbar button, or the toast shown right after pinning) hands the whole batch to the agent and stamps it sent.
 - In a review session's sidebar, the same pin instead queues immediately as a screenshot-tagged prompt in the composer, delivered on the next Send like any other annotation, through the normal `brain review poll` loop.
@@ -174,7 +187,7 @@ Re-capturing the shot (`brain shots add` again for the same feature/step) makes 
 
 The agent reads pending feedback with `brain shots notes <feature>`:
 
-<img src="docs/assets/shots-notes.png" alt="Screenshot of brain shots notes output listing a superseded annotation pin" width="620">
+<img src="https://raw.githubusercontent.com/SeanningTatum/brain-axi/main/docs/assets/shots-notes.png" alt="Screenshot of brain shots notes output listing a superseded annotation pin" width="620">
 
 ```
 $ brain shots notes shot-review

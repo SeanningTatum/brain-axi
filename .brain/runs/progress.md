@@ -21,6 +21,30 @@
 
 ---
 
+## 2026-07-30 — PR #14: vendored kunchenguid/axi (MIT) as the installable brain-axi skill — https://github.com/SeanningTatum/brain-axi/pull/14
+- branch: `feat/brain-axi-skill`
+- in-progress feature: none
+- run note: none
+- next: separate PR for the Who-this-is-for README section + mermaid flow diagram
+
+---
+
+## 2026-07-30 — launch-readiness phase 1 complete (prep) + phase 2 partial. Phase 1: package.json files allowlist [bin,lib,README,LICENSE,THIRD-PARTY-NOTICES] + version 0.2.0 + repository/homepage/bugs/keywords, new LICENSE file (MIT was declared with no license file), README image srcs switched to absolute raw.githubusercontent URLs so npmjs.com renders them without shipping 2.4MB of docs/assets. npm pack --dry-run: 16 files, 166kB, no .brain/ or plans/. npm whoami = ENEEDAUTH so publish is the human's to run. Phase 2 so far: home DESCRIPTION + skill YAML description + skill 'Start here' section all review-first per decision P1; review gains a no-brain help line; skill regenerated, skill --check clean. BLOCKER FOUND: decision P2's premise was wrong — review does NOT work without a .brain. cmdReview never calls findBrain, but /api/open hard-requires one at lib/review/server.js:778-784 and then calls ensurePlan(brain,...). Verified from a scratch dir. Making P2 true means null-handling 10 session.brain reads in server.js, a sidebar empty state, and the session-record shape in docs/REVIEW-ARCHITECTURE.md. Also found: reopening a plan without --plan mints a date-prefixed shadow plan record (ai-work-harness has one); folded into phase 3 scope. verify 2/2, check 13/13 throughout.
+- branch: `feat/brain-axi-skill`
+- in-progress feature: none
+- run note: none
+- next: Human decides: implement brainless review as phase 2b (P2 as approved), or soften P2 and keep .brain required for review. README rewrite is blocked on that answer since its headline claim is 'no setup'. Publish held until the repositioned README lands so 0.2.0's npm page carries the right pitch.
+
+---
+
+## 2026-07-30 — Plan 'launch-readiness' authored and approved round 1 (all 8 cards at recommended, session ended by reviewer): publish brain-axi to npm (0.2.0, unscoped, files allowlist, no scripts), reposition README/skill review-first with the no-.brain promise guaranteed by a test, session hygiene (home hides dangling, explicit review prune, new check row), node:test suite + first CI (rule at codebase/programming-model.md:58 to be amended for stdlib node:test), shots poll deferred to the existing annotation-watch plan. Evidence for the problem: npm view brain-axi = E404 while the skill invokes npx -y brain-axi 23 times; 6 of 11 open sessions dangle.
+- branch: `feat/brain-axi-skill`
+- in-progress feature: none
+- run note: none
+- next: Resolve open question 4 (one_in_progress sequencing vs ai-work), then execute phase 1: files allowlist + version + npm pack --dry-run audit + cold npx smoke from /tmp
+
+---
+
 ## 2026-07-30 — PR opened for planning-ux: https://github.com/SeanningTatum/brain-axi/pull/13
 - branch: `feat/planning-ux`
 - in-progress feature: none

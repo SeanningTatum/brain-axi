@@ -115,5 +115,5 @@ Editing this file, hooks, `feature_list.json` schema, or the `.brain` layout →
 ## Further reading
 
 - [`docs/REVIEW-ARCHITECTURE.md`](../docs/REVIEW-ARCHITECTURE.md) — binding contract for `brain review` (shapes, HTTP API, security invariants, all addenda).
-- The `axi` skill — AXI ergonomic standards for agent-facing CLIs. Read before changing any agent-facing surface.
+- [`.claude/skills/brain-axi/SKILL.md`](../.claude/skills/brain-axi/SKILL.md) — the `brain-axi` skill: AXI ergonomic standards for agent-facing CLIs. Read before changing any agent-facing surface.
 - [Anthropic — Effective harnesses for long-running agents](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents/)

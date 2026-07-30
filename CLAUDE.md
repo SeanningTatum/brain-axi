@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-`brain-axi` is a single-file, zero-dependency **AXI CLI** (`brain`) that queries and updates a `.brain/` agent-harness directory living in some *other* repo. Agents run it via shell (`brain <cmd>` or `npx -y brain-axi <cmd>`) to read/write project state: features, progress checkpoints, docs, run notes. It is a tool agents use — not a library — so agent ergonomics are the product. Read the `axi` skill before changing any agent-facing surface.
+`brain-axi` is a single-file, zero-dependency **AXI CLI** (`brain`) that queries and updates a `.brain/` agent-harness directory living in some *other* repo. Agents run it via shell (`brain <cmd>` or `npx -y brain-axi <cmd>`) to read/write project state: features, progress checkpoints, docs, run notes. It is a tool agents use — not a library — so agent ergonomics are the product. Read the `brain-axi` skill (`.claude/skills/brain-axi/SKILL.md`) before changing any agent-facing surface.
 
 The implementation is **`bin/brain.js`** (Node ESM, `node >=18`, no runtime deps) plus the **`lib/review/`** modules it imports (review server, playbook texts, brain data access). There is no build step, no `src/`, no bundler, no test framework, no lint config. `package.json` declares only the `brain` bin and has no scripts.
 
