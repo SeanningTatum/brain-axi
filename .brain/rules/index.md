@@ -19,6 +19,7 @@ Domain-specific do/don't rules organized by **layer of `brain-axi`**. Terse, act
 | 3 | [`review-server.md`](review-server.md) | `lib/review/server.js`, `store.js`, `brain-data.js` | HTTP routes, sessions, persistence, trust boundary |
 | 4 | [`review-browser.md`](review-browser.md) | `lib/review/chrome.{html,js}`, `sdk.js` | Chrome UI, injected SDK, postMessage, sandbox |
 | 5 | [`ai-work.md`](ai-work.md) | `lib/review/playbooks.js` (the `ai` playbook + AI branches), `skillContent()` | Editing AI guidance; building the evals subsystem |
+| 6 | [`planning-ux.md`](planning-ux.md) | `lib/review/playbooks.js` (the `product` + `ux` playbooks, plan §3/§6/§7), `skillContent()` | Editing product/UX planning guidance; renumbering plan sections |
 
 ## Layer dependency direction
 
@@ -40,4 +41,5 @@ Agents may not reach across the iframe boundary except via `postMessage`, nor of
 - New HTTP route, session field, or persistence shape → `review-server.md` + `docs/REVIEW-ARCHITECTURE.md`
 - New postMessage type or SDK behavior → `review-browser.md` + `docs/REVIEW-ARCHITECTURE.md`
 - New/changed AI guidance, eval command, or `.brain/evals/` shape → `ai-work.md` (and `skill --write`)
+- New/changed product or UX planning guidance, or a plan-section renumber → `planning-ux.md` (and `skill --write`)
 - Pattern deprecated → mark `> DEPRECATED` block + replacement pointer (do not silent-delete)

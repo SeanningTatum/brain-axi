@@ -1,0 +1,6 @@
+{
+  "01-wireframes-render.png": "Wireframe kit from playbook ux §1 rendering in brain review: two screens, default + empty state, greyscale color-mix fills",
+  "02-annotate-and-decision.png": "Annotate mode: element annotation composer open from a .wf-block click, DECISION chip queued, data-brain-action button click not swallowed",
+  "E1-offline-mermaid.png": "Error path: CDN blocked — mermaid degrades to readable flowchart source instead of a blank region",
+  "E2-offline-queue.png": "Error path: with zero network, wireframes still render and the variant decision still queues"
+}
