@@ -25,21 +25,24 @@ Per-feature memory. **One MD per shipped or in-progress feature** — captures p
 
 ## Files
 
-> Statuses mirror `feature_list.json`, which is the source of truth. `brain check`
-> now FAILS on any disagreement (the "features/index.md agrees with the tracker"
-> row) — this table sat two features behind and claimed `brain review` was still
-> in-progress for two weeks. Until it is generated, update both together.
+> **Generated — do not hand-edit between the markers.** Run
+> `brain features index --write`. `feature_list.json` is the source of truth, and
+> `brain check` fails on any disagreement ("features/index.md agrees with the
+> tracker"). This table previously sat two features behind and claimed
+> `brain review` was in-progress for two weeks, because nothing compared them.
 
-| Feature | File | Status | Last updated |
-|---------|------|--------|--------------|
-| Core AXI CLI | [`core-cli/core-cli.md`](core-cli/core-cli.md) | shipped | 2026-07-14 |
-| brain review | [`brain-review/brain-review.md`](brain-review/brain-review.md) | shipped | 2026-07-16 |
-| shot review | [`shot-review/shot-review.md`](shot-review/shot-review.md) | shipped | 2026-07-17 |
-| annotation watch | [`annotation-watch/annotation-watch.md`](annotation-watch/annotation-watch.md) | planned | 2026-07-17 |
-| harness mode | [`harness-mode/harness-mode.md`](harness-mode/harness-mode.md) | shipped | 2026-07-23 |
-| AI work | [`ai-work/ai-work.md`](ai-work/ai-work.md) | blocked | 2026-07-31 |
-| planning UX | [`planning-ux/planning-ux.md`](planning-ux/planning-ux.md) | shipped | 2026-07-30 |
-| state integrity | [`state-integrity/state-integrity.md`](state-integrity/state-integrity.md) | in-progress | 2026-07-31 |
+<!-- brain:features-table -->
+| Feature | Memo | Status | Latest verification |
+|---------|------|--------|---------------------|
+| Core AXI CLI | [`core-cli/core-cli.md`](core-cli/core-cli.md) | shipped | — |
+| brain review — interactive plan review surface | [`brain-review/brain-review.md`](brain-review/brain-review.md) | shipped | [2026-07-16 PASS](brain-review/verifications/2026-07-16.md) |
+| shot-review — screenshot carousel + annotation | [`shot-review/shot-review.md`](shot-review/shot-review.md) | shipped | [2026-07-17 PASS](shot-review/verifications/2026-07-17.md) |
+| annotation-watch — post-ship feedback runner | [`annotation-watch/annotation-watch.md`](annotation-watch/annotation-watch.md) | planned | — |
+| harness-mode — AGENTS.md parity (verify runner + bookend playbooks + init) | [`harness-mode/harness-mode.md`](harness-mode/harness-mode.md) | shipped | — |
+| ai-work — AI-aware harness (evals, golden sets, prompt review) | [`ai-work/ai-work.md`](ai-work/ai-work.md) | blocked | — |
+| planning-ux — product-grade planning (mockups, UX flows, product playbook) | [`planning-ux/planning-ux.md`](planning-ux/planning-ux.md) | shipped | [2026-07-30 PASS](planning-ux/verifications/2026-07-30.md) |
+| state-integrity — enforceable state, commit-bound evidence, gate telemetry | [`state-integrity/state-integrity.md`](state-integrity/state-integrity.md) | in-progress | — |
+<!-- /brain:features-table -->
 
 ## Important things to look at
 

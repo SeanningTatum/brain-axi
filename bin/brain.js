@@ -32,6 +32,11 @@ import {
   validateFeatureListStructure,
   oneInProgressEnforced,
   gitShortHead,
+  gitWorktreeDirty,
+  isGitRepo,
+  parseReceipt,
+  parseVerdictDetail,
+  VERDICT_ACCEPTED,
 } from "../lib/state.js";
 import { sessionKey, stateDir, listSessions } from "../lib/review/store.js";
 import { PLAYBOOKS } from "../lib/review/playbooks.js";
@@ -504,6 +509,88 @@ function cmdHome(argv) {
   print(lines);
 }
 
+// Generated features/index.md table. Drift between the tracker and this
+// hand-maintained mirror is now DETECTED, but detection still means a human
+// notices and fixes it — generating retires the class instead. Bounded by
+// markers so surrounding prose is never clobbered.
+const FEATURES_TABLE_OPEN = "<!-- brain:features-table -->";
+const FEATURES_TABLE_CLOSE = "<!-- /brain:features-table -->";
+
+function buildFeaturesTable(brain, list) {
+  const rows = list.features.map((f) => {
+    const docs = listVerifications(brain, f.slug);
+    const latest = docs[0];
+    const mark = latest
+      ? `[${latest.date} ${latest.verdict}](${f.slug}/verifications/${latest.date}.md)`
+      : "—";
+    return `| ${f.name} | [\`${f.slug}/${f.slug}.md\`](${f.slug}/${f.slug}.md) | ${f.status} | ${mark} |`;
+  });
+  return [
+    "| Feature | Memo | Status | Latest verification |",
+    "|---------|------|--------|---------------------|",
+    ...rows,
+  ].join("\n");
+}
+
+function cmdFeaturesIndex(argv) {
+  const spec = {
+    "--write": { value: false, desc: "write the table into features/index.md between its markers" },
+  };
+  const { flags } = parseArgs(argv, spec, "features index");
+  if (flags.help)
+    helpBlock(
+      "features index",
+      "Generate the features/index.md status table from feature_list.json (the source of truth)",
+      spec,
+      ["brain features index", "brain features index --write"]
+    );
+  const brain = findBrain(flags.brain);
+  const list = loadFeatureList(brain);
+  const table = buildFeaturesTable(brain, list);
+  const indexPath = path.join(brain, "features", "index.md");
+
+  if (!flags.write) {
+    print([
+      "table: |",
+      ...table.split("\n").map((l) => "  " + l),
+      ...toonList("help", [
+        `Run \`brain features index --write\` to write it into ${path.relative(process.cwd(), indexPath)}`,
+        `The target must contain ${FEATURES_TABLE_OPEN} and ${FEATURES_TABLE_CLOSE} markers`,
+      ]),
+    ]);
+    return;
+  }
+
+  if (!fs.existsSync(indexPath))
+    opError(`missing ${path.relative(process.cwd(), indexPath)}`, [
+      `Create it with the ${FEATURES_TABLE_OPEN} / ${FEATURES_TABLE_CLOSE} markers around the table`,
+    ]);
+  const content = fs.readFileSync(indexPath, "utf8");
+  const open = content.indexOf(FEATURES_TABLE_OPEN);
+  const close = content.indexOf(FEATURES_TABLE_CLOSE);
+  if (open === -1 || close === -1 || close < open)
+    opError("features/index.md has no brain:features-table markers", [
+      `Wrap the status table in ${FEATURES_TABLE_OPEN} … ${FEATURES_TABLE_CLOSE}`,
+      "Markers keep generation from clobbering the surrounding prose",
+    ]);
+
+  const next =
+    content.slice(0, open + FEATURES_TABLE_OPEN.length) + "\n" + table + "\n" + content.slice(close);
+  const changed = next !== content;
+  if (changed) writeFileAtomic(indexPath, next);
+  print([
+    "features index:",
+    kv("file", path.relative(process.cwd(), indexPath), 2),
+    kv("rows", list.features.length, 2),
+    kv("action", changed ? "written" : "already up to date", 2),
+    ...toonList("help", [
+      changed
+        ? "Run `brain check` to confirm the tracker and the index now agree"
+        : "Nothing to do — the generated table already matches the tracker",
+    ]),
+  ]);
+}
+
 function cmdFeatures(argv) {
   const sub = argv[0] && !argv[0].startsWith("--") ? argv[0] : "list";
   const rest = sub === argv[0] ? argv.slice(1) : argv;
@@ -511,6 +598,7 @@ function cmdFeatures(argv) {
   if (sub === "list") return cmdFeaturesList(rest);
   if (sub === "view") return cmdFeaturesView(rest);
   if (sub === "set-status") return cmdFeaturesSetStatus(rest);
+  if (sub === "index") return cmdFeaturesIndex(rest);
   usageError(`unknown subcommand \`features ${sub}\``, [
     "valid subcommands: list (default), view <slug>, set-status <slug> --status <status>",
   ]);
@@ -878,6 +966,129 @@ function quantile(sorted, q) {
   if (!sorted.length) return null;
   const i = Math.min(sorted.length - 1, Math.floor(q * sorted.length));
   return sorted[i];
+}
+
+// ---------------------------------------------------------------------------
+// brain receipt — stamp provenance into a verification doc, by TOOL
+//
+// Receipts were hand-authored, which left two holes: the commit could name any
+// ancestor (including one predating the feature entirely, so the verdict
+// described code that never contained it), and `verified_by`/`commands` were
+// free text nobody produced or checked. A hand-written receipt is a claim about
+// provenance, not provenance.
+//
+// This writes the block from what the tool actually observed: HEAD at stamp
+// time, plus the most recent gate results for that feature out of
+// runs/gates.jsonl. It refuses when the tree is dirty, because a receipt naming
+// HEAD while the working tree differs from HEAD is describing code that is not
+// in any commit.
+// ---------------------------------------------------------------------------
+
+function cmdReceipt(argv) {
+  const spec = {
+    "--date": { value: true, desc: "verification doc date to stamp (default: the newest)" },
+    "--verified-by": { value: true, desc: "who/what ran the verification (default: the caller)" },
+    "--allow-dirty": {
+      value: false,
+      desc: "stamp even though the working tree differs from HEAD (records `dirty: true`)",
+    },
+  };
+  const { flags, positionals } = parseArgs(argv, spec, "receipt");
+  if (flags.help)
+    helpBlock(
+      "receipt",
+      "Stamp a commit-bound provenance receipt into a feature's verification doc",
+      spec,
+      ["brain receipt authentication", 'brain receipt authentication --verified-by "feature-verifier"'],
+      ["<feature> — feature slug from `brain features`"]
+    );
+  const slug = positionals[0];
+  if (!slug) usageError("missing required argument <feature>", ["brain receipt <feature>"]);
+
+  const brain = findBrain(flags.brain);
+  const repoRoot = path.dirname(path.resolve(brain));
+  if (!isGitRepo(repoRoot))
+    opError("not a git repo — a receipt with no commit proves nothing", [
+      "Run this inside a git repository, or omit the receipt and accept `provenance unverifiable`",
+    ]);
+
+  const docs = listVerifications(brain, slug);
+  if (!docs.length)
+    opError(`no verification doc for "${slug}"`, [
+      "Run `brain playbook verify` and write the verdict doc first — a receipt annotates evidence, it does not create it",
+    ]);
+  const doc = flags.date ? docs.find((d) => d.date === flags.date) : docs[0];
+  if (!doc)
+    opError(`no verification doc dated ${flags.date} for "${slug}"`, [
+      `known dates: ${docs.map((d) => d.date).join(", ")}`,
+    ]);
+
+  const dirty = gitWorktreeDirty(repoRoot);
+  if (dirty && !flags["allow-dirty"])
+    opError("working tree differs from HEAD — a receipt would name a commit that is not what was verified", [
+      "Commit the change first, then re-run `brain receipt " + slug + "`",
+      "Or pass --allow-dirty to record it explicitly as dirty (weaker evidence, honestly labelled)",
+    ]);
+
+  const commit = gitShortHead(repoRoot);
+  const absDoc = path.resolve(brain, doc.file);
+  let content;
+  try {
+    content = fs.readFileSync(absDoc, "utf8");
+  } catch (e) {
+    opError(`cannot read ${doc.file}: ${e.message}`, ["Check the file exists and is readable"]);
+  }
+
+  const { verdict } = parseVerdictDetail(content);
+  if (verdict === "unknown")
+    opError(`${doc.file} has no readable verdict — refusing to stamp provenance onto an unreadable claim`, [
+      `Fix the verdict line first: ${VERDICT_ACCEPTED}`,
+    ]);
+
+  // Commands come from what `brain verify` actually ran for this feature, not
+  // from a flag — that is the whole point.
+  const rows = readGateRows(brain).filter((r) => r.feature === slug);
+  const latestAt = rows.length ? rows[rows.length - 1].at : null;
+  const observed = rows.filter((r) => r.at === latestAt);
+  const commands = observed.length
+    ? observed.map((r) => `${r.check} (exit ${r.exit === null ? "timeout" : r.exit})`).join("; ")
+    : "";
+
+  const verifiedBy = flags["verified-by"] || process.env.USER || "unknown";
+  const block = [
+    "<!-- brain:verification",
+    `verdict: ${verdict}`,
+    `commit: ${commit}`,
+    `stamped_at: ${new Date().toISOString()}`,
+    `verified_by: ${verifiedBy}`,
+    ...(commands ? [`commands: ${commands}`] : []),
+    ...(dirty ? ["dirty: true"] : []),
+    "-->",
+  ].join("\n");
+
+  const existing = parseReceipt(content);
+  const next = existing.present
+    ? content.replace(/<!--\s*brain:verification[\s\S]*?-->/, block)
+    : content.replace(/\s*$/, "\n\n" + block + "\n");
+  writeFileAtomic(absDoc, next);
+
+  print([
+    "receipt:",
+    kv("feature", slug, 2),
+    kv("doc", doc.file, 2),
+    kv("verdict", verdict, 2),
+    kv("commit", commit, 2),
+    kv("action", existing.present ? "replaced" : "added", 2),
+    ...(commands ? [kv("commands", commands, 2)] : []),
+    ...(dirty ? ["warning: recorded with dirty: true — the tree differed from HEAD"] : []),
+    ...toonList("help", [
+      commands
+        ? "Run `brain check --strict` to confirm the receipt resolves to an ancestor of HEAD"
+        : "No gate rows for this feature yet — run `brain verify --stage verify --feature " +
+          slug +
+          "` first so `commands` records what actually ran, then re-stamp",
+    ]),
+  ]);
 }
 
 function cmdMetrics(argv) {
@@ -3886,6 +4097,8 @@ Run \`brain playbook\` for the live id/use_when index; \`brain playbook <id>\` f
 - \`brain progress add --summary "..." --next "..."\` — append a session checkpoint
 - \`brain features set-status <slug> --status <planned|in-progress|shipped|blocked|cut>\` — flip feature state (enforces one-in-progress policy; \`--status shipped\` requires \`--evidence\` **and passes the same preflight as \`brain ship\` — it refuses and writes nothing if any check would fail**. Transitions *out* of a state are never gated, so a broken record stays repairable)
 - \`brain check\` — deterministic harness invariants (feature-list **schema** validity — duplicate ids/slugs, unknown status, shipped-without-evidence all fail — one-in-progress per declared policy, doc paths, dependency refs, \`features/index.md\` agreeing with the tracker, plan/review file integrity, verification docs having a **readable** verdict with resolvable image links, verify.json shape when present); exit 1 on any failure, CI-usable
+- \`brain features index [--write]\` — GENERATE the \`features/index.md\` status table from \`feature_list.json\` (bounded by \`<!-- brain:features-table -->\` markers so surrounding prose survives). Hand-maintaining that mirror is how a tracker and its human-facing index end up disagreeing
+- \`brain receipt <feature> [--date <d>] [--verified-by <who>] [--allow-dirty]\` — stamp a commit-bound provenance receipt into a verification doc, written BY THE TOOL: HEAD at stamp time plus the actual gate results for that feature from \`runs/gates.jsonl\`. Refuses on a dirty tree (a receipt naming HEAD while the tree differs describes code in no commit) and refuses to stamp a doc whose verdict is unreadable — a hand-written receipt is a claim about provenance, not provenance
 - \`brain check --strict\` — adds two: every \`shipped\` feature must have a verification doc whose verdict parses to PASS, **and** that doc must carry a \`brain:verification\` receipt naming a commit that is an ancestor of HEAD. Opt-in here so brains predating the invariants do not go red on upgrade; \`brain ship\` and \`set-status --status shipped\` **always** enforce both, since shipping is the moment the claim is made
 - **Verification receipts** — a verdict with no commit is unfalsifiable (the doc is mutable and date-named, so "it passed" could describe any tree that ever existed). Put this block in every verification doc; it renders as nothing:
   \`\`\`
@@ -4194,6 +4407,7 @@ const COMMANDS = {
   check: cmdCheck,
   verify: cmdVerify,
   metrics: cmdMetrics,
+  receipt: cmdReceipt,
   ship: cmdShip,
   watch: cmdWatch,
   pr: cmdPr,
