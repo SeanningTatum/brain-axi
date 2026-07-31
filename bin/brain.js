@@ -532,9 +532,33 @@ function buildFeaturesTable(brain, list) {
   ].join("\n");
 }
 
+// Rewrite the generated table in place. Returns "written" | "unchanged" |
+// "no-markers" | "missing" — never throws, because a ship must not fail on a
+// derived doc.
+function regenerateFeaturesIndex(brain) {
+  try {
+    const indexPath = path.join(brain, "features", "index.md");
+    if (!fs.existsSync(indexPath)) return "missing";
+    const content = fs.readFileSync(indexPath, "utf8");
+    const open = content.indexOf(FEATURES_TABLE_OPEN);
+    const close = content.indexOf(FEATURES_TABLE_CLOSE);
+    if (open === -1 || close === -1 || close < open) return "no-markers";
+    const list = JSON.parse(fs.readFileSync(featureListPath(brain), "utf8"));
+    const table = buildFeaturesTable(brain, list);
+    const next =
+      content.slice(0, open + FEATURES_TABLE_OPEN.length) + "\n" + table + "\n" + content.slice(close);
+    if (next === content) return "unchanged";
+    writeFileAtomic(indexPath, next);
+    return "written";
+  } catch {
+    return "missing";
+  }
+}
+
 function cmdFeaturesIndex(argv) {
   const spec = {
     "--write": { value: false, desc: "write the table into features/index.md between its markers" },
+    "--create": { value: false, desc: "with --write: create features/index.md (with markers) when absent" },
   };
   const { flags } = parseArgs(argv, spec, "features index");
   if (flags.help)
@@ -561,10 +585,26 @@ function cmdFeaturesIndex(argv) {
     return;
   }
 
-  if (!fs.existsSync(indexPath))
-    opError(`missing ${path.relative(process.cwd(), indexPath)}`, [
-      `Create it with the ${FEATURES_TABLE_OPEN} / ${FEATURES_TABLE_CLOSE} markers around the table`,
-    ]);
+  if (!fs.existsSync(indexPath)) {
+    if (!flags.create)
+      opError(`missing ${path.relative(process.cwd(), indexPath)}`, [
+        `Run \`brain features index --write --create\` to scaffold it`,
+        `Or create it with the ${FEATURES_TABLE_OPEN} / ${FEATURES_TABLE_CLOSE} markers around the table`,
+      ]);
+    writeFileAtomic(
+      indexPath,
+      [
+        "# Features",
+        "",
+        "> **Generated between the markers — do not hand-edit.** Run `brain features index --write`.",
+        "> `feature_list.json` is the source of truth; `brain check` fails on any disagreement.",
+        "",
+        FEATURES_TABLE_OPEN,
+        FEATURES_TABLE_CLOSE,
+        "",
+      ].join("\n")
+    );
+  }
   const content = fs.readFileSync(indexPath, "utf8");
   const open = content.indexOf(FEATURES_TABLE_OPEN);
   const close = content.indexOf(FEATURES_TABLE_CLOSE);
@@ -1536,6 +1576,15 @@ function cmdShip(argv) {
   // null by design so a brain without a cursor still ships. Warn, don't roll back.
   if (checkpointResult) lines.push(kv("checkpoint", `shipped ${feat.slug}: ${evidenceCapped}`, 2));
   else lines.push("warning: runs/progress.md not found — checkpoint not recorded");
+
+  // Regenerate the derived index so the tracker and its human-facing mirror are
+  // never out of step even for a moment. The drift check is skipped during
+  // preflight (the index describes disk, not a projection), so this is where the
+  // two are reconciled.
+  const regen = regenerateFeaturesIndex(brain);
+  if (regen === "written") lines.push(kv("index", "features/index.md regenerated", 2));
+  else if (regen === "no-markers")
+    lines.push("warning: features/index.md has no brain:features-table markers — update it by hand");
 
   lines.push(
     ...toonList("help", [

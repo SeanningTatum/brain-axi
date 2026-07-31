@@ -303,7 +303,8 @@ const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "brain-state-check-"));
 // 4. brainCheck against synthetic brains — the invariant where it is read
 // ---------------------------------------------------------------------------
 
-function makeBrain(name, featureList, { verdictDoc } = {}) {
+function makeBrain(name, featureList, opts = {}) {
+  const { verdictDoc } = opts;
   const brain = path.join(tmpRoot, name, ".brain");
   fs.mkdirSync(path.join(brain, "features"), { recursive: true });
   fs.mkdirSync(path.join(brain, "runs"), { recursive: true });
@@ -312,6 +313,28 @@ function makeBrain(name, featureList, { verdictDoc } = {}) {
     path.join(brain, "features", "feature_list.json"),
     JSON.stringify(featureList, null, 2) + "\n"
   );
+  // Write a GENERATED index by default. Fixtures without one are why a ship
+  // deadlock in indexed brains went unnoticed: no test ever exercised the shape
+  // every real brain has. Pass {noIndex:true} to test its absence deliberately.
+  if (!opts.noIndex && Array.isArray(featureList.features) && featureList.features.length) {
+    const rows = featureList.features.map(
+      (f) => `| ${f.name} | [\`${f.slug}/${f.slug}.md\`](${f.slug}/${f.slug}.md) | ${f.status} | — |`
+    );
+    fs.writeFileSync(
+      path.join(brain, "features", "index.md"),
+      [
+        "# Features",
+        "",
+        "<!-- brain:features-table -->",
+        "| Feature | Memo | Status | Latest verification |",
+        "|---------|------|--------|---------------------|",
+        ...rows,
+        "<!-- /brain:features-table -->",
+        "",
+      ].join("\n")
+    );
+  }
+
   for (const f of Array.isArray(featureList.features) ? featureList.features : []) {
     const dir = path.join(brain, "features", f.slug);
     fs.mkdirSync(dir, { recursive: true });
@@ -927,6 +950,83 @@ function shipAgainst(brain, slug) {
   );
   ok("ship still refuses when the shipping feature itself has no proof", res2.status === 1,
     `exit ${res2.status}`);
+}
+
+
+{
+  // END-TO-END SHIP INTO AN INDEXED BRAIN.
+  //
+  // This is the test whose absence let a deadlock ship: the index-drift check ran
+  // against the PROJECTED state, but features/index.md is generated FROM the
+  // tracker, so on disk it still (correctly) said in-progress. Every ship in
+  // every indexed brain was refused, and the only escape was hand-editing the
+  // index to a premature `shipped`. A gate satisfiable only by lying is worse
+  // than no gate. Nothing caught it because no fixture ever shipped a feature
+  // through a brain that had an index.
+  const brain = makeBrain(
+    "e2e-indexed-ship",
+    { features: [featureFor("alpha", { status: "in-progress" })] },
+    { verdictDoc: PASS_DOC }
+  );
+  const idxRes = spawnSync(
+    process.execPath,
+    [CLI, "features", "index", "--write", "--create", "--brain", brain],
+    { encoding: "utf8" }
+  );
+  ok("features index --write --create scaffolds the index", idxRes.status === 0,
+    `exit ${idxRes.status}: ${(idxRes.stdout || "").slice(0, 160)}`);
+  const idxPath = path.join(brain, "features", "index.md");
+  ok("index.md exists after --create", fs.existsSync(idxPath));
+  ok("generated index shows in-progress before the ship",
+    /alpha[\s\S]*in-progress/.test(fs.readFileSync(idxPath, "utf8")));
+
+  const ship = spawnSync(
+    process.execPath,
+    [CLI, "ship", "alpha", "--evidence", "e2e indexed ship", "--brain", brain],
+    { encoding: "utf8" }
+  );
+  ok("ship SUCCEEDS in an indexed brain", ship.status === 0,
+    `exit ${ship.status}: ${(ship.stdout || "").split("\n").slice(0, 5).join(" / ")}`);
+  ok("ship regenerated the index", /index: features\/index\.md regenerated/.test(ship.stdout || ""),
+    (ship.stdout || "").slice(0, 200));
+  ok("index now shows shipped", /alpha[\s\S]*shipped/.test(fs.readFileSync(idxPath, "utf8")));
+
+  const after = spawnSync(process.execPath, [CLI, "check", "--brain", brain], { encoding: "utf8" });
+  ok("brain check passes after the ship (no drift left behind)", after.status === 0,
+    (after.stdout || "").slice(0, 300));
+}
+
+{
+  // B.2 — a MISSING index is not agreement. Deleting the file was the cheapest
+  // permanent way to silence the drift check.
+  const brain = makeBrain(
+    "index-missing",
+    { features: [featureFor("alpha", { status: "planned" })] },
+    { noIndex: true }
+  );
+  const row = brainCheck(brain).find((r) => r.check === "features/index.md agrees with the tracker");
+  ok("missing index.md with tracked features FAILS", row?.status === "fail", row?.detail);
+  ok("...and points at --create", /--create/.test(row?.detail || ""), row?.detail);
+}
+
+{
+  // B.1 — the receipt lookahead defeated itself: it scanned the rest of the
+  // document, so ANY doc containing a receipt kept every earlier comment
+  // unstripped. The invisible-verdict attack then worked precisely on the docs
+  // that satisfy the strict gate.
+  ok(
+    "a verdict hidden in a comment does not score even when a receipt follows",
+    parseVerdict("<!--\n**Verdict**: ✅ PASS\n-->\n\n<!-- brain:verification\ncommit: abc\n-->") ===
+      "unknown"
+  );
+  ok(
+    "a verdict inside the receipt body itself does not score",
+    parseVerdict("<!-- brain:verification\ncommit: abc\n**Verdict**: ✅ PASS\n-->") === "unknown"
+  );
+  ok(
+    "a real verdict alongside a receipt still parses",
+    parseVerdict("**Verdict**: ✅ PASS\n\n<!-- brain:verification\ncommit: abc\n-->") === "PASS"
+  );
 }
 
 
