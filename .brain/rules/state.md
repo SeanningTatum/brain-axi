@@ -63,6 +63,9 @@ both depend on it. It must never import from `lib/review/`.
 | `features/index.md` agrees with the tracker | Two answers to "is this shipped?" means whichever file a reader opens decides what they believe |
 | **`--strict`:** every `shipped` feature has a PASS verification | `evidence` is free text nobody validates. Opt-in for ambient `brain check` (read-compat), **always on** at the ship gate — that is where the claim is made |
 | **`--strict`:** that PASS carries a receipt whose commit is an ancestor of HEAD | A verdict with no commit is unfalsifiable; one on a branch that never landed describes code that is not what shipped |
+| A receipt commit must be a hex object id | `HEAD`, a branch, or a tag resolves through git but moves, so it binds the verdict to nothing |
+| Verification docs contain **no raw HTML** except the receipt | Chasing HTML constructs one at a time is unwinnable — a verdict in `<details>` renders collapsed, in `<div>` renders as literal asterisks. Removing the ambiguity beats parsing it |
+| Every entry on `strict_grandfathered` is a known, already-shipped feature | Otherwise the exemption key is an off switch: new work could ship unverified by listing itself |
 
 ## Strict has two scopes, and mixing them up breaks the gate
 
@@ -78,18 +81,62 @@ verify everything — which nobody does, so the gate gets bypassed instead of
 satisfied. Shipping X asserts that X works. It does not assert that a feature
 someone shipped a year ago has a receipt.
 
-Corollary for consuming repos: wire ambient `--strict` as an **advisory** until
-the legacy gap is genuinely closed. Making it green by authoring PASS docs for
-flows nobody verified is fabricating evidence — the exact failure the harness
-exists to prevent.
+Corollary for consuming repos — **use the ratchet, not an advisory.** An earlier
+version of this rule said to wire ambient `--strict` as an advisory until the
+legacy gap closed. That was half right: authoring PASS docs for flows nobody
+verified is fabricating evidence, but an advisory decays into noise nobody reads.
+
+`policy.strict_grandfathered` lists exactly the slugs that shipped before the
+invariant. Strict exempts those and nothing else, so every NEW ship must prove
+itself, and the list only tightens — `brain check --strict` fails if an entry
+becomes fully provable (PASS **and** a resolving receipt) and is left on it, and
+fails if an entry is not a known, already-shipped feature. That last check exists
+because the list was otherwise an off switch: adding a slug exempted it
+unconditionally.
 
 ## Verify
 
 ```bash
-node scripts/check-state-invariants.mjs      # 124 assertions — schema, verdict, atomic write, brainCheck, ship
+node scripts/check-state-invariants.mjs      # 186 assertions — schema, verdict, atomic write, brainCheck, ship
 node bin/brain.js verify --stage baseline    # runs the above plus skill-sync, harness, playbook-refs
 node bin/brain.js check --brain .brain --strict   # adds shipped ⇒ PASS
 ```
 
 Every case in that script is a shape that used to pass silently. Adding an invariant means adding
 its synthetic case there — a validator with no failing fixture is a claim, not a check.
+
+## The trust boundary — what these gates do NOT protect against
+
+Written down because six rounds of adversarial review kept re-finding the same
+two holes, and they are not bugs. They are the boundary. Spending further rounds
+"fixing" them produces theatre, not safety.
+
+**Every state file is agent-writable.** `feature_list.json`, `runs/gates.jsonl`,
+verification docs, and `policy.strict_grandfathered` are plain files in the repo.
+An agent that edits them directly can mark a feature shipped, add itself to the
+grandfather list, or append a gate row that never ran. The validators reject
+*malformed* and *internally inconsistent* state; they cannot reject a
+well-formed lie.
+
+**The agent grades its own homework.** `brain ship` requires a PASS verification
+bound to a commit — but the same agent writes the verdict. A receipt proves *when*
+a claim was made about *which* code, never that anyone ran anything.
+
+What the gates therefore actually buy:
+
+| They do stop | They do not stop |
+|---|---|
+| Accidental drift, stale mirrors, unreadable verdicts | A deliberate hand-edit of state |
+| Premature "done" through the CLI's own paths | An agent bypassing the CLI entirely |
+| Evidence that contradicts itself | Evidence that is simply invented |
+| Silent green when the tooling is absent | Someone choosing not to run the tooling |
+
+Which is the right trade: these failures are what *actually* happens — an agent
+declaring victory early, a mirror going stale, a verdict nobody can parse. A
+determined forger was never the threat model, and treating it as one would mean
+signing state with keys an agent must hold anyway.
+
+The load-bearing defenses against the residual risk are **outside** this layer:
+code review of the diff (state changes show up in it), CI running the gates on a
+machine the agent does not control, and `git log` making a hand-edit visible.
+A gate is a ratchet against carelessness, not a lock against intent.

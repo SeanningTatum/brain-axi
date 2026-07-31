@@ -535,6 +535,18 @@ function buildFeaturesTable(brain, list) {
 // Rewrite the generated table in place. Returns "written" | "unchanged" |
 // "no-markers" | "missing" — never throws, because a ship must not fail on a
 // derived doc.
+// Failures the WRITE introduced, not failures that were already there.
+//
+// A flat post-write check punished the wrong thing: de-escalating a feature in a
+// brain that already had an unrelated failing check exited 1, even though the
+// command fixed nothing and broke nothing. Repair paths must stay usable, so the
+// question is "did this write make it worse?", not "is the brain perfect?".
+function newFailuresAfter(before, after) {
+  const key = (c) => `${c.check}::${c.detail}`;
+  const had = new Set(before.map(key));
+  return after.filter((c) => !had.has(key(c)));
+}
+
 function regenerateFeaturesIndex(brain) {
   try {
     const indexPath = path.join(brain, "features", "index.md");
@@ -798,6 +810,7 @@ function cmdFeaturesSetStatus(argv) {
   }
 
   const previous = feat.status;
+  const preWriteChecks = brainCheck(brain).filter((c) => c.status === "fail");
 
   // Transitions INTO shipped get the same preflight as `brain ship`. Without
   // this, `set-status --status shipped --evidence "..."` was a complete bypass
@@ -845,6 +858,14 @@ function cmdFeaturesSetStatus(argv) {
   // ship gate already made once.
   const regenStatus = regenerateFeaturesIndex(brain);
 
+  // Re-verify AFTER the write, exactly as `ship` does. Omitting it was the THIRD
+  // occurrence of hardening one write path and forgetting its twin, so the two
+  // paths are now symmetric by construction rather than by memory.
+  const postStatus = newFailuresAfter(
+    preWriteChecks,
+    brainCheck(brain).filter((c) => c.status === "fail")
+  );
+
   print([
     "feature:",
     kv("slug", feat.slug, 2),
@@ -857,11 +878,17 @@ function cmdFeaturesSetStatus(argv) {
     ...(regenStatus === "missing"
       ? ["warning: features/index.md absent — run `brain features index --write --create`"]
       : []),
+    ...(postStatus.length ? toonTable("post_write_checks", postStatus, ["check", "status", "detail"]) : []),
     ...toonList("help", [
-      `Update the doc changelog in ${feat.doc || ".brain/features/<slug>.md"}`,
+      ...(postStatus.length
+        ? [
+            `${feat.slug} is now "${feat.status}", but ${postStatus.length} check(s) fail AFTER the write — fix the detail(s) above`,
+          ]
+        : [`Update the doc changelog in ${feat.doc || ".brain/features/<slug>.md"}`]),
       "Run `brain progress add --summary \"...\"` to checkpoint this change",
     ]),
   ]);
+  if (postStatus.length) process.exit(1);
 }
 
 // ---------------------------------------------------------------------------
@@ -1523,6 +1550,7 @@ function cmdShip(argv) {
   }
 
   const previous = feat.status;
+  const preShipChecks = brainCheck(brain).filter((c) => c.status === "fail");
 
   // PREFLIGHT, then commit. Project the next state in memory and validate it
   // BEFORE any write, so a failing check leaves the brain exactly as it was.
@@ -1604,7 +1632,7 @@ function cmdShip(argv) {
   // Re-verify AFTER the write. Preflight validated a projection; only this can
   // assert the invariant the ship actually left behind, and it is what makes
   // "no drift left behind" a checked claim rather than a comment.
-  const post = brainCheck(brain).filter((c) => c.status === "fail");
+  const post = newFailuresAfter(preShipChecks, brainCheck(brain).filter((c) => c.status === "fail"));
   if (post.length) {
     lines.push(...toonTable("post_ship_checks", post, ["check", "status", "detail"]));
     lines.push(
