@@ -20,6 +20,7 @@ Domain-specific do/don't rules organized by **layer of `brain-axi`**. Terse, act
 | 4 | [`review-browser.md`](review-browser.md) | `lib/review/chrome.{html,js}`, `sdk.js` | Chrome UI, injected SDK, postMessage, sandbox |
 | 5 | [`ai-work.md`](ai-work.md) | `lib/review/playbooks.js` (the `ai` playbook + AI branches), `skillContent()` | Editing AI guidance; building the evals subsystem |
 | 6 | [`planning-ux.md`](planning-ux.md) | `lib/review/playbooks.js` (the `product` + `ux` playbooks, plan §3/§6/§7), `skillContent()` | Editing product/UX planning guidance; renumbering plan sections |
+| 7 | [`state.md`](state.md) | `lib/state.js` — feature-list schema, verdict parser, atomic writes | Changing what a valid `.brain` state IS; adding an invariant; any durable write |
 
 ## Layer dependency direction
 
@@ -28,11 +29,18 @@ review-browser ──postMessage──▶ (iframe boundary)
       │
       ▼ HTTP (loopback)
 review-server ──▶ brain-data (persistence) ──▶ .brain files
-      ▲
-cli-commands ──▶ spawns/polls review-server; all commands ──▶ toon-axi (output)
+      ▲                  │
+      │                  ▼
+cli-commands ────────▶ state  (schema · verdict · atomic write)
+      │
+      └─▶ spawns/polls review-server; all commands ──▶ toon-axi (output)
 ```
 
 Agents may not reach across the iframe boundary except via `postMessage`, nor off loopback for the server.
+
+`state` is the only layer with **no outgoing dependencies** — it must never import from `lib/review/`.
+Both `cli-commands` and `review-server` depend on it, which is the whole point: an invariant defined
+in one of them alone is an invariant the other can contradict.
 
 ## Update triggers
 

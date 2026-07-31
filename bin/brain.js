@@ -23,6 +23,15 @@ import {
   recordPr,
   listAnnotations,
 } from "../lib/review/brain-data.js";
+import {
+  STATUSES,
+  featureListPath,
+  saveFeatureList,
+  writeFileAtomic,
+  validateFeatureListShape,
+  validateFeatureListStructure,
+  oneInProgressEnforced,
+} from "../lib/state.js";
 import { sessionKey, stateDir, listSessions } from "../lib/review/store.js";
 import { PLAYBOOKS } from "../lib/review/playbooks.js";
 import {
@@ -239,11 +248,8 @@ function collapseHome(p) {
   return p.startsWith(home) ? "~" + p.slice(home.length) : p;
 }
 
-const STATUSES = ["planned", "in-progress", "shipped", "blocked", "cut"];
-
-function featureListPath(brain) {
-  return path.join(brain, "features", "feature_list.json");
-}
+// STATUSES and featureListPath now come from lib/state.js (imported above) so
+// the schema has ONE definition shared with brainCheck.
 
 function loadFeatureList(brain) {
   const p = featureListPath(brain);
@@ -251,13 +257,31 @@ function loadFeatureList(brain) {
     opError(`missing ${path.relative(process.cwd(), p)}`, [
       "Create features/feature_list.json in the brain, or check --brain path",
     ]);
+  let parsed;
   try {
-    return JSON.parse(fs.readFileSync(p, "utf8"));
+    parsed = JSON.parse(fs.readFileSync(p, "utf8"));
   } catch (e) {
     opError(`feature_list.json is not valid JSON (${e.message})`, [
       `Fix the JSON in ${path.relative(process.cwd(), p)}`,
     ]);
   }
+  // STRUCTURE only, deliberately. Every caller below trusts
+  // list.features.find/map unconditionally, so a non-array `features` must hard
+  // fail rather than throw a bare TypeError. But field-level problems (a legacy
+  // shipped record with no evidence, say) must NOT block reads — otherwise the
+  // only way to repair the record is hand-editing JSON, and `features
+  // set-status` — the repair tool — is exactly what gets locked out.
+  // `brain check` owns full-field validation.
+  const structureError = validateFeatureListStructure(parsed);
+  if (structureError)
+    opError(`feature_list.json is invalid: ${structureError}`, [
+      `Fix ${path.relative(process.cwd(), p)}, then run \`brain check\``,
+    ]);
+  // Surface field problems without blocking: stderr keeps stdout a clean TOON
+  // payload (rules/toon-axi.md) while still telling the operator.
+  const shapeError = validateFeatureListShape(parsed);
+  if (shapeError) process.stderr.write(`warning: feature_list.json: ${shapeError} (run \`brain check\`)\n`);
+  return parsed;
 }
 
 // progress.md: preamble, then entries separated by lines of "---".
@@ -632,8 +656,11 @@ function cmdFeaturesSetStatus(argv) {
     return;
   }
 
-  // Brain policy: at most one feature in-progress at a time.
-  if (flags.status === "in-progress" && list.policy?.one_in_progress_at_a_time) {
+  // Brain policy: at most one feature in-progress at a time. Shared helper —
+  // this used to test `list.policy?.…` (absent policy = not enforced) while
+  // brainCheck enforced it, so a brain with no policy key could be pushed into
+  // a state `brain check` then failed.
+  if (flags.status === "in-progress" && oneInProgressEnforced(list)) {
     const other = list.features.find((f) => f.status === "in-progress" && f !== feat);
     if (other)
       opError(`policy one_in_progress_at_a_time: ${other.slug} is already in-progress`, [
@@ -642,10 +669,44 @@ function cmdFeaturesSetStatus(argv) {
   }
 
   const previous = feat.status;
+
+  // Transitions INTO shipped get the same preflight as `brain ship`. Without
+  // this, `set-status --status shipped --evidence "..."` was a complete bypass
+  // of the ship gate: it wrote shipped state with no brainCheck at all, so
+  // hardening `ship` alone would have moved the hole rather than closed it.
+  //
+  // Only shipped is gated. Every other transition (including OUT of a bad
+  // shipped record, back to planned/blocked/cut) stays unguarded on purpose —
+  // gating de-escalations would lock the operator out of repairing exactly the
+  // states that make a brain incoherent.
+  if (flags.status === "shipped") {
+    const projected = {
+      ...list,
+      features: list.features.map((f) =>
+        f === feat ? { ...f, status: "shipped", evidence: flags.evidence || f.evidence } : f
+      ),
+    };
+    const checks = brainCheck(brain, { list: projected });
+    const failed = checks.filter((c) => c.status === "fail");
+    if (failed.length) {
+      print([
+        `feature: refused — ${failed.length} harness check(s) would fail`,
+        kv("slug", feat.slug, 2),
+        kv("status", `${previous} (unchanged — nothing was written)`, 2),
+        ...toonTable("checks", checks, ["check", "status", "detail"]),
+        ...toonList("help", [
+          `Fix the failing detail(s) above, then re-run \`brain features set-status ${feat.slug} --status shipped --evidence "..."\``,
+          `\`brain ship ${feat.slug} --evidence "..."\` applies the same gate and also checkpoints`,
+        ]),
+      ]);
+      process.exit(1);
+      return;
+    }
+  }
+
   feat.status = flags.status;
   if (flags.evidence) feat.evidence = flags.evidence;
-  list.updated = new Date().toISOString().slice(0, 10);
-  fs.writeFileSync(featureListPath(brain), JSON.stringify(list, null, 2) + "\n");
+  saveFeatureList(brain, list);
 
   print([
     "feature:",
@@ -1019,10 +1080,41 @@ function cmdShip(argv) {
   }
 
   const previous = feat.status;
+
+  // PREFLIGHT, then commit. Project the next state in memory and validate it
+  // BEFORE any write, so a failing check leaves the brain exactly as it was.
+  // This replaces the previous order (write feature_list.json, append the
+  // checkpoint, then run brainCheck and exit 1 with the flip already on disk) —
+  // that behavior was specified, not accidental, and reporting the failure
+  // honestly did not undo the fact that later reads saw a feature marked
+  // shipped on a brain that never passed its checks.
+  const projected = {
+    ...list,
+    features: list.features.map((f) =>
+      f === feat ? { ...f, status: "shipped", evidence: flags.evidence } : f
+    ),
+  };
+
+  const checks = brainCheck(brain, { list: projected });
+  const failed = checks.filter((c) => c.status === "fail");
+  if (failed.length) {
+    print([
+      `ship: refused — ${failed.length} harness check(s) would fail`,
+      kv("slug", feat.slug, 2),
+      kv("status", `${previous} (unchanged — nothing was written)`, 2),
+      ...toonTable("checks", checks, ["check", "status", "detail"]),
+      ...toonList("help", [
+        `Fix the failing detail(s) above, then re-run \`brain ship ${feat.slug} --evidence "..."\``,
+        "Run `brain check` to re-verify without attempting the ship",
+      ]),
+    ]);
+    process.exit(1);
+    return;
+  }
+
   feat.status = "shipped";
   feat.evidence = flags.evidence;
-  list.updated = new Date().toISOString().slice(0, 10);
-  fs.writeFileSync(featureListPath(brain), JSON.stringify(list, null, 2) + "\n");
+  saveFeatureList(brain, list);
 
   const lines = ["ship:", kv("slug", feat.slug, 2), kv("previous", previous, 2), kv("status", "shipped", 2)];
 
@@ -1033,20 +1125,6 @@ function cmdShip(argv) {
   const checkpointResult = appendProgressEntry(brain, { summary: `shipped ${feat.slug}: ${evidenceCapped}` });
   if (checkpointResult) lines.push(kv("checkpoint", `shipped ${feat.slug}: ${evidenceCapped}`, 2));
   else lines.push("warning: runs/progress.md not found — checkpoint not recorded");
-
-  const checks = brainCheck(brain);
-  const failed = checks.filter((c) => c.status === "fail");
-  if (failed.length) {
-    lines.push(...toonTable("checks", checks, ["check", "status", "detail"]));
-    lines.push(
-      ...toonList("help", [
-        `${feat.slug} is now shipped (status change was not rolled back) — but ${failed.length} harness check(s) are failing; fix the detail(s) above and re-run \`brain check\``,
-      ])
-    );
-    print(lines);
-    process.exit(1);
-    return;
-  }
 
   lines.push(
     ...toonList("help", [
@@ -1239,7 +1317,9 @@ function appendProgressEntry(brain, { summary, branch, feature, runNote, next, e
   } else {
     updated = progress.raw.trimEnd() + "\n\n---\n\n" + entry + "\n";
   }
-  fs.writeFileSync(progress.path, updated);
+  // Atomic: this is a read-modify-rewrite of the WHOLE progress file, so a
+  // crash mid-write would truncate the entire session cursor.
+  writeFileAtomic(progress.path, updated);
   return { date, branch: resolvedBranch, file: progress.path };
 }
 
@@ -3590,9 +3670,11 @@ set-status <slug> --status in-progress\` → per step \`runs append <slug> --ste
 "..." --observed "..."\` (verbatim command output, not a paraphrase) → \`shots add
 --feature <slug> --step NN-name\` on every visual test, pass AND fail → a
 verification doc per \`playbook verify\` → \`brain ship <slug> --evidence "..."\`
-(requires evidence; no-ops if already shipped; warns — does not block — on zero
-screenshots; checkpoints; runs \`brain check\` and reports failures honestly
-without rolling back the ship). \`runs/progress.md\` stays a rolling cursor;
+(requires evidence; no-ops if already shipped; **preflights \`brain check\`
+against the projected state and refuses the ship if anything would fail —
+nothing is written, the feature keeps its previous status, exit 1**; on pass it
+writes atomically, warns — does not block — on zero screenshots, and
+checkpoints). \`runs/progress.md\` stays a rolling cursor;
 \`features/<slug>/runs/*.md\` is the deep, verbatim record.
 
 - \`npx -y brain-axi watch <feature>\` — opens the live execution dashboard in

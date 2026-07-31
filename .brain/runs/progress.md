@@ -21,6 +21,22 @@
 
 ---
 
+## 2026-07-31 — state-integrity (feat-008) opened; ai-work blocked to free the slot. Harness audit (5/10, Codex-cross-checked over CLI source) -> plan artifact plans/2026-07-31-harness-hardening.html reviewed via brain review round 1: all 4 decisions at recommended (GitHub Actions CI, eval kind=judge, model=claude-opus-5, global runs/gates.jsonl). Baseline: brain check 13/13, verify 3/3.
+- branch: `feat/launch-readiness`
+- in-progress feature: none
+- run note: none
+- next: Phase 1.0 — scripts/check-state-invariants.mjs + verify.json row + first CI workflow, then lib/state.js
+
+---
+
+## 2026-07-30 — PR #17 (feat/launch-readiness): launch-readiness phase 1 only — LICENSE (repo license was null while package.json claimed MIT) + files allowlist + 0.2.0 + repository/homepage/bugs/keywords, plus 3 previously-untracked plan artifacts and their .brain/plans records. Phase 2 positioning copy deliberately HELD BACK: it advertises no-.brain review, which is false (server.js:778-784 hard-404s; ~10 session.brain reads downstream), and the headline is still open in the lavish comparison review. Held diff saved as a patch. verify 3/3, check 13/13, skill --check clean, npm pack 16 files/186.3kB.
+- branch: `feat/launch-readiness`
+- in-progress feature: none
+- run note: none
+- next: Resolve the 3 decision cards in plans/2026-07-30-honest-review-vs-lavish.html (headline positioning vs lavish-axi, compete-vs-interoperate, engineering floor), then phase 2 copy + phase 3 null-brain review
+
+---
+
 ## 2026-07-30 — shipped planning-ux: Verification PASS 2026-07-30 (features/planning-ux/verifications/2026-07-30.md): browser walk of the reconciled planning
 - branch: `chore/ship-planning-ux`
 - in-progress feature: none

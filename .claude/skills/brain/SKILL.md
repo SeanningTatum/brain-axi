@@ -146,9 +146,11 @@ set-status <slug> --status in-progress` → per step `runs append <slug> --step
 "..." --observed "..."` (verbatim command output, not a paraphrase) → `shots add
 --feature <slug> --step NN-name` on every visual test, pass AND fail → a
 verification doc per `playbook verify` → `brain ship <slug> --evidence "..."`
-(requires evidence; no-ops if already shipped; warns — does not block — on zero
-screenshots; checkpoints; runs `brain check` and reports failures honestly
-without rolling back the ship). `runs/progress.md` stays a rolling cursor;
+(requires evidence; no-ops if already shipped; **preflights `brain check`
+against the projected state and refuses the ship if anything would fail —
+nothing is written, the feature keeps its previous status, exit 1**; on pass it
+writes atomically, warns — does not block — on zero screenshots, and
+checkpoints). `runs/progress.md` stays a rolling cursor;
 `features/<slug>/runs/*.md` is the deep, verbatim record.
 
 - `npx -y brain-axi watch <feature>` — opens the live execution dashboard in

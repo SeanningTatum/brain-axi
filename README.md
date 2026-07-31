@@ -150,7 +150,7 @@ Every command supports `--help` (self-documenting) and a global `--brain <path>`
 | `brain features set-status <slug> --status <s> [--evidence "..."]` | Flip feature state — enforces `one_in_progress_at_a_time`, idempotent |
 | `brain progress [--limit n]` | Latest session checkpoint in full + older-entry index |
 | `brain progress add --summary "..." [--next "..."]` | Append a checkpoint to `runs/progress.md` |
-| `brain ship <slug> --evidence "..."` | Flip a feature to `shipped`: requires evidence, checks for screenshots, checkpoints, runs `brain check` |
+| `brain ship <slug> --evidence "..."` | Flip a feature to `shipped`: requires evidence, **preflights `brain check` and refuses the ship if anything would fail — nothing written, exit 1**, then writes atomically, warns on missing screenshots, checkpoints |
 | `brain pr <slug> --url <pr-url>` | Record the feature's opened pull request (the execution dashboard's terminal state) |
 
 ### Knowledge — docs, rules, recipes, search

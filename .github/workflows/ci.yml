@@ -1,0 +1,42 @@
+name: CI
+
+# The repo's own gates, run on every PR. `brain verify --stage baseline` is the
+# single entry point on purpose: the check registry lives in .brain/verify.json,
+# so adding a gate is a data change, not a workflow change.
+#
+# Before this existed, `brain skill --check` was described as "intended for CI"
+# in four places and nothing ran it — every invariant depended on a human or an
+# agent remembering to.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    name: brain verify --stage baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned, not `latest`: gate behavior has to be reproducible across PRs,
+      # or a red run cannot be attributed to the diff.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.14.0"
+
+      # Zero dependencies by design (package.json declares none) — nothing to install.
+      - name: Confirm zero-dependency invariant
+        run: |
+          set -euo pipefail
+          if node -e "const p=require('./package.json');process.exit((p.dependencies||p.devDependencies)?1:0)"; then
+            echo "zero-dep invariant holds"
+          else
+            echo "package.json declared dependencies — the CLI is zero-dep (see .brain/rules/cli-commands.md)"
+            exit 1
+          fi
+
+      - name: Run the declared gates
+        run: node bin/brain.js verify --stage baseline
