@@ -24,6 +24,19 @@ both depend on it. It must never import from `lib/review/`.
   whole-file read-modify-rewrite.
 - **Accept both verdict forms.** `**Verdict**: ✅ PASS` and `**Verdict**: PASS` are both real and
   both mean PASS. `unknown` is a failure, not a display value.
+- **The verdict token must LEAD its value, and code is not prose.** Every spoof below scored as a
+  clean PASS at some point, each found by adversarial review rather than by writing the parser more
+  carefully:
+
+  | Spoof | Now |
+  |---|---|
+  | `**Verdict**: this is not PASS` | `unknown` — the token must lead, not merely appear |
+  | ```` ``` ````-fenced example | stripped |
+  | 4-space **indented** example (a code block by markdown's rules) | stripped — leading whitespace capped at 3 |
+  | An **unclosed** fence followed by a verdict | everything after it stripped |
+  | `**Verdict**: ✅ PASS ❌` | `conflicting` — a contradicting emoji counts wherever it sits |
+  | Two *disagreeing* verdict lines | `ambiguous` — never first-wins |
+  | Two *identical* verdict lines | accepted — restating a verdict in a summary is good writing |
 - **Read-compat, write-new** still holds (`review-server.md`): a new required field arrives as
   `legacy`-reported first, becomes strict a release later.
 
@@ -47,12 +60,15 @@ both depend on it. It must never import from `lib/review/`.
 | `status` ∈ `STATUSES` | `"done"` used to be accepted and then silently ignored by every filter |
 | `id`/`name`/`slug`/`doc`/`status` non-empty | Every caller does `list.features.find(...)` and trusts the result |
 | `evidence` required when `status: shipped` | A shipped feature with no evidence is the exact shape of a premature "done" |
+| `features/index.md` agrees with the tracker | Two answers to "is this shipped?" means whichever file a reader opens decides what they believe |
+| **`--strict`:** every `shipped` feature has a PASS verification | `evidence` is free text nobody validates. Opt-in for ambient `brain check` (read-compat), **always on** at the ship gate — that is where the claim is made |
 
 ## Verify
 
 ```bash
-node scripts/check-state-invariants.mjs      # 78 assertions — schema, verdict, atomic write, brainCheck, ship
+node scripts/check-state-invariants.mjs      # 124 assertions — schema, verdict, atomic write, brainCheck, ship
 node bin/brain.js verify --stage baseline    # runs the above plus skill-sync, harness, playbook-refs
+node bin/brain.js check --brain .brain --strict   # adds shipped ⇒ PASS
 ```
 
 Every case in that script is a shape that used to pass silently. Adding an invariant means adding

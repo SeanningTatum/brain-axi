@@ -21,6 +21,14 @@
 
 ---
 
+## 2026-07-31 — state-integrity phase 1 committed (96db869, feat/state-integrity): lib/state.js + strict schema + one hardened verdict parser + preflight ship AND set-status + index-drift check + fsync atomic writes + 107-assertion test script + first CI. Codex re-score 4 -> 5 (working tree), its P0 set-status bypass + 6 P1s then fixed; third score pending.
+- branch: `feat/state-integrity`
+- in-progress feature: none
+- run note: none
+- next: Await third score. Then: shipped-requires-PASS behind --strict, commit-bound receipts, init --state-only, brain metrics, then template Phase 2.
+
+---
+
 ## 2026-07-31 — state-integrity (feat-008) opened; ai-work blocked to free the slot. Harness audit (5/10, Codex-cross-checked over CLI source) -> plan artifact plans/2026-07-31-harness-hardening.html reviewed via brain review round 1: all 4 decisions at recommended (GitHub Actions CI, eval kind=judge, model=claude-opus-5, global runs/gates.jsonl). Baseline: brain check 13/13, verify 3/3.
 - branch: `feat/launch-readiness`
 - in-progress feature: none

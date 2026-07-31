@@ -55,8 +55,9 @@ Run `brain playbook` for the live id/use_when index; `brain playbook <id>` for t
 ## Record state (end of task / checkpoint)
 
 - `brain progress add --summary "..." --next "..."` — append a session checkpoint
-- `brain features set-status <slug> --status <planned|in-progress|shipped|blocked|cut>` — flip feature state (enforces one-in-progress policy; `--status shipped` requires `--evidence`)
-- `brain check` — deterministic harness invariants (feature list validity, one-in-progress, doc paths, dependency refs, plan/review file integrity, verification docs, verify.json shape when present); exit 1 on any failure, CI-usable
+- `brain features set-status <slug> --status <planned|in-progress|shipped|blocked|cut>` — flip feature state (enforces one-in-progress policy; `--status shipped` requires `--evidence` **and passes the same preflight as `brain ship` — it refuses and writes nothing if any check would fail**. Transitions *out* of a state are never gated, so a broken record stays repairable)
+- `brain check` — deterministic harness invariants (feature-list **schema** validity — duplicate ids/slugs, unknown status, shipped-without-evidence all fail — one-in-progress per declared policy, doc paths, dependency refs, `features/index.md` agreeing with the tracker, plan/review file integrity, verification docs having a **readable** verdict with resolvable image links, verify.json shape when present); exit 1 on any failure, CI-usable
+- `brain check --strict` — adds: every `shipped` feature must have a verification doc whose verdict parses to PASS. Opt-in here so brains predating the invariant do not go red on upgrade; `brain ship` and `set-status --status shipped` **always** enforce it, since shipping is the moment the claim is made
 - `brain` (home) shows an open `sessions[...]` table whenever a review session isn't ended yet
 
 ## Verify — run declared project checks (`.brain/verify.json`)

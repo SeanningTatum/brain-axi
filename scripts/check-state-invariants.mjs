@@ -229,6 +229,33 @@ ok(
   ok("conflicting form reported", conflict.form === "conflicting", conflict.form);
 }
 
+// Spoofs found by an independent adversarial review — each scored as a clean
+// PASS before being closed.
+ok(
+  "4-space indented code block is not a verdict",
+  parseVerdict("Example:\n\n    **Verdict**: ✅ PASS\n\ndone") === "unknown",
+  `got "${parseVerdict("Example:\n\n    **Verdict**: ✅ PASS\n")}"`
+);
+ok(
+  "an UNCLOSED fence swallows the rest of the doc",
+  parseVerdict("```\n**Verdict**: ✅ PASS") === "unknown",
+  `got "${parseVerdict("```\n**Verdict**: ✅ PASS")}"`
+);
+ok(
+  "a TRAILING contradicting emoji is conflicting",
+  parseVerdict("**Verdict**: ✅ PASS ❌") === "unknown",
+  `got "${parseVerdict("**Verdict**: ✅ PASS ❌")}"`
+);
+ok(
+  "restating the SAME verdict is not ambiguous",
+  parseVerdict("**Verdict**: ✅ PASS\n\nsummary\n\n**Verdict**: ✅ PASS") === "PASS",
+  "a doc that repeats its verdict in a summary should still parse"
+);
+ok(
+  "three-space indent still parses (not a code block)",
+  parseVerdict("   **Verdict**: ✅ PASS") === "PASS"
+);
+
 // --- structure vs full validation: repair must stay possible ----------------
 {
   const legacy = { features: [{ ...validFeature, status: "shipped", evidence: "" }] };
@@ -442,6 +469,93 @@ const SCHEMA_CHECK = "feature_list.json is valid";
   );
   const okRow = brainCheck(brain).find((r) => r.check === "features/index.md agrees with the tracker");
   ok("index agreement passes", okRow && okRow.status === "pass", okRow && `${okRow.status}: ${okRow.detail}`);
+}
+
+{
+  // Drift-check holes found by the same independent review: one false positive
+  // and four false negatives, each of which let real drift pass.
+  const brain = makeBrain("index-edge", {
+    features: [
+      featureFor("alpha", { status: "shipped", evidence: "proof" }),
+      featureFor("beta", { status: "planned" }),
+    ],
+  });
+  const idx = path.join(brain, "features", "index.md");
+  const driftRow = () =>
+    brainCheck(brain).find((r) => r.check === "features/index.md agrees with the tracker");
+
+  const HEAD = "| Feature | File | Status |\n|---|---|---|\n";
+  const betaOk = "| Beta | [`beta/beta.md`](beta/beta.md) | planned |\n";
+
+  // False positive: prose with a pipe + a doc link + one status word.
+  fs.writeFileSync(
+    idx,
+    HEAD +
+      "| Alpha | [`alpha/alpha.md`](alpha/alpha.md) | shipped |\n" +
+      betaOk +
+      "\nNote: the pipeline was **blocked** by CI, see [`alpha/alpha.md`](alpha/alpha.md)\n"
+  );
+  ok("prose line is not judged as a status row", driftRow()?.status === "pass", driftRow()?.detail);
+
+  // False negative 1: capitalized status.
+  fs.writeFileSync(idx, HEAD + "| Alpha | [`alpha/alpha.md`](alpha/alpha.md) | Planned |\n" + betaOk);
+  ok("capitalized status is still compared", driftRow()?.status === "fail", driftRow()?.detail);
+
+  // False negative 2: two status words in one row.
+  fs.writeFileSync(
+    idx,
+    HEAD + "| Alpha | [`alpha/alpha.md`](alpha/alpha.md) | was in-progress, now shipped |\n" + betaOk
+  );
+  ok("row with two status words is unverifiable, not a pass", driftRow()?.status === "fail", driftRow()?.detail);
+
+  // False negative 3: one row links two features, drift on the second.
+  fs.writeFileSync(
+    idx,
+    HEAD + "| Both | [`alpha/alpha.md`](alpha/alpha.md) [`beta/beta.md`](beta/beta.md) | shipped |\n"
+  );
+  ok("every linked feature in a row is attributed", driftRow()?.status === "fail", driftRow()?.detail);
+
+  // False negative 4: a tracker feature missing from the index entirely.
+  fs.writeFileSync(idx, HEAD + "| Alpha | [`alpha/alpha.md`](alpha/alpha.md) | shipped |\n");
+  const missing = driftRow();
+  ok("a feature absent from index.md is reported", missing?.status === "fail", missing?.detail);
+  ok("...and names the missing slug", /beta/.test(missing?.detail || ""), missing?.detail);
+}
+
+{
+  // shipped ⇒ PASS verification. Opt-in for ambient `brain check`, always on at
+  // the ship gate — so both behaviors need pinning.
+  const noDoc = makeBrain("strict-nodoc", {
+    features: [featureFor("alpha", { status: "shipped", evidence: "trust me" })],
+  });
+  const lenient = brainCheck(noDoc).find((r) => /PASS verification/.test(r.check));
+  ok("shipped-without-proof is INVISIBLE without --strict", lenient === undefined,
+    "the invariant must stay opt-in so existing brains do not go red on upgrade");
+  const strict = brainCheck(noDoc, { strict: true }).find((r) => /PASS verification/.test(r.check));
+  ok("shipped-without-proof FAILS under strict", strict && strict.status === "fail",
+    strict && `${strict.status}: ${strict.detail}`);
+  ok("strict detail names the unproven slug", strict && /alpha/.test(strict.detail || ""), strict?.detail);
+
+  const withPass = makeBrain(
+    "strict-pass",
+    { features: [featureFor("beta", { status: "shipped", evidence: "verified" })] },
+    { verdictDoc: "# V\n\n**Verdict**: ✅ PASS\n" }
+  );
+  const passRow = brainCheck(withPass, { strict: true }).find((r) => /PASS verification/.test(r.check));
+  ok("shipped WITH a PASS doc passes strict", passRow && passRow.status === "pass",
+    passRow && `${passRow.status}: ${passRow.detail}`);
+
+  // A FAIL verdict is not proof of shipping — the doc existing is not the point.
+  const withFail = makeBrain(
+    "strict-fail",
+    { features: [featureFor("gamma", { status: "shipped", evidence: "verified" })] },
+    { verdictDoc: "# V\n\n**Verdict**: ❌ FAIL\n" }
+  );
+  const failRow = brainCheck(withFail, { strict: true }).find((r) => /PASS verification/.test(r.check));
+  ok("a FAIL verdict does not satisfy shipped", failRow && failRow.status === "fail",
+    failRow && `${failRow.status}: ${failRow.detail}`);
+  ok("...and says the docs exist but none PASS", failRow && /none PASS/.test(failRow.detail || ""),
+    failRow?.detail);
 }
 
 // ---------------------------------------------------------------------------

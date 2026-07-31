@@ -686,7 +686,9 @@ function cmdFeaturesSetStatus(argv) {
         f === feat ? { ...f, status: "shipped", evidence: flags.evidence || f.evidence } : f
       ),
     };
-    const checks = brainCheck(brain, { list: projected });
+    // strict: shipping is the moment the claim is made, so proof is required
+    // here even though ambient `brain check` leaves it opt-in.
+    const checks = brainCheck(brain, { list: projected, strict: true });
     const failed = checks.filter((c) => c.status === "fail");
     if (failed.length) {
       print([
@@ -725,13 +727,24 @@ function cmdFeaturesSetStatus(argv) {
 // ---------------------------------------------------------------------------
 
 function cmdCheck(argv) {
-  const { flags } = parseArgs(argv, {}, "check");
+  const spec = {
+    "--strict": {
+      value: false,
+      desc: "also require a PASS verification doc for every shipped feature",
+    },
+  };
+  const { flags } = parseArgs(argv, spec, "check");
   if (flags.help)
-    helpBlock("check", "Run deterministic brain-harness invariant checks (CI-usable: exit 1 on any failure)", {}, [
-      "brain check",
-    ]);
+    helpBlock(
+      "check",
+      "Run deterministic brain-harness invariant checks (CI-usable: exit 1 on any failure)",
+      spec,
+      ["brain check", "brain check --strict"]
+    );
   const brain = findBrain(flags.brain);
-  const checks = brainCheck(brain);
+  // --strict is opt-in here because brains predating the invariant would go red
+  // on upgrade (read-compat, rules/state.md). `brain ship` always enforces it.
+  const checks = brainCheck(brain, { strict: !!flags.strict });
   // Evals are optional: evalChecks returns [] when the repo has no eval
   // suites, so a brain without AI work sees exactly the rows it saw before —
   // even one scaffolded by this version's `brain init` (which writes only
@@ -1095,7 +1108,9 @@ function cmdShip(argv) {
     ),
   };
 
-  const checks = brainCheck(brain, { list: projected });
+  // strict: a ship without a PASS verification is exactly the premature "done"
+  // this harness exists to prevent.
+  const checks = brainCheck(brain, { list: projected, strict: true });
   const failed = checks.filter((c) => c.status === "fail");
   if (failed.length) {
     print([
@@ -3579,8 +3594,9 @@ Run \`brain playbook\` for the live id/use_when index; \`brain playbook <id>\` f
 ## Record state (end of task / checkpoint)
 
 - \`brain progress add --summary "..." --next "..."\` — append a session checkpoint
-- \`brain features set-status <slug> --status <planned|in-progress|shipped|blocked|cut>\` — flip feature state (enforces one-in-progress policy; \`--status shipped\` requires \`--evidence\`)
-- \`brain check\` — deterministic harness invariants (feature list validity, one-in-progress, doc paths, dependency refs, plan/review file integrity, verification docs, verify.json shape when present); exit 1 on any failure, CI-usable
+- \`brain features set-status <slug> --status <planned|in-progress|shipped|blocked|cut>\` — flip feature state (enforces one-in-progress policy; \`--status shipped\` requires \`--evidence\` **and passes the same preflight as \`brain ship\` — it refuses and writes nothing if any check would fail**. Transitions *out* of a state are never gated, so a broken record stays repairable)
+- \`brain check\` — deterministic harness invariants (feature-list **schema** validity — duplicate ids/slugs, unknown status, shipped-without-evidence all fail — one-in-progress per declared policy, doc paths, dependency refs, \`features/index.md\` agreeing with the tracker, plan/review file integrity, verification docs having a **readable** verdict with resolvable image links, verify.json shape when present); exit 1 on any failure, CI-usable
+- \`brain check --strict\` — adds: every \`shipped\` feature must have a verification doc whose verdict parses to PASS. Opt-in here so brains predating the invariant do not go red on upgrade; \`brain ship\` and \`set-status --status shipped\` **always** enforce it, since shipping is the moment the claim is made
 - \`brain\` (home) shows an open \`sessions[...]\` table whenever a review session isn't ended yet
 
 ## Verify — run declared project checks (\`.brain/verify.json\`)
