@@ -3,7 +3,14 @@
   "updated": "2026-07-31",
   "policy": {
     "one_in_progress_at_a_time": true,
-    "definition_of_done": "implementation complete + verify-done passed (CLI invoked against .brain, exit codes + TOON eyeballed, stderr diagnostics-only) + feature MD updated + brain skill --check green + brain coherent"
+    "definition_of_done": "implementation complete + verify-done passed (CLI invoked against .brain, exit codes + TOON eyeballed, stderr diagnostics-only) + feature MD updated + brain skill --check green + brain coherent",
+    "strict_grandfathered": [
+      "core-cli",
+      "harness-mode",
+      "brain-review",
+      "shot-review",
+      "planning-ux"
+    ]
   },
   "features": [
     {
