@@ -21,6 +21,14 @@
 
 ---
 
+## 2026-07-31 — state-integrity phase 3 committed (fa8203d): commit-bound receipts (--strict requires the commit to exist AND be an ancestor of HEAD), transactional ship, brain metrics over runs/gates.jsonl, brain init --state-only. 149 assertions. TEMPLATE phase 1 committed (27848b6, feat/harness-gates): .brain/verify.json registry, AST non-negotiables checker with 9 self-test fixtures (replaces the grep sweep, adds the never-gated #4 test-parity), harness-check degraded mode now FAILS, bun setup offers init --state-only, index.md drift fixed, bun pinned.
+- branch: `feat/state-integrity`
+- in-progress feature: none
+- run note: none
+- next: Third independent score in flight. Remaining: generated index, critical-flow e2e, eval suites, and bumping the template's brain-axi pin after a release.
+
+---
+
 ## 2026-07-31 — state-integrity phase 1 committed (96db869, feat/state-integrity): lib/state.js + strict schema + one hardened verdict parser + preflight ship AND set-status + index-drift check + fsync atomic writes + 107-assertion test script + first CI. Codex re-score 4 -> 5 (working tree), its P0 set-status bypass + 6 P1s then fixed; third score pending.
 - branch: `feat/state-integrity`
 - in-progress feature: none

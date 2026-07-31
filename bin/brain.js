@@ -689,7 +689,7 @@ function cmdFeaturesSetStatus(argv) {
     };
     // strict: shipping is the moment the claim is made, so proof is required
     // here even though ambient `brain check` leaves it opt-in.
-    const checks = brainCheck(brain, { list: projected, strict: true });
+    const checks = brainCheck(brain, { list: projected, strict: true, strictScope: feat.slug });
     const failed = checks.filter((c) => c.status === "fail");
     if (failed.length) {
       print([
@@ -1276,7 +1276,7 @@ function cmdShip(argv) {
 
   // strict: a ship without a PASS verification is exactly the premature "done"
   // this harness exists to prevent.
-  const checks = brainCheck(brain, { list: projected, strict: true });
+  const checks = brainCheck(brain, { list: projected, strict: true, strictScope: feat.slug });
   const failed = checks.filter((c) => c.status === "fail");
   if (failed.length) {
     print([

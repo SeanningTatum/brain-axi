@@ -62,6 +62,26 @@ both depend on it. It must never import from `lib/review/`.
 | `evidence` required when `status: shipped` | A shipped feature with no evidence is the exact shape of a premature "done" |
 | `features/index.md` agrees with the tracker | Two answers to "is this shipped?" means whichever file a reader opens decides what they believe |
 | **`--strict`:** every `shipped` feature has a PASS verification | `evidence` is free text nobody validates. Opt-in for ambient `brain check` (read-compat), **always on** at the ship gate — that is where the claim is made |
+| **`--strict`:** that PASS carries a receipt whose commit is an ancestor of HEAD | A verdict with no commit is unfalsifiable; one on a branch that never landed describes code that is not what shipped |
+
+## Strict has two scopes, and mixing them up breaks the gate
+
+| Caller | Scope | Why |
+|---|---|---|
+| `brain check --strict` | **Whole brain** — an audit | Report every unproven shipped feature so the debt is visible |
+| `brain ship`, `set-status --status shipped` | **`strictScope: <slug>`** — the feature being shipped | A gate, not an audit |
+
+The ship path shipped once with whole-brain scope, and it made the gate unusable
+in both repos that own it: a single legacy feature predating the invariant refused
+**every** future ship, so the only way to ship anything was to retroactively
+verify everything — which nobody does, so the gate gets bypassed instead of
+satisfied. Shipping X asserts that X works. It does not assert that a feature
+someone shipped a year ago has a receipt.
+
+Corollary for consuming repos: wire ambient `--strict` as an **advisory** until
+the legacy gap is genuinely closed. Making it green by authoring PASS docs for
+flows nobody verified is fabricating evidence — the exact failure the harness
+exists to prevent.
 
 ## Verify
 

@@ -841,6 +841,95 @@ function shipAgainst(brain, slug) {
 }
 
 
+{
+  // Drift false-negatives found by adversarial review AFTER the check shipped.
+  const brain = makeBrain("index-fn", {
+    features: [
+      featureFor("alpha", { status: "shipped", evidence: "proof" }),
+      featureFor("beta", { status: "planned" }),
+    ],
+  });
+  const idx = path.join(brain, "features", "index.md");
+  const driftRow = () =>
+    brainCheck(brain).find((r) => r.check === "features/index.md agrees with the tracker");
+
+  // A GUTTED index used to report "no rows to compare" and pass — deleting the
+  // table was the cheapest way to silence the check.
+  fs.writeFileSync(idx, "# Features\n\nNo table here.\n");
+  ok("gutted index.md FAILS", driftRow()?.status === "fail", driftRow()?.detail);
+
+  // "in progress" (space, not hyphen) is not a status; the row used to skip.
+  fs.writeFileSync(
+    idx,
+    "| F | File | Status |\n|---|---|---|\n" +
+      "| Alpha | [`alpha/alpha.md`](alpha/alpha.md) | in progress |\n" +
+      "| Beta | [`beta/beta.md`](beta/beta.md) | planned |\n"
+  );
+  const noStatus = driftRow();
+  ok("row with an unrecognizable status FAILS", noStatus?.status === "fail", noStatus?.detail);
+  ok(
+    "...and says the status was not recognized",
+    /no recognizable status/.test(noStatus?.detail || ""),
+    noStatus?.detail
+  );
+}
+
+{
+  // B1 — the scope of the strict ship gate.
+  //
+  // `brain ship` is always strict. Preflighting the WHOLE brain meant one legacy
+  // feature that predates the invariant refused EVERY future ship in the repo,
+  // which made the flagship gate unusable in the two repos that own it. Shipping
+  // X asserts that X works; it does not assert that a feature shipped a year ago
+  // has a receipt.
+  const brain = makeBrain(
+    "strict-scope",
+    {
+      features: [
+        // Legacy: shipped long ago, no verification doc. Must NOT block others.
+        featureFor("legacy", { status: "shipped", evidence: "shipped before the invariant" }),
+        featureFor("fresh", { status: "in-progress" }),
+      ],
+    },
+    { verdictDoc: PASS_DOC }
+  );
+  // makeBrain wrote a PASS doc for BOTH features; remove legacy's so it is unproven.
+  fs.rmSync(path.join(brain, "features", "legacy", "verifications"), { recursive: true, force: true });
+
+  const whole = brainCheck(brain, { strict: true }).filter((r) => r.status === "fail");
+  ok("unscoped strict still reports the legacy gap (it is the audit)", whole.length > 0,
+    "ambient --strict must keep auditing the whole brain");
+
+  const scoped = brainCheck(brain, { strict: true, strictScope: "fresh" }).filter((r) => r.status === "fail");
+  ok(
+    "strict scoped to the shipping feature ignores unrelated legacy gaps",
+    scoped.length === 0,
+    scoped.map((r) => `${r.check}: ${r.detail}`).join(" | ")
+  );
+
+  // And the CLI actually ships it, rather than being blocked by `legacy`.
+  const res = spawnSync(
+    process.execPath,
+    [CLI, "ship", "fresh", "--evidence", "scoped strict proof", "--brain", brain],
+    { encoding: "utf8" }
+  );
+  ok("ship succeeds despite an unrelated unproven legacy feature", res.status === 0,
+    `exit ${res.status}: ${(res.stdout || "").split("\n").slice(0, 4).join(" / ")}`);
+
+  // But it still refuses when THIS feature lacks proof.
+  const brain2 = makeBrain("strict-scope-2", {
+    features: [featureFor("unproven", { status: "in-progress" })],
+  });
+  const res2 = spawnSync(
+    process.execPath,
+    [CLI, "ship", "unproven", "--evidence", "no doc at all", "--brain", brain2],
+    { encoding: "utf8" }
+  );
+  ok("ship still refuses when the shipping feature itself has no proof", res2.status === 1,
+    `exit ${res2.status}`);
+}
+
+
 fs.rmSync(tmpRoot, { recursive: true, force: true });
 
 // ---------------------------------------------------------------------------
