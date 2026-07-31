@@ -839,11 +839,24 @@ function cmdFeaturesSetStatus(argv) {
   if (flags.evidence) feat.evidence = flags.evidence;
   saveFeatureList(brain, list);
 
+  // The derived index must follow EVERY status write, not just `ship`. Wiring it
+  // into ship alone left `set-status` able to take the brain from green to red
+  // while exiting 0 — the same "hardened one path, moved the hole" mistake the
+  // ship gate already made once.
+  const regenStatus = regenerateFeaturesIndex(brain);
+
   print([
     "feature:",
     kv("slug", feat.slug, 2),
     kv("status", feat.status, 2),
     kv("previous", previous, 2),
+    ...(regenStatus === "written" ? [kv("index", "features/index.md regenerated", 2)] : []),
+    ...(regenStatus === "no-markers"
+      ? ["warning: features/index.md has no brain:features-table markers — update it by hand or `brain check` will report drift"]
+      : []),
+    ...(regenStatus === "missing"
+      ? ["warning: features/index.md absent — run `brain features index --write --create`"]
+      : []),
     ...toonList("help", [
       `Update the doc changelog in ${feat.doc || ".brain/features/<slug>.md"}`,
       "Run `brain progress add --summary \"...\"` to checkpoint this change",
@@ -1584,7 +1597,25 @@ function cmdShip(argv) {
   const regen = regenerateFeaturesIndex(brain);
   if (regen === "written") lines.push(kv("index", "features/index.md regenerated", 2));
   else if (regen === "no-markers")
-    lines.push("warning: features/index.md has no brain:features-table markers — update it by hand");
+    lines.push("warning: features/index.md has no brain:features-table markers — update it by hand or `brain check` will report drift");
+  else if (regen === "missing")
+    lines.push("warning: features/index.md absent — run `brain features index --write --create`");
+
+  // Re-verify AFTER the write. Preflight validated a projection; only this can
+  // assert the invariant the ship actually left behind, and it is what makes
+  // "no drift left behind" a checked claim rather than a comment.
+  const post = brainCheck(brain).filter((c) => c.status === "fail");
+  if (post.length) {
+    lines.push(...toonTable("post_ship_checks", post, ["check", "status", "detail"]));
+    lines.push(
+      ...toonList("help", [
+        `${feat.slug} shipped, but ${post.length} check(s) fail AFTER the write — fix the detail(s) above`,
+      ])
+    );
+    print(lines);
+    process.exit(1);
+    return;
+  }
 
   lines.push(
     ...toonList("help", [

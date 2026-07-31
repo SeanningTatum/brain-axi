@@ -1030,6 +1030,111 @@ function shipAgainst(brain, slug) {
 }
 
 
+{
+  // N1 — an UNCLOSED html comment hides everything after it in every renderer.
+  // The closed case was fixed; the unclosed one was not considered, which is the
+  // same oversight the fence rules already made once.
+  ok("unclosed comment hides a verdict", parseVerdict("<!--\n**Verdict**: ✅ PASS") === "unknown");
+  ok(
+    "unclosed comment + a valid receipt still scores nothing",
+    parseVerdict("<!--\n**Verdict**: ✅ PASS\n\n<!-- brain:verification\ncommit: abc1234\n-->") === "unknown"
+  );
+
+  // N6 — symbolic refs resolve through git but move, so they bind to nothing.
+  for (const ref of ["HEAD", "main", "v1.0.0", "HEAD~2", "origin/main"]) {
+    const r = parseReceipt(`<!-- brain:verification\ncommit: ${ref}\n-->`);
+    ok(`receipt commit "${ref}" is rejected as symbolic`, r.commit === null && r.commit_symbolic === true,
+      JSON.stringify(r));
+  }
+  const hex = parseReceipt("<!-- brain:verification\ncommit: 1a2b3c4\n-->");
+  ok("a hex sha is accepted", hex.commit === "1a2b3c4" && hex.commit_symbolic === false, JSON.stringify(hex));
+}
+
+{
+  // N4/N5 — the exemption key had no integrity check, so adding a slug turned the
+  // gate off for it. New work could ship unverified by listing itself.
+  const gfRow = (brain) =>
+    brainCheck(brain, { strict: true }).find((r) => r.check === "strict grandfather list is legitimate");
+
+  const unknown = makeBrain("gf-unknown", {
+    policy: { strict_grandfathered: ["ghost"] },
+    features: [featureFor("alpha", { status: "shipped", evidence: "e" })],
+  });
+  ok("grandfathering an unknown slug FAILS", gfRow(unknown)?.status === "fail", gfRow(unknown)?.detail);
+
+  const notShipped = makeBrain("gf-notshipped", {
+    policy: { strict_grandfathered: ["beta"] },
+    features: [
+      featureFor("alpha", { status: "shipped", evidence: "e" }),
+      featureFor("beta", { status: "in-progress" }),
+    ],
+  });
+  const r = gfRow(notShipped);
+  ok("grandfathering a non-shipped slug FAILS", r?.status === "fail", r?.detail);
+  ok("...and says why", /not shipped/.test(r?.detail || ""), r?.detail);
+
+  const cut = makeBrain("gf-cut", {
+    policy: { strict_grandfathered: ["gamma"] },
+    features: [featureFor("gamma", { status: "cut", evidence: "" })],
+  });
+  ok("grandfathering a CUT slug FAILS (the real template bug)", gfRow(cut)?.status === "fail", gfRow(cut)?.detail);
+
+  // A legitimate list passes, so the check is not simply always-red.
+  const good = makeBrain("gf-good", {
+    policy: { strict_grandfathered: ["alpha"] },
+    features: [featureFor("alpha", { status: "shipped", evidence: "legacy" })],
+  });
+  ok("a legitimate grandfather list passes", gfRow(good)?.status === "pass", gfRow(good)?.detail);
+}
+
+{
+  // N2 — set-status must regenerate the derived index too. Wiring regen into ship
+  // alone let set-status take the brain green -> red while exiting 0.
+  const brain = makeBrain(
+    "setstatus-regen",
+    { features: [featureFor("alpha", { status: "planned" })] },
+    { verdictDoc: PASS_DOC }
+  );
+  const res = spawnSync(
+    process.execPath,
+    [CLI, "features", "set-status", "alpha", "--status", "blocked", "--brain", brain],
+    { encoding: "utf8" }
+  );
+  ok("set-status exits 0", res.status === 0, `exit ${res.status}`);
+  ok("set-status regenerated the index", /index: features\/index\.md regenerated/.test(res.stdout || ""),
+    (res.stdout || "").slice(0, 200));
+  const after = spawnSync(process.execPath, [CLI, "check", "--brain", brain], { encoding: "utf8" });
+  ok("brain check is still green after set-status", after.status === 0,
+    (after.stdout || "").slice(0, 300));
+}
+
+{
+  // N3 — ship must not leave drift behind in the markerless / missing index
+  // states. Both previously exited 0 and left `brain check` red.
+  const markerless = makeBrain(
+    "ship-markerless",
+    { features: [featureFor("alpha", { status: "in-progress" })] },
+    { verdictDoc: PASS_DOC }
+  );
+  fs.writeFileSync(
+    path.join(markerless, "features", "index.md"),
+    "| F | File | Status |\n|---|---|---|\n| Alpha | [`alpha/alpha.md`](alpha/alpha.md) | in-progress |\n"
+  );
+  const res = spawnSync(
+    process.execPath,
+    [CLI, "ship", "alpha", "--evidence", "markerless index", "--brain", markerless],
+    { encoding: "utf8" }
+  );
+  const combined = (res.stdout || "") + (res.stderr || "");
+  ok(
+    "ship into a markerless index does NOT silently succeed",
+    res.status === 1 && /post_ship_checks/.test(combined),
+    `exit ${res.status}: ${combined.slice(0, 260)}`
+  );
+  ok("...and says the markers are missing", /brain:features-table markers/.test(combined), combined.slice(0, 200));
+}
+
+
 fs.rmSync(tmpRoot, { recursive: true, force: true });
 
 // ---------------------------------------------------------------------------
