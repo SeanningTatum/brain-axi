@@ -57,7 +57,17 @@ Run `brain playbook` for the live id/use_when index; `brain playbook <id>` for t
 - `brain progress add --summary "..." --next "..."` — append a session checkpoint
 - `brain features set-status <slug> --status <planned|in-progress|shipped|blocked|cut>` — flip feature state (enforces one-in-progress policy; `--status shipped` requires `--evidence` **and passes the same preflight as `brain ship` — it refuses and writes nothing if any check would fail**. Transitions *out* of a state are never gated, so a broken record stays repairable)
 - `brain check` — deterministic harness invariants (feature-list **schema** validity — duplicate ids/slugs, unknown status, shipped-without-evidence all fail — one-in-progress per declared policy, doc paths, dependency refs, `features/index.md` agreeing with the tracker, plan/review file integrity, verification docs having a **readable** verdict with resolvable image links, verify.json shape when present); exit 1 on any failure, CI-usable
-- `brain check --strict` — adds: every `shipped` feature must have a verification doc whose verdict parses to PASS. Opt-in here so brains predating the invariant do not go red on upgrade; `brain ship` and `set-status --status shipped` **always** enforce it, since shipping is the moment the claim is made
+- `brain check --strict` — adds two: every `shipped` feature must have a verification doc whose verdict parses to PASS, **and** that doc must carry a `brain:verification` receipt naming a commit that is an ancestor of HEAD. Opt-in here so brains predating the invariants do not go red on upgrade; `brain ship` and `set-status --status shipped` **always** enforce both, since shipping is the moment the claim is made
+- **Verification receipts** — a verdict with no commit is unfalsifiable (the doc is mutable and date-named, so "it passed" could describe any tree that ever existed). Put this block in every verification doc; it renders as nothing:
+  ```
+  <!-- brain:verification
+  commit: <short sha, e.g. `git rev-parse --short HEAD`>
+  verified_by: feature-verifier
+  commands: bun run test (exit 0); bun run typecheck (exit 0)
+  -->
+  ```
+- `brain metrics [--limit N]` — gate effectiveness over `runs/gates.jsonl` (written by every `brain verify`): first-pass rate, per-check failure counts, p50/p95 duration. It also names any check that has never failed in 3+ runs — a gate with no failing fixture is a claim, not a check. Without this the harness can only prove it is *intact*, never that it *works*
+- `brain init --state-only --dir <repo> --yes` — for a repo CLONED from a template: wipes inherited state (`features/`, `runs/`, `plans/`, `screenshots/`, `evals/`) and keeps the docs (`rules/`, `recipes/`, `codebase/`, `high-level-architecture/`, `HARNESS.md`, `verify.json`) — the clone inherits the stack along with the code, but not another project's history. Bare `brain init` still refuses a non-empty `.brain`
 - `brain` (home) shows an open `sessions[...]` table whenever a review session isn't ended yet
 
 ## Verify — run declared project checks (`.brain/verify.json`)

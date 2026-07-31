@@ -25,6 +25,7 @@ import {
   oneInProgressEnforced,
   parseVerdict,
   parseVerdictDetail,
+  parseReceipt,
   writeFileAtomic,
   STATUSES,
 } from "../lib/state.js";
@@ -558,6 +559,104 @@ const SCHEMA_CHECK = "feature_list.json is valid";
     failRow?.detail);
 }
 
+{
+  // Receipts. A PASS with no commit is unfalsifiable — the doc is a mutable,
+  // date-named markdown file, so "it passed" could describe any tree that ever
+  // existed. These fixtures need a REAL git repo, because the cases that matter
+  // are provenance ones.
+  const RECEIPT_ROW = "every PASS verification is bound to a commit";
+  const repo = path.join(tmpRoot, "receipt-repo");
+  fs.mkdirSync(repo, { recursive: true });
+  const g = (...args) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
+  g("init", "-q");
+  g("config", "user.email", "fixture@example.com");
+  g("config", "user.name", "Fixture");
+  fs.writeFileSync(path.join(repo, "a.txt"), "1\n");
+  g("add", "-A");
+  g("commit", "-qm", "one");
+  const realSha = (g("rev-parse", "--short", "HEAD").stdout || "").trim();
+  // Capture the branch by NAME: `checkout -` does not reliably return from an
+  // orphan branch, and getting this wrong silently inverts both assertions below.
+  const mainBranch = (g("rev-parse", "--abbrev-ref", "HEAD").stdout || "").trim();
+
+  // An orphan commit: a real object reachable from no branch HEAD can see — i.e.
+  // a verdict taken on code that never landed.
+  g("checkout", "-q", "--orphan", "sidebranch");
+  fs.writeFileSync(path.join(repo, "b.txt"), "2\n");
+  g("add", "-A");
+  g("commit", "-qm", "orphan");
+  const orphanSha = (g("rev-parse", "--short", "HEAD").stdout || "").trim();
+  g("checkout", "-q", mainBranch);
+  ok(
+    "fixture repo is back on the original branch",
+    (g("rev-parse", "--short", "HEAD").stdout || "").trim() === realSha,
+    "HEAD is not the first commit — the ancestor assertions below would be inverted"
+  );
+
+  ok("fixture repo produced a real sha", /^[0-9a-f]{7,}$/.test(realSha), realSha);
+  ok("fixture repo produced an orphan sha", /^[0-9a-f]{7,}$/.test(orphanSha), orphanSha);
+
+  function receiptBrain(name, receiptLines) {
+    const brain = path.join(repo, name, ".brain");
+    fs.mkdirSync(path.join(brain, "features", "alpha", "verifications"), { recursive: true });
+    fs.mkdirSync(path.join(brain, "runs"), { recursive: true });
+    fs.writeFileSync(path.join(brain, "runs", "progress.md"), "# Progress\n\n---\n");
+    fs.writeFileSync(
+      path.join(brain, "features", "feature_list.json"),
+      JSON.stringify(
+        { features: [featureFor("alpha", { status: "shipped", evidence: "proof" })] },
+        null,
+        2
+      ) + "\n"
+    );
+    fs.writeFileSync(path.join(brain, "features", "alpha", "alpha.md"), "# alpha\n");
+    fs.writeFileSync(
+      path.join(brain, "features", "alpha", "verifications", "2026-07-31.md"),
+      `# V\n\n**Verdict**: ✅ PASS\n\n${receiptLines}\n`
+    );
+    return brain;
+  }
+
+  const rowOf = (brain) => brainCheck(brain, { strict: true }).find((r) => r.check === RECEIPT_ROW);
+
+  const noReceipt = receiptBrain("no-receipt", "");
+  ok("PASS with no receipt fails strict", rowOf(noReceipt)?.status === "fail", rowOf(noReceipt)?.detail);
+  ok(
+    "...and says the receipt is missing",
+    /no brain:verification receipt/.test(rowOf(noReceipt)?.detail || ""),
+    rowOf(noReceipt)?.detail
+  );
+
+  const noCommit = receiptBrain("no-commit", "<!-- brain:verification\nverified_by: fixture\n-->");
+  ok("receipt without a commit fails", rowOf(noCommit)?.status === "fail", rowOf(noCommit)?.detail);
+
+  const bogus = receiptBrain(
+    "bogus-commit",
+    "<!-- brain:verification\ncommit: deadbeef\nverified_by: fixture\n-->"
+  );
+  ok("receipt naming a commit not in the repo fails", rowOf(bogus)?.status === "fail", rowOf(bogus)?.detail);
+
+  const orphan = receiptBrain(
+    "orphan-commit",
+    `<!-- brain:verification\ncommit: ${orphanSha}\nverified_by: fixture\n-->`
+  );
+  const orphanRow = rowOf(orphan);
+  ok("receipt on a commit that never landed fails", orphanRow?.status === "fail", orphanRow?.detail);
+  ok("...and says it is not an ancestor", /not an ancestor/.test(orphanRow?.detail || ""), orphanRow?.detail);
+
+  const good = receiptBrain(
+    "good-commit",
+    `<!-- brain:verification\ncommit: ${realSha}\nverified_by: fixture\n-->`
+  );
+  ok("receipt on an ancestor of HEAD passes", rowOf(good)?.status === "pass", rowOf(good)?.detail);
+
+  const r = parseReceipt("<!-- brain:verification\ncommit: abc1234\nverified_by: x\ncommands: a; b\n-->");
+  ok("receipt commit parsed", r.commit === "abc1234", r.commit);
+  ok("receipt verified_by parsed", r.verified_by === "x", r.verified_by);
+  ok("receipt commands parsed", r.commands === "a; b", r.commands);
+  ok("absent receipt is not an error", parseReceipt("nothing here").present === false);
+}
+
 // ---------------------------------------------------------------------------
 // 5. ship is preflight-then-commit — the CLI, invoked as a subprocess
 //
@@ -565,6 +664,13 @@ const SCHEMA_CHECK = "feature_list.json is valid";
 // checkpoint, THEN run brainCheck, then exit 1 with the flip already on disk.
 // The only honest proof is byte-comparing the files around a refused ship.
 // ---------------------------------------------------------------------------
+
+
+// A PASS verdict doc that also satisfies the strict receipt gate. Temp brains are
+// not git repos, so receipt PRESENCE is the ceiling there — provenance is checked
+// against a real repo in the receipt section below.
+const PASS_DOC =
+  "# V\n\n**Verdict**: \u2705 PASS\n\n<!-- brain:verification\ncommit: abc1234\nverified_by: fixture\n-->\n";
 
 const CLI = path.resolve(new URL("../bin/brain.js", import.meta.url).pathname);
 
@@ -589,7 +695,7 @@ function shipAgainst(brain, slug) {
         featureFor("alpha", { status: "in-progress", dependencies: ["ghost"] }),
       ],
     },
-    { verdictDoc: "# V\n\n**Verdict**: ✅ PASS\n" }
+    { verdictDoc: PASS_DOC }
   );
   const flPath = path.join(brain, "features", "feature_list.json");
   const progressPath = path.join(brain, "runs", "progress.md");
@@ -625,7 +731,7 @@ function shipAgainst(brain, slug) {
       policy: { one_in_progress_at_a_time: true },
       features: [featureFor("alpha", { status: "in-progress" })],
     },
-    { verdictDoc: "# V\n\n**Verdict**: ✅ PASS\n" }
+    { verdictDoc: PASS_DOC }
   );
   const flPath = path.join(brain, "features", "feature_list.json");
   const { status, out } = shipAgainst(brain, "alpha");
@@ -643,7 +749,7 @@ function shipAgainst(brain, slug) {
   const brain = makeBrain(
     "setstatus-bypass",
     { features: [featureFor("alpha", { status: "in-progress", dependencies: ["ghost"] })] },
-    { verdictDoc: "# V\n\n**Verdict**: ✅ PASS\n" }
+    { verdictDoc: PASS_DOC }
   );
   const flPath = path.join(brain, "features", "feature_list.json");
   const before = fs.readFileSync(flPath, "utf8");
@@ -668,6 +774,72 @@ function shipAgainst(brain, slug) {
   ok("de-escalation is not blocked by a failing brain", down.status === 0,
     `exit ${down.status}: ${(down.stdout || "").split("\n")[0]}`);
 }
+
+{
+  // init --state-only: the clone case. A repo cloned from a template inherits
+  // the TEMPLATE's features, cursor, and run notes — context drift shipped as a
+  // default. Docs must survive (the clone inherits the stack along with the
+  // code); state must not (it is another project's history).
+  const root = path.join(tmpRoot, "cloned-repo");
+  const brain = path.join(root, ".brain");
+  fs.mkdirSync(path.join(brain, "features", "inherited"), { recursive: true });
+  fs.mkdirSync(path.join(brain, "runs"), { recursive: true });
+  fs.mkdirSync(path.join(brain, "plans", "old-plan"), { recursive: true });
+  fs.mkdirSync(path.join(brain, "rules"), { recursive: true });
+  fs.mkdirSync(path.join(brain, "recipes"), { recursive: true });
+  fs.writeFileSync(path.join(brain, "HARNESS.md"), "# harness\n");
+  fs.writeFileSync(path.join(brain, "rules", "frontend.md"), "# stack rule\n");
+  fs.writeFileSync(path.join(brain, "recipes", "add-thing.md"), "# recipe\n");
+  fs.writeFileSync(
+    path.join(brain, "runs", "progress.md"),
+    "# Progress\n\n---\n\n## 2020-01-01 — someone else's release\n"
+  );
+  fs.writeFileSync(path.join(brain, "features", "inherited", "inherited.md"), "# inherited\n");
+  fs.writeFileSync(
+    path.join(brain, "features", "feature_list.json"),
+    JSON.stringify(
+      { features: [featureFor("inherited", { status: "shipped", evidence: "theirs" })] },
+      null,
+      2
+    ) + "\n"
+  );
+
+  const res = spawnSync(process.execPath, [CLI, "init", "--state-only", "--dir", root, "--yes"], {
+    encoding: "utf8",
+  });
+  ok("init --state-only exits 0", res.status === 0, `exit ${res.status}: ${(res.stdout || "").slice(0, 200)}`);
+
+  const list = JSON.parse(fs.readFileSync(path.join(brain, "features", "feature_list.json"), "utf8"));
+  ok(
+    "inherited features are gone",
+    Array.isArray(list.features) && list.features.length === 0,
+    JSON.stringify(list.features)
+  );
+  ok("inherited feature folder is gone", !fs.existsSync(path.join(brain, "features", "inherited")));
+  ok("inherited plans are gone", !fs.existsSync(path.join(brain, "plans", "old-plan")));
+  const progress = fs.readFileSync(path.join(brain, "runs", "progress.md"), "utf8");
+  ok("cursor no longer holds another project's history", !/someone else/.test(progress));
+  ok("cursor has a fresh first checkpoint", /brain init/.test(progress), progress.slice(0, 120));
+
+  // The half that must SURVIVE — wiping these forces every clone to re-derive
+  // the stack conventions it inherited along with the code.
+  ok("stack rules kept", fs.existsSync(path.join(brain, "rules", "frontend.md")));
+  ok("recipes kept", fs.existsSync(path.join(brain, "recipes", "add-thing.md")));
+  ok("HARNESS.md kept", fs.existsSync(path.join(brain, "HARNESS.md")));
+
+  // A reset brain must be coherent, not merely empty.
+  const after = spawnSync(process.execPath, [CLI, "check", "--brain", brain], { encoding: "utf8" });
+  ok("a reset brain passes brain check", after.status === 0, (after.stdout || "").slice(0, 300));
+
+  // Refuses on an absent brain rather than silently scaffolding one.
+  const empty = path.join(tmpRoot, "not-a-brain");
+  fs.mkdirSync(empty, { recursive: true });
+  const noBrain = spawnSync(process.execPath, [CLI, "init", "--state-only", "--dir", empty, "--yes"], {
+    encoding: "utf8",
+  });
+  ok("init --state-only refuses when there is no brain", noBrain.status === 1, `exit ${noBrain.status}`);
+}
+
 
 fs.rmSync(tmpRoot, { recursive: true, force: true });
 

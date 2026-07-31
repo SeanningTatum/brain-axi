@@ -1,0 +1,12 @@
+{"at":"2026-07-31T17:22:34.359Z","stage":"baseline","check":"skill-sync","status":"pass","exit":0,"seconds":0,"branch":"feat/state-integrity","commit":"8343452"}
+{"at":"2026-07-31T17:22:34.359Z","stage":"baseline","check":"harness","status":"pass","exit":0,"seconds":0,"branch":"feat/state-integrity","commit":"8343452"}
+{"at":"2026-07-31T17:22:34.359Z","stage":"baseline","check":"playbook-refs","status":"pass","exit":0,"seconds":0,"branch":"feat/state-integrity","commit":"8343452"}
+{"at":"2026-07-31T17:22:34.359Z","stage":"baseline","check":"state-invariants","status":"fail","exit":1,"seconds":0.2,"branch":"feat/state-integrity","commit":"8343452"}
+{"at":"2026-07-31T17:22:34.797Z","stage":"baseline","check":"skill-sync","status":"pass","exit":0,"seconds":0,"branch":"feat/state-integrity","commit":"8343452"}
+{"at":"2026-07-31T17:22:34.797Z","stage":"baseline","check":"harness","status":"pass","exit":0,"seconds":0,"branch":"feat/state-integrity","commit":"8343452"}
+{"at":"2026-07-31T17:22:34.797Z","stage":"baseline","check":"playbook-refs","status":"pass","exit":0,"seconds":0,"branch":"feat/state-integrity","commit":"8343452"}
+{"at":"2026-07-31T17:22:34.797Z","stage":"baseline","check":"state-invariants","status":"fail","exit":1,"seconds":0.3,"branch":"feat/state-integrity","commit":"8343452"}
+{"at":"2026-07-31T17:27:09.388Z","stage":"baseline","check":"skill-sync","status":"pass","exit":0,"seconds":0,"branch":"feat/state-integrity","commit":"8343452"}
+{"at":"2026-07-31T17:27:09.388Z","stage":"baseline","check":"harness","status":"pass","exit":0,"seconds":0,"branch":"feat/state-integrity","commit":"8343452"}
+{"at":"2026-07-31T17:27:09.388Z","stage":"baseline","check":"playbook-refs","status":"pass","exit":0,"seconds":0,"branch":"feat/state-integrity","commit":"8343452"}
+{"at":"2026-07-31T17:27:09.388Z","stage":"baseline","check":"state-invariants","status":"pass","exit":0,"seconds":0.7,"branch":"feat/state-integrity","commit":"8343452"}

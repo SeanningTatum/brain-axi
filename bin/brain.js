@@ -31,6 +31,7 @@ import {
   validateFeatureListShape,
   validateFeatureListStructure,
   oneInProgressEnforced,
+  gitShortHead,
 } from "../lib/state.js";
 import { sessionKey, stateDir, listSessions } from "../lib/review/store.js";
 import { PLAYBOOKS } from "../lib/review/playbooks.js";
@@ -814,6 +815,161 @@ function runVerifyCheck(check, cwd) {
 
 // Builds the TOON lines shared between stdout and the `--feature` run-note
 // step, so the recorded evidence matches what the agent actually saw.
+// ---------------------------------------------------------------------------
+// Gate telemetry — .brain/runs/gates.jsonl
+//
+// Append-only, one row per gate execution. Mirrors the runs.jsonl summary-row
+// convention already used by the evals subsystem so there is one shape to learn.
+// Never throws: losing a metrics row must not fail a verify run.
+// ---------------------------------------------------------------------------
+
+function gatesLogPath(brain) {
+  return path.join(brain, "runs", "gates.jsonl");
+}
+
+function recordGateRuns(brain, { stage, feature, results }) {
+  try {
+    const runsDir = path.join(brain, "runs");
+    if (!fs.existsSync(runsDir)) return null;
+    const at = new Date().toISOString();
+    const repoRoot = path.dirname(path.resolve(brain));
+    const branch = resolveBranch(brain, undefined);
+    const commit = gitShortHead(repoRoot);
+    const rows = results.map((r) =>
+      JSON.stringify({
+        at,
+        stage,
+        check: r.check,
+        status: r.status,
+        exit: r.exit,
+        seconds: r.seconds,
+        branch,
+        commit,
+        ...(feature ? { feature } : {}),
+      })
+    );
+    fs.appendFileSync(gatesLogPath(brain), rows.join("\n") + "\n");
+    return rows.length;
+  } catch {
+    return null;
+  }
+}
+
+function readGateRows(brain) {
+  const p = gatesLogPath(brain);
+  if (!fs.existsSync(p)) return [];
+  const rows = [];
+  for (const line of fs.readFileSync(p, "utf8").split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      rows.push(JSON.parse(line));
+    } catch {
+      // A corrupt row is not worth failing a report over — skip it.
+    }
+  }
+  return rows;
+}
+
+function pct(n, d) {
+  return d ? Number(((n / d) * 100).toFixed(1)) : null;
+}
+
+function quantile(sorted, q) {
+  if (!sorted.length) return null;
+  const i = Math.min(sorted.length - 1, Math.floor(q * sorted.length));
+  return sorted[i];
+}
+
+function cmdMetrics(argv) {
+  const spec = {
+    "--limit": { value: true, desc: "only consider the most recent N gate rows" },
+  };
+  const { flags } = parseArgs(argv, spec, "metrics");
+  if (flags.help)
+    helpBlock(
+      "metrics",
+      "Gate effectiveness over .brain/runs/gates.jsonl — first-pass rate, which gate fails most, duration",
+      spec,
+      ["brain metrics", "brain metrics --limit 200"],
+      []
+    );
+  const brain = findBrain(flags.brain);
+  let rows = readGateRows(brain);
+  if (flags.limit) {
+    const n = parseInt(flags.limit, 10);
+    if (!Number.isFinite(n) || n <= 0)
+      usageError("--limit must be a positive integer", ["brain metrics --limit 200"]);
+    rows = rows.slice(-n);
+  }
+
+  if (rows.length === 0) {
+    print([
+      "metrics: no gate runs recorded yet",
+      ...toonList("help", [
+        "Run `brain verify --stage baseline` — every check execution appends a row to runs/gates.jsonl",
+        "Metrics answer whether the gates catch anything; a harness with none can only prove it is intact",
+      ]),
+    ]);
+    return;
+  }
+
+  const total = rows.length;
+  const passed = rows.filter((r) => r.status === "pass").length;
+
+  // Group by (at, stage) — one `brain verify` invocation shares a timestamp, so
+  // this is the unit a human means by "did it pass first try".
+  const runs = new Map();
+  for (const r of rows) {
+    const key = `${r.at}|${r.stage}`;
+    if (!runs.has(key)) runs.set(key, []);
+    runs.get(key).push(r);
+  }
+  const runList = [...runs.values()];
+  const cleanRuns = runList.filter((g) => g.every((r) => r.status === "pass")).length;
+
+  const byCheck = new Map();
+  for (const r of rows) {
+    if (!byCheck.has(r.check)) byCheck.set(r.check, { check: r.check, runs: 0, failures: 0, secs: [] });
+    const e = byCheck.get(r.check);
+    e.runs++;
+    if (r.status !== "pass") e.failures++;
+    if (typeof r.seconds === "number") e.secs.push(r.seconds);
+  }
+  const perCheck = [...byCheck.values()]
+    .map((e) => {
+      const sorted = e.secs.slice().sort((a, b) => a - b);
+      return {
+        check: e.check,
+        runs: e.runs,
+        failures: e.failures,
+        caught_pct: pct(e.failures, e.runs),
+        p50_s: quantile(sorted, 0.5),
+        p95_s: quantile(sorted, 0.95),
+      };
+    })
+    // Most-failing first: the gates that never fail are the ones to question.
+    .sort((a, b) => b.failures - a.failures || b.runs - a.runs);
+
+  const neverFailed = perCheck.filter((c) => c.failures === 0 && c.runs >= 3);
+
+  const lines = [
+    "metrics:",
+    kv("gate_executions", total, 2),
+    kv("verify_runs", runList.length, 2),
+    kv("first_pass_rate_pct", pct(cleanRuns, runList.length), 2),
+    kv("gate_pass_rate_pct", pct(passed, total), 2),
+    kv("window", `${rows[0].at} → ${rows[rows.length - 1].at}`, 2),
+    ...toonTable("per_check", perCheck, ["check", "runs", "failures", "caught_pct", "p50_s", "p95_s"]),
+  ];
+  const help = [];
+  if (neverFailed.length)
+    help.push(
+      `Never failed in ${neverFailed[0].runs}+ runs: ${neverFailed.map((c) => c.check).join(", ")} — confirm each CAN fail (a gate with no failing fixture is a claim, not a check)`
+    );
+  help.push("Run `brain verify --stage verify` to add rows");
+  print([...lines, ...toonList("help", help)]);
+}
+
 function buildVerifyReportLines(results) {
   const lines = [
     ...toonTable(
@@ -1029,6 +1185,16 @@ function cmdVerify(argv) {
   const results = selected.map((check) => runVerifyCheck(check, repoRoot));
   const failing = results.filter((r) => r.status !== "pass");
 
+  // Persist one row per gate execution. Everything needed already existed and
+  // was thrown away: without it nobody can answer "do these gates catch
+  // anything, and how often do we pass first try?" — which is the difference
+  // between a harness that is intact and one that is working.
+  recordGateRuns(brain, {
+    stage: flags.only ? `only:${flags.only}` : stage,
+    feature: feat ? feat.slug : null,
+    results,
+  });
+
   const reportLines = buildVerifyReportLines(results);
   const lines = [...reportLines];
   lines.push(kv("summary", `${results.length - failing.length}/${results.length} pass`));
@@ -1129,6 +1295,14 @@ function cmdShip(argv) {
 
   feat.status = "shipped";
   feat.evidence = flags.evidence;
+
+  // Shipping touches TWO files (feature_list.json + runs/progress.md). Each
+  // write is atomic on its own, but the pair was not: a failure on the second
+  // left a feature marked shipped with no checkpoint recording it. Snapshot the
+  // first file's bytes and restore them if the second throws, so the pair is
+  // all-or-nothing.
+  const flPath = featureListPath(brain);
+  const flBefore = fs.existsSync(flPath) ? fs.readFileSync(flPath) : null;
   saveFeatureList(brain, list);
 
   const lines = ["ship:", kv("slug", feat.slug, 2), kv("previous", previous, 2), kv("status", "shipped", 2)];
@@ -1137,7 +1311,18 @@ function cmdShip(argv) {
   if (shots.length === 0) lines.push(`warning: ${feat.slug} has zero screenshots — evidence is unverified visually`);
 
   const evidenceCapped = flags.evidence.length > 120 ? flags.evidence.slice(0, 120) : flags.evidence;
-  const checkpointResult = appendProgressEntry(brain, { summary: `shipped ${feat.slug}: ${evidenceCapped}` });
+  let checkpointResult;
+  try {
+    checkpointResult = appendProgressEntry(brain, { summary: `shipped ${feat.slug}: ${evidenceCapped}` });
+  } catch (e) {
+    if (flBefore !== null) writeFileAtomic(flPath, flBefore);
+    opError(`checkpoint failed, ship rolled back: ${e.message}`, [
+      `${feat.slug} is still "${previous}" — feature_list.json was restored`,
+      `Fix runs/progress.md, then re-run \`brain ship ${feat.slug} --evidence "..."\``,
+    ]);
+  }
+  // A MISSING progress.md is not a write failure — appendProgressEntry returns
+  // null by design so a brain without a cursor still ships. Warn, don't roll back.
   if (checkpointResult) lines.push(kv("checkpoint", `shipped ${feat.slug}: ${evidenceCapped}`, 2));
   else lines.push("warning: runs/progress.md not found — checkpoint not recorded");
 
@@ -3242,12 +3427,111 @@ function promptYesNo(question) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// init --state-only — the clone case
+//
+// A repo cloned from a template inherits the TEMPLATE's `.brain`: its features,
+// its rolling cursor, its run notes, its screenshots. Bare `brain init` refuses
+// (correctly — it must never clobber), so there was no supported way to start
+// clean, and every clone was born believing it had shipped another project's
+// features. That is context drift installed as a default.
+//
+// The split is by subsystem, not by age: STATE is another project's history and
+// must go; DOCS describe the stack the clone inherits along with the code, so
+// they stay. Nothing is archived — the template's git history already has it.
+// ---------------------------------------------------------------------------
+
+const STATE_ONLY_WIPE = ["features", "runs", "plans", "screenshots", "evals"];
+const STATE_ONLY_KEEP = [
+  "rules",
+  "recipes",
+  "codebase",
+  "high-level-architecture",
+  "transcripts",
+  "emails",
+  "HARNESS.md",
+  "verify.json",
+  "CHANGELOG.md",
+];
+
+function initStateOnly(flags) {
+  if (flags.brain !== undefined)
+    usageError("--brain is not meaningful for `init --state-only` — pass --dir <repo root>", [
+      "brain init --state-only --dir <repo-root> --yes",
+    ]);
+  const root = path.resolve(flags.dir || ".");
+  const brainDir = path.join(root, ".brain");
+  if (!fs.existsSync(brainDir))
+    opError(`no ${path.relative(process.cwd(), brainDir)} to reset`, [
+      "Run `brain init` to scaffold a new harness instead",
+    ]);
+
+  // Destructive and irreversible in the working tree — require an explicit
+  // acknowledgement when nobody is watching.
+  if (!flags.yes && !process.stdin.isTTY)
+    opError("refusing to wipe brain state non-interactively without --yes", [
+      `brain init --state-only --dir ${path.relative(process.cwd(), root) || "."} --yes`,
+      `It deletes ${STATE_ONLY_WIPE.join(", ")} under .brain/ and keeps ${STATE_ONLY_KEEP.slice(0, 4).join(", ")}, …`,
+    ]);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const branch = resolveBranch(brainDir, undefined);
+  const removed = [];
+  const kept = [];
+
+  for (const name of STATE_ONLY_WIPE) {
+    const target = path.join(brainDir, name);
+    if (!fs.existsSync(target)) continue;
+    fs.rmSync(target, { recursive: true, force: true });
+    removed.push(name);
+  }
+  for (const name of STATE_ONLY_KEEP) {
+    if (fs.existsSync(path.join(brainDir, name))) kept.push(name);
+  }
+
+  // Re-scaffold the state subsystem only, reusing the same templates `init` uses
+  // so a reset brain and a fresh one are byte-identical in shape.
+  const created = [];
+  writeInitFile(created, root, featureListPath(brainDir), initFeatureListJson(today));
+  writeInitFile(created, root, path.join(brainDir, "runs", "progress.md"), initProgressMd(today, branch));
+
+  const checks = brainCheck(brainDir);
+  const failed = checks.filter((c) => c.status === "fail");
+
+  const lines = [
+    "init:",
+    kv("mode", "state-only", 2),
+    kv("brain", path.relative(process.cwd(), brainDir) || ".brain", 2),
+    ...toonList("removed", removed.length ? removed : ["(nothing — state was already empty)"], 2),
+    ...toonList("kept", kept.length ? kept : ["(no doc sections found)"], 2),
+    ...toonList("created", created, 2),
+  ];
+  if (failed.length) lines.push(...toonTable("checks", failed, ["check", "status", "detail"]));
+  print([
+    ...lines,
+    ...toonList(
+      "help",
+      failed.length
+        ? [`${failed.length} check(s) failing after reset — run \`brain check\` for the full table`]
+        : [
+            "Brain state is clean — run `brain` for the dashboard",
+            "Fill in the kept doc sections for THIS project, then `brain playbook start` on the first task",
+          ]
+    ),
+  ]);
+  if (failed.length) process.exit(1);
+}
+
 function cmdInit(argv) {
   const spec = {
     "--dir": { value: true, desc: "target root directory to scaffold .brain into (default: cwd)" },
     "--agents-md": { value: false, desc: "write an AGENTS.md pointer + CLAUDE.md symlink" },
     "--no-agents-md": { value: false, desc: "skip the AGENTS.md pointer (default when non-interactive)" },
     "--yes": { value: false, desc: "accept defaults non-interactively (skips the AGENTS.md prompt)" },
+    "--state-only": {
+      value: false,
+      desc: "reset an EXISTING .brain's state (features/, runs/, plans/) but keep its docs — for a repo cloned from a template",
+    },
   };
   const { flags } = parseArgs(argv, spec, "init");
   if (flags.help)
@@ -3255,8 +3539,14 @@ function cmdInit(argv) {
       "init",
       "Scaffold a minimal .brain skeleton (5-subsystem harness stub) into a repo",
       spec,
-      ["brain init", "brain init --dir ./my-repo", "brain init --agents-md", "brain init --yes"]
+      [
+        "brain init",
+        "brain init --dir ./my-repo",
+        "brain init --agents-md",
+        "brain init --state-only --yes",
+      ]
     );
+  if (flags["state-only"]) return initStateOnly(flags);
   if (flags.brain !== undefined)
     usageError("--brain is not meaningful for `init` — this command CREATES a .brain, it doesn't read one", [
       "brain init [--dir <path>]  (defaults to scaffolding .brain in the current directory)",
@@ -3596,7 +3886,17 @@ Run \`brain playbook\` for the live id/use_when index; \`brain playbook <id>\` f
 - \`brain progress add --summary "..." --next "..."\` — append a session checkpoint
 - \`brain features set-status <slug> --status <planned|in-progress|shipped|blocked|cut>\` — flip feature state (enforces one-in-progress policy; \`--status shipped\` requires \`--evidence\` **and passes the same preflight as \`brain ship\` — it refuses and writes nothing if any check would fail**. Transitions *out* of a state are never gated, so a broken record stays repairable)
 - \`brain check\` — deterministic harness invariants (feature-list **schema** validity — duplicate ids/slugs, unknown status, shipped-without-evidence all fail — one-in-progress per declared policy, doc paths, dependency refs, \`features/index.md\` agreeing with the tracker, plan/review file integrity, verification docs having a **readable** verdict with resolvable image links, verify.json shape when present); exit 1 on any failure, CI-usable
-- \`brain check --strict\` — adds: every \`shipped\` feature must have a verification doc whose verdict parses to PASS. Opt-in here so brains predating the invariant do not go red on upgrade; \`brain ship\` and \`set-status --status shipped\` **always** enforce it, since shipping is the moment the claim is made
+- \`brain check --strict\` — adds two: every \`shipped\` feature must have a verification doc whose verdict parses to PASS, **and** that doc must carry a \`brain:verification\` receipt naming a commit that is an ancestor of HEAD. Opt-in here so brains predating the invariants do not go red on upgrade; \`brain ship\` and \`set-status --status shipped\` **always** enforce both, since shipping is the moment the claim is made
+- **Verification receipts** — a verdict with no commit is unfalsifiable (the doc is mutable and date-named, so "it passed" could describe any tree that ever existed). Put this block in every verification doc; it renders as nothing:
+  \`\`\`
+  <!-- brain:verification
+  commit: <short sha, e.g. \`git rev-parse --short HEAD\`>
+  verified_by: feature-verifier
+  commands: bun run test (exit 0); bun run typecheck (exit 0)
+  -->
+  \`\`\`
+- \`brain metrics [--limit N]\` — gate effectiveness over \`runs/gates.jsonl\` (written by every \`brain verify\`): first-pass rate, per-check failure counts, p50/p95 duration. It also names any check that has never failed in 3+ runs — a gate with no failing fixture is a claim, not a check. Without this the harness can only prove it is *intact*, never that it *works*
+- \`brain init --state-only --dir <repo> --yes\` — for a repo CLONED from a template: wipes inherited state (\`features/\`, \`runs/\`, \`plans/\`, \`screenshots/\`, \`evals/\`) and keeps the docs (\`rules/\`, \`recipes/\`, \`codebase/\`, \`high-level-architecture/\`, \`HARNESS.md\`, \`verify.json\`) — the clone inherits the stack along with the code, but not another project's history. Bare \`brain init\` still refuses a non-empty \`.brain\`
 - \`brain\` (home) shows an open \`sessions[...]\` table whenever a review session isn't ended yet
 
 ## Verify — run declared project checks (\`.brain/verify.json\`)
@@ -3893,6 +4193,7 @@ const COMMANDS = {
   playbook: cmdPlaybook,
   check: cmdCheck,
   verify: cmdVerify,
+  metrics: cmdMetrics,
   ship: cmdShip,
   watch: cmdWatch,
   pr: cmdPr,
