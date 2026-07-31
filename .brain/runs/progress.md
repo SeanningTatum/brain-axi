@@ -21,6 +21,14 @@
 
 ---
 
+## 2026-07-31 — Six adversarial audit rounds complete. Score arc 4 -> 5 -> 6 -> 7 -> 7 -> 6.5 -> 7.0/7.0 (CLI/template). brain-axi: 186 assertions, strict exits 0 via the grandfather ratchet, receipts hex-only, raw HTML banned in verification docs, post-write checks symmetric and diffed before/after. Template: 25 checker fixtures, AST gate scoped to the mapper subtree, tests must assert, harness-check 11/11 with strict as a real gate. Trust boundary documented in rules/state.md.
+- branch: `feat/state-integrity`
+- in-progress feature: none
+- run note: none
+- next: STOP auditing per the reviewer's own recommendation — the remaining ~1.5 points need operational history (eval baselines, gate-catch rates, e2e grown from escaped defects) plus a brain-axi release so the template CI can unpin from v0.1.0.
+
+---
+
 ## 2026-07-31 — state-integrity phase 3 committed (fa8203d): commit-bound receipts (--strict requires the commit to exist AND be an ancestor of HEAD), transactional ship, brain metrics over runs/gates.jsonl, brain init --state-only. 149 assertions. TEMPLATE phase 1 committed (27848b6, feat/harness-gates): .brain/verify.json registry, AST non-negotiables checker with 9 self-test fixtures (replaces the grep sweep, adds the never-gated #4 test-parity), harness-check degraded mode now FAILS, bun setup offers init --state-only, index.md drift fixed, bun pinned.
 - branch: `feat/state-integrity`
 - in-progress feature: none
