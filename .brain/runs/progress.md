@@ -21,6 +21,14 @@
 
 ---
 
+## 2026-07-31 — Harness hardening complete, loop closed. Closing independent score: CLI 8.0 / template 7.5 (from 4.0 baseline). Then fixed the three bypasses that audit found (bogus HTML comments hiding verdicts, nested dead branch inside the mapper, text-regex test-parity) — each proven closed with a live plant. 13 commits across brain-axi (feat/state-integrity) and cf-saas-starter (feat/harness-gates).
+- branch: `feat/state-integrity`
+- in-progress feature: none
+- run note: none
+- next: STOP auditing — reviewer's own call. Highest-value next action: cut a brain-axi release so the template CI can unpin from v0.1.0; that activates the one defense covering the whole documented trust boundary (gates on a machine the agent does not control). Remaining ~1.5 points need operational history.
+
+---
+
 ## 2026-07-31 — Six adversarial audit rounds complete. Score arc 4 -> 5 -> 6 -> 7 -> 7 -> 6.5 -> 7.0/7.0 (CLI/template). brain-axi: 186 assertions, strict exits 0 via the grandfather ratchet, receipts hex-only, raw HTML banned in verification docs, post-write checks symmetric and diffed before/after. Template: 25 checker fixtures, AST gate scoped to the mapper subtree, tests must assert, harness-check 11/11 with strict as a real gate. Trust boundary documented in rules/state.md.
 - branch: `feat/state-integrity`
 - in-progress feature: none

@@ -67,12 +67,41 @@ both depend on it. It must never import from `lib/review/`.
 | Verification docs contain **no raw HTML** except the receipt | Chasing HTML constructs one at a time is unwinnable — a verdict in `<details>` renders collapsed, in `<div>` renders as literal asterisks. Removing the ambiguity beats parsing it |
 | Every entry on `strict_grandfathered` is a known, already-shipped feature | Otherwise the exemption key is an off switch: new work could ship unverified by listing itself |
 
-## Strict has two scopes, and mixing them up breaks the gate
+## Scope is the difference between an audit and a gate
 
 | Caller | Scope | Why |
 |---|---|---|
-| `brain check --strict` | **Whole brain** — an audit | Report every unproven shipped feature so the debt is visible |
-| `brain ship`, `set-status --status shipped` | **`strictScope: <slug>`** — the feature being shipped | A gate, not an audit |
+| `brain check [--strict]` | **Whole brain** — an audit | Report every problem so the debt is visible |
+| `brain ship`, `set-status --status shipped` | **`scope: <slug>`** — the feature being shipped | A gate, not an audit |
+
+`scope` narrows **every per-feature row**: doc paths, dependency refs, verdict
+readability, the raw-HTML ban, image links, and plans. It started life as
+`strictScope`, covering only the two strict rows — which left the other seven
+free to deadlock the gate exactly the way strict once did. One stray `<div>` in
+some *other* feature's legacy verification doc, one moved screenshot, or one
+malformed `plans/*/meta.json` refused **every** future ship in the repo, with a
+message naming a file the shipper never touched. Fixing the strict rows and
+leaving the rest was the same "hardened one path, moved the hole" mistake three
+times over. `strictScope` is still accepted as a read-compat alias.
+
+It is deliberately **not** a before/after diff of failing checks. "Did this
+write make it worse?" is the right question for a *repair* path (`set-status`
+de-escalation, which is why `newFailuresAfter` exists) and the wrong one for a
+ship: a dangling dependency on the feature being shipped is both pre-existing
+and disqualifying. The gate asks "is THIS feature fit to ship?".
+
+## A gate over the empty set is not a pass
+
+Once every shipped feature sits on `policy.strict_grandfathered`, the strict
+rows evaluate nothing. They used to report `pass` with detail
+`0 shipped feature(s) proven` — a green tick over the empty set, printed by the
+very commit that promoted strict "from advisory to a gate", and echoed by the
+template's `harness-check.sh` as `✓ brain check --strict passed`.
+
+They now report **`skip`** with the outstanding debt in the detail. `skip` keeps
+the exit code 0 — the debt is acknowledged, not failing — while making the
+zero-coverage impossible to mistake for proof. Consumers must treat `skip` as
+neither pass nor fail (`chrome.js`, `dashboard.js`).
 
 The ship path shipped once with whole-brain scope, and it made the gate unusable
 in both repos that own it: a single legacy feature predating the invariant refused
@@ -97,13 +126,25 @@ unconditionally.
 ## Verify
 
 ```bash
-node scripts/check-state-invariants.mjs      # 186 assertions — schema, verdict, atomic write, brainCheck, ship
+node scripts/check-state-invariants.mjs      # 220 assertions — schema, verdict, atomic write, brainCheck, ship, scope
 node bin/brain.js verify --stage baseline    # runs the above plus skill-sync, harness, playbook-refs
 node bin/brain.js check --brain .brain --strict   # adds shipped ⇒ PASS
 ```
 
 Every case in that script is a shape that used to pass silently. Adding an invariant means adding
 its synthetic case there — a validator with no failing fixture is a claim, not a check.
+
+**And the fixture must discriminate.** That line was written in the same branch
+that shipped nine rows with no fixture at all, plus four "atomic write"
+assertions that pass verbatim against a plain `fs.writeFileSync` — they
+described `writeFileSync`'s contract while the doc advertised them as proving
+atomicity. The test for a new fixture is a **mutation**: break the thing it
+names and watch it go red. The atomic-write section now asserts the two
+properties that actually separate `rename(2)` from a truncating write — the
+inode changes, and a reader holding the file open across the write still sees
+the whole old file. (Mode preservation is asserted too, but note honestly that
+it does *not* discriminate against `writeFileSync`, which also preserves mode on
+an existing file; it guards a broken atomic implementation, not a naive one.)
 
 ## The trust boundary — what these gates do NOT protect against
 

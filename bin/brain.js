@@ -17,6 +17,7 @@ import {
   addShot,
   timeline as brainTimeline,
   listVerifications,
+  buildFeaturesTable,
   getVerification,
   appendRunStep,
   brainCheck,
@@ -516,22 +517,6 @@ function cmdHome(argv) {
 const FEATURES_TABLE_OPEN = "<!-- brain:features-table -->";
 const FEATURES_TABLE_CLOSE = "<!-- /brain:features-table -->";
 
-function buildFeaturesTable(brain, list) {
-  const rows = list.features.map((f) => {
-    const docs = listVerifications(brain, f.slug);
-    const latest = docs[0];
-    const mark = latest
-      ? `[${latest.date} ${latest.verdict}](${f.slug}/verifications/${latest.date}.md)`
-      : "—";
-    return `| ${f.name} | [\`${f.slug}/${f.slug}.md\`](${f.slug}/${f.slug}.md) | ${f.status} | ${mark} |`;
-  });
-  return [
-    "| Feature | Memo | Status | Latest verification |",
-    "|---------|------|--------|---------------------|",
-    ...rows,
-  ].join("\n");
-}
-
 // Rewrite the generated table in place. Returns "written" | "unchanged" |
 // "no-markers" | "missing" — never throws, because a ship must not fail on a
 // derived doc.
@@ -830,14 +815,16 @@ function cmdFeaturesSetStatus(argv) {
     };
     // strict: shipping is the moment the claim is made, so proof is required
     // here even though ambient `brain check` leaves it opt-in.
-    const checks = brainCheck(brain, { list: projected, strict: true, strictScope: feat.slug });
+    // Scoped to this feature — see the note in cmdShip. Unrelated brain debt
+    // must not refuse a ship.
+    const checks = brainCheck(brain, { list: projected, strict: true, scope: feat.slug });
     const failed = checks.filter((c) => c.status === "fail");
     if (failed.length) {
       print([
         `feature: refused — ${failed.length} harness check(s) would fail`,
         kv("slug", feat.slug, 2),
         kv("status", `${previous} (unchanged — nothing was written)`, 2),
-        ...toonTable("checks", checks, ["check", "status", "detail"]),
+        ...toonTable("checks", failed, ["check", "status", "detail"]),
         ...toonList("help", [
           `Fix the failing detail(s) above, then re-run \`brain features set-status ${feat.slug} --status shipped --evidence "..."\``,
           `\`brain ship ${feat.slug} --evidence "..."\` applies the same gate and also checkpoints`,
@@ -1568,15 +1555,27 @@ function cmdShip(argv) {
 
   // strict: a ship without a PASS verification is exactly the premature "done"
   // this harness exists to prevent.
-  const checks = brainCheck(brain, { list: projected, strict: true, strictScope: feat.slug });
+  // `scope` makes this a GATE, not an audit: every per-feature row (doc paths,
+  // dependency refs, verdicts, raw HTML, image links, plans) narrows to the
+  // feature being shipped. Unscoped, one stray <div> in some OTHER feature's
+  // legacy verification doc, or one moved screenshot, refused EVERY future ship
+  // — with a message naming a file the shipper never touched. That is the
+  // deadlock `strictScope` already fixed for the two strict rows, left
+  // half-fixed for the other seven.
+  //
+  // Deliberately NOT a before/after diff: a dangling dependency on the feature
+  // being shipped is pre-existing AND disqualifying, so "did this write make it
+  // worse?" is the wrong question here. "Is this feature fit to ship?" is.
+  const checks = brainCheck(brain, { list: projected, strict: true, scope: feat.slug });
   const failed = checks.filter((c) => c.status === "fail");
   if (failed.length) {
     print([
       `ship: refused — ${failed.length} harness check(s) would fail`,
       kv("slug", feat.slug, 2),
       kv("status", `${previous} (unchanged — nothing was written)`, 2),
-      ...toonTable("checks", checks, ["check", "status", "detail"]),
+      ...toonTable("checks", failed, ["check", "status", "detail"]),
       ...toonList("help", [
+        `Every row above concerns ${feat.slug} — unrelated brain debt does not block a ship`,
         `Fix the failing detail(s) above, then re-run \`brain ship ${feat.slug} --evidence "..."\``,
         "Run `brain check` to re-verify without attempting the ship",
       ]),

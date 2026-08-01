@@ -20,6 +20,14 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history. `brain check --strict` verifies that a verification
+          # receipt's commit is an ANCESTOR of HEAD; under the default
+          # fetch-depth: 1 that ancestry walk cannot succeed, so every receipt
+          # would read "not an ancestor" in CI and "ancestor" locally. Latent
+          # today only because no receipt is evaluated yet — it bites the first
+          # time a non-grandfathered feature ships.
+          fetch-depth: 0
 
       # Pinned, not `latest`: gate behavior has to be reproducible across PRs,
       # or a red run cannot be attributed to the diff.
@@ -31,7 +39,16 @@ jobs:
       - name: Confirm zero-dependency invariant
         run: |
           set -euo pipefail
-          if node -e "const p=require('./package.json');process.exit((p.dependencies||p.devDependencies)?1:0)"; then
+          # Count KEYS, not truthiness. `(p.dependencies||p.devDependencies)` is
+          # truthy on `{}`, so the ordinary `npm i -D x && npm uninstall x`
+          # round-trip — which leaves `"devDependencies": {}` behind — failed
+          # this gate while claiming dependencies had been declared.
+          if node -e "
+            const p = require('./package.json');
+            const declared = ['dependencies','devDependencies','peerDependencies','optionalDependencies']
+              .flatMap((k) => Object.keys(p[k] || {}));
+            if (declared.length) { console.error('declared: ' + declared.join(', ')); process.exit(1); }
+          "; then
             echo "zero-dep invariant holds"
           else
             echo "package.json declared dependencies — the CLI is zero-dep (see .brain/rules/cli-commands.md)"
