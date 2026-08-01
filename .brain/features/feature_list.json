@@ -1,9 +1,16 @@
 {
   "$schema": "Machine-readable feature state tracker. Source of truth for status; per-feature MD docs are source of truth for design/runtime.",
-  "updated": "2026-07-30",
+  "updated": "2026-07-31",
   "policy": {
     "one_in_progress_at_a_time": true,
-    "definition_of_done": "implementation complete + verify-done passed (CLI invoked against .brain, exit codes + TOON eyeballed, stderr diagnostics-only) + feature MD updated + brain skill --check green + brain coherent"
+    "definition_of_done": "implementation complete + verify-done passed (CLI invoked against .brain, exit codes + TOON eyeballed, stderr diagnostics-only) + feature MD updated + brain skill --check green + brain coherent",
+    "strict_grandfathered": [
+      "core-cli",
+      "harness-mode",
+      "brain-review",
+      "shot-review",
+      "planning-ux"
+    ]
   },
   "features": [
     {
@@ -21,7 +28,7 @@
     },
     {
       "id": "feat-002",
-      "name": "brain review — interactive plan review surface",
+      "name": "brain review \u2014 interactive plan review surface",
       "slug": "brain-review",
       "doc": ".brain/features/brain-review/brain-review.md",
       "description": "Localhost HTTP server + browser chrome + injected artifact SDK. Agent writes an HTML plan, opens a review session, long-polls for annotations/feedback, applies edits, loops. Plans/reviews/screenshots/verifications persist into .brain. Includes execution mode (runs append, check, ship).",
@@ -36,7 +43,7 @@
     },
     {
       "id": "feat-003",
-      "name": "shot-review — screenshot carousel + annotation",
+      "name": "shot-review \u2014 screenshot carousel + annotation",
       "slug": "shot-review",
       "doc": ".brain/features/shot-review/shot-review.md",
       "description": "In-page lightbox carousel for screenshots on both review surfaces (/watch dashboard + review chrome exec sidebar) replacing one-tab-per-image, plus pin-and-note annotation on screenshots that flows back to the agent for the next review round.",
@@ -44,17 +51,17 @@
         "brain-review"
       ],
       "status": "shipped",
-      "evidence": "Verification PASS 2026-07-17 (features/shot-review/verifications/2026-07-17.md): Playwright walk of /watch/shot-review — lightbox opens in-page (pages() count asserted), arrow nav + filmstrip + counter, pin annotation POST 200 visible via shots notes (open, 39.9%,69.9%), Esc close, re-capture flips to superseded; E1 server-down shows inline error with note preserved. Zero jsErrors on golden path. skill --check + brain check green.",
+      "evidence": "Verification PASS 2026-07-17 (features/shot-review/verifications/2026-07-17.md): Playwright walk of /watch/shot-review \u2014 lightbox opens in-page (pages() count asserted), arrow nav + filmstrip + counter, pin annotation POST 200 visible via shots notes (open, 39.9%,69.9%), Esc close, re-capture flips to superseded; E1 server-down shows inline error with note preserved. Zero jsErrors on golden path. skill --check + brain check green.",
       "owners": [
         "sean"
       ]
     },
     {
       "id": "feat-004",
-      "name": "annotation-watch — post-ship feedback runner",
+      "name": "annotation-watch \u2014 post-ship feedback runner",
       "slug": "annotation-watch",
       "doc": ".brain/features/annotation-watch/annotation-watch.md",
-      "description": "Blocking `brain shots poll <feature>` runner the agent starts when a feature reaches shipped/PR state: waits for new reviewer pin-annotations from the /watch carousel and returns them TOON-formatted, closing the annotate→agent loop like review poll does for plans. Dashboard CTA reflects a live watcher.",
+      "description": "Blocking `brain shots poll <feature>` runner the agent starts when a feature reaches shipped/PR state: waits for new reviewer pin-annotations from the /watch carousel and returns them TOON-formatted, closing the annotate\u2192agent loop like review poll does for plans. Dashboard CTA reflects a live watcher.",
       "dependencies": [
         "shot-review"
       ],
@@ -66,7 +73,7 @@
     },
     {
       "id": "feat-005",
-      "name": "harness-mode — AGENTS.md parity (verify runner + bookend playbooks + init)",
+      "name": "harness-mode \u2014 AGENTS.md parity (verify runner + bookend playbooks + init)",
       "slug": "harness-mode",
       "doc": ".brain/features/harness-mode/harness-mode.md",
       "description": "Makes brain-axi a full 5-subsystem harness: `brain verify` runs a declared check registry (.brain/verify.json, stages bootstrap/baseline/verify) replacing bespoke init.sh + verify scripts; `start`/`done` bookend playbooks; `brain init` scaffolds a minimal .brain skeleton with optional AGENTS.md pointer. setup --commands generation deferred per plan harness-parity D0.",
@@ -81,7 +88,7 @@
     },
     {
       "id": "feat-006",
-      "name": "ai-work — AI-aware harness (evals, golden sets, prompt review)",
+      "name": "ai-work \u2014 AI-aware harness (evals, golden sets, prompt review)",
       "slug": "ai-work",
       "doc": ".brain/features/ai-work/ai-work.md",
       "description": "Makes the harness inclusive of AI work: a standing `ai` playbook (prompt contract, golden sets, eval design, pipelines/guardrails, agent topology, human loop, anti-patterns) plus AI branches in plan/start/execute/done; then an evals subsystem (.brain/evals suites, brain evals verbs, opt-in evals verify stage with frozen-case regression gate), eval review UI, prompt registry, and agent topology state. Per plan ai-work-harness (2026-07-28, reviewed 2 rounds).",
@@ -89,25 +96,42 @@
         "core-cli",
         "harness-mode"
       ],
-      "status": "in-progress",
-      "evidence": "",
+      "status": "blocked",
+      "evidence": "Blocked 2026-07-31 to free the one-in-progress slot for state-integrity (harness-hardening plan, 2026-07-31). ai-work itself is unblocked work \u2014 the evals subsystem it shipped is a dependency of state-integrity's Phase 2 eval suite. Resume by flipping back to in-progress once state-integrity ships.",
       "owners": [
         "sean"
       ]
     },
     {
       "id": "feat-007",
-      "name": "planning-ux — product-grade planning (mockups, UX flows, product playbook)",
+      "name": "planning-ux \u2014 product-grade planning (mockups, UX flows, product playbook)",
       "slug": "planning-ux",
       "doc": ".brain/features/planning-ux/planning-ux.md",
-      "description": "Adds two standing playbooks — `product` (problem/evidence, user + JTBD, success metric, non-goals, scope tiers, prior art, recommendation-with-rationale) and `ux` (wireframe CSS kit, screen inventory, screen-state matrix, user-journey flow, variant decision cards) — plus conditional branches in plan/start/done, skill regeneration, rules doc, and skill-coverage eval cases. Phase 4 (gated): approved mockup persisted as verify evidence. Per plan product-planning-mockups (2026-07-30, approved round 1, all 6 decisions at recommended).",
+      "description": "Adds two standing playbooks \u2014 `product` (problem/evidence, user + JTBD, success metric, non-goals, scope tiers, prior art, recommendation-with-rationale) and `ux` (wireframe CSS kit, screen inventory, screen-state matrix, user-journey flow, variant decision cards) \u2014 plus conditional branches in plan/start/done, skill regeneration, rules doc, and skill-coverage eval cases. Phase 4 (gated): approved mockup persisted as verify evidence. Per plan product-planning-mockups (2026-07-30, approved round 1, all 6 decisions at recommended).",
       "dependencies": [
         "core-cli",
         "brain-review",
         "ai-work"
       ],
       "status": "shipped",
-      "evidence": "Verification PASS 2026-07-30 (features/planning-ux/verifications/2026-07-30.md): browser walk of the reconciled planning UI — wireframes render, annotate + decision round-trip, E1 offline mermaid fallback, E2 offline queue; 4 screenshots captured. PR #13 squash-merged to main 2026-07-30 (523c55c). verify 3/3 pass (skill-sync, harness, playbook-refs).",
+      "evidence": "Verification PASS 2026-07-30 (features/planning-ux/verifications/2026-07-30.md): browser walk of the reconciled planning UI \u2014 wireframes render, annotate + decision round-trip, E1 offline mermaid fallback, E2 offline queue; 4 screenshots captured. PR #13 squash-merged to main 2026-07-30 (523c55c). verify 3/3 pass (skill-sync, harness, playbook-refs).",
+      "owners": [
+        "sean"
+      ]
+    },
+    {
+      "id": "feat-008",
+      "name": "state-integrity \u2014 enforceable state, commit-bound evidence, gate telemetry",
+      "slug": "state-integrity",
+      "doc": ".brain/features/state-integrity/state-integrity.md",
+      "description": "Make the state layer enforce its own invariants: strict feature-list schema in brain check (today the first check only asserts valid JSON), preflight-then-commit ship with atomic writes (today it writes at bin/brain.js:1025+:1033 then validates at :1037 without rollback), one verdict parser (today parseVerdict decides by emoji substring so `**Verdict**: PASS` reads as unknown while brainCheck passes it), commit-bound verification evidence reusing gitCommit(), shipped-requires-PASS behind --strict, init --state-only for template clones, brain metrics over a gates.jsonl written by brain verify, and a generated features/index.md. Prerequisite 1.0 gives the CLI its first automated verification (scripts/check-state-invariants.mjs + first CI) since the repo has zero tests by policy. Per plan harness-hardening (2026-07-31).",
+      "dependencies": [
+        "core-cli",
+        "brain-review",
+        "ai-work"
+      ],
+      "status": "in-progress",
+      "evidence": "",
       "owners": [
         "sean"
       ]

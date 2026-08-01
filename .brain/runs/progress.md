@@ -21,6 +21,54 @@
 
 ---
 
+## 2026-07-31 — Harness hardening complete, loop closed. Closing independent score: CLI 8.0 / template 7.5 (from 4.0 baseline). Then fixed the three bypasses that audit found (bogus HTML comments hiding verdicts, nested dead branch inside the mapper, text-regex test-parity) — each proven closed with a live plant. 13 commits across brain-axi (feat/state-integrity) and cf-saas-starter (feat/harness-gates).
+- branch: `feat/state-integrity`
+- in-progress feature: none
+- run note: none
+- next: STOP auditing — reviewer's own call. Highest-value next action: cut a brain-axi release so the template CI can unpin from v0.1.0; that activates the one defense covering the whole documented trust boundary (gates on a machine the agent does not control). Remaining ~1.5 points need operational history.
+
+---
+
+## 2026-07-31 — Six adversarial audit rounds complete. Score arc 4 -> 5 -> 6 -> 7 -> 7 -> 6.5 -> 7.0/7.0 (CLI/template). brain-axi: 186 assertions, strict exits 0 via the grandfather ratchet, receipts hex-only, raw HTML banned in verification docs, post-write checks symmetric and diffed before/after. Template: 25 checker fixtures, AST gate scoped to the mapper subtree, tests must assert, harness-check 11/11 with strict as a real gate. Trust boundary documented in rules/state.md.
+- branch: `feat/state-integrity`
+- in-progress feature: none
+- run note: none
+- next: STOP auditing per the reviewer's own recommendation — the remaining ~1.5 points need operational history (eval baselines, gate-catch rates, e2e grown from escaped defects) plus a brain-axi release so the template CI can unpin from v0.1.0.
+
+---
+
+## 2026-07-31 — state-integrity phase 3 committed (fa8203d): commit-bound receipts (--strict requires the commit to exist AND be an ancestor of HEAD), transactional ship, brain metrics over runs/gates.jsonl, brain init --state-only. 149 assertions. TEMPLATE phase 1 committed (27848b6, feat/harness-gates): .brain/verify.json registry, AST non-negotiables checker with 9 self-test fixtures (replaces the grep sweep, adds the never-gated #4 test-parity), harness-check degraded mode now FAILS, bun setup offers init --state-only, index.md drift fixed, bun pinned.
+- branch: `feat/state-integrity`
+- in-progress feature: none
+- run note: none
+- next: Third independent score in flight. Remaining: generated index, critical-flow e2e, eval suites, and bumping the template's brain-axi pin after a release.
+
+---
+
+## 2026-07-31 — state-integrity phase 1 committed (96db869, feat/state-integrity): lib/state.js + strict schema + one hardened verdict parser + preflight ship AND set-status + index-drift check + fsync atomic writes + 107-assertion test script + first CI. Codex re-score 4 -> 5 (working tree), its P0 set-status bypass + 6 P1s then fixed; third score pending.
+- branch: `feat/state-integrity`
+- in-progress feature: none
+- run note: none
+- next: Await third score. Then: shipped-requires-PASS behind --strict, commit-bound receipts, init --state-only, brain metrics, then template Phase 2.
+
+---
+
+## 2026-07-31 — state-integrity (feat-008) opened; ai-work blocked to free the slot. Harness audit (5/10, Codex-cross-checked over CLI source) -> plan artifact plans/2026-07-31-harness-hardening.html reviewed via brain review round 1: all 4 decisions at recommended (GitHub Actions CI, eval kind=judge, model=claude-opus-5, global runs/gates.jsonl). Baseline: brain check 13/13, verify 3/3.
+- branch: `feat/launch-readiness`
+- in-progress feature: none
+- run note: none
+- next: Phase 1.0 — scripts/check-state-invariants.mjs + verify.json row + first CI workflow, then lib/state.js
+
+---
+
+## 2026-07-30 — PR #17 (feat/launch-readiness): launch-readiness phase 1 only — LICENSE (repo license was null while package.json claimed MIT) + files allowlist + 0.2.0 + repository/homepage/bugs/keywords, plus 3 previously-untracked plan artifacts and their .brain/plans records. Phase 2 positioning copy deliberately HELD BACK: it advertises no-.brain review, which is false (server.js:778-784 hard-404s; ~10 session.brain reads downstream), and the headline is still open in the lavish comparison review. Held diff saved as a patch. verify 3/3, check 13/13, skill --check clean, npm pack 16 files/186.3kB.
+- branch: `feat/launch-readiness`
+- in-progress feature: none
+- run note: none
+- next: Resolve the 3 decision cards in plans/2026-07-30-honest-review-vs-lavish.html (headline positioning vs lavish-axi, compete-vs-interoperate, engineering floor), then phase 2 copy + phase 3 null-brain review
+
+---
+
 ## 2026-07-30 — shipped planning-ux: Verification PASS 2026-07-30 (features/planning-ux/verifications/2026-07-30.md): browser walk of the reconciled planning
 - branch: `chore/ship-planning-ux`
 - in-progress feature: none

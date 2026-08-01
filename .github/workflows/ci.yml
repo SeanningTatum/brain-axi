@@ -1,0 +1,59 @@
+name: CI
+
+# The repo's own gates, run on every PR. `brain verify --stage baseline` is the
+# single entry point on purpose: the check registry lives in .brain/verify.json,
+# so adding a gate is a data change, not a workflow change.
+#
+# Before this existed, `brain skill --check` was described as "intended for CI"
+# in four places and nothing ran it — every invariant depended on a human or an
+# agent remembering to.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    name: brain verify --stage baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history. `brain check --strict` verifies that a verification
+          # receipt's commit is an ANCESTOR of HEAD; under the default
+          # fetch-depth: 1 that ancestry walk cannot succeed, so every receipt
+          # would read "not an ancestor" in CI and "ancestor" locally. Latent
+          # today only because no receipt is evaluated yet — it bites the first
+          # time a non-grandfathered feature ships.
+          fetch-depth: 0
+
+      # Pinned, not `latest`: gate behavior has to be reproducible across PRs,
+      # or a red run cannot be attributed to the diff.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.14.0"
+
+      # Zero dependencies by design (package.json declares none) — nothing to install.
+      - name: Confirm zero-dependency invariant
+        run: |
+          set -euo pipefail
+          # Count KEYS, not truthiness. `(p.dependencies||p.devDependencies)` is
+          # truthy on `{}`, so the ordinary `npm i -D x && npm uninstall x`
+          # round-trip — which leaves `"devDependencies": {}` behind — failed
+          # this gate while claiming dependencies had been declared.
+          if node -e "
+            const p = require('./package.json');
+            const declared = ['dependencies','devDependencies','peerDependencies','optionalDependencies']
+              .flatMap((k) => Object.keys(p[k] || {}));
+            if (declared.length) { console.error('declared: ' + declared.join(', ')); process.exit(1); }
+          "; then
+            echo "zero-dep invariant holds"
+          else
+            echo "package.json declared dependencies — the CLI is zero-dep (see .brain/rules/cli-commands.md)"
+            exit 1
+          fi
+
+      - name: Run the declared gates
+        run: node bin/brain.js verify --stage baseline

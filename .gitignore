@@ -1,2 +1,5 @@
 .DS_Store
 node_modules/
+
+# Gate telemetry is per-machine run history, not shared state.
+.brain/runs/gates.jsonl

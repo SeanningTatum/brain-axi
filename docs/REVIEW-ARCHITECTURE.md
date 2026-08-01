@@ -532,12 +532,22 @@ bin/brain.js:
 - `brain runs append <feature> --step "..." --observed "..." [--note <name>]` —
   required flags validated; TOON result {file, step}; help nudges `brain shots add`.
 - `brain check` — TOON table; exit 1 if any fail (CI-usable).
-- `brain ship <slug> --evidence "..."` — order: evidence required (usage error if
+- `brain ship <slug> --evidence "..."` — order (**revised 2026-07-31, feat-008
+  state-integrity — preflight-then-commit**): evidence required (usage error if
   missing/empty) → feature must exist and not already shipped (shipped = no-op exit 0)
-  → set status shipped + evidence → screenshot warning (feature has zero screenshots →
-  `warning:` line, not an error) → `brain progress add --summary "shipped <slug>: <evidence capped 120>"`
-  (internal call) → brainCheck; any check failure prints table + exit 1 (status
-  already flipped — say so honestly in output).
+  → **project the next state in memory and run `brainCheck(brain, { list: projected })`
+  BEFORE any write; any failing check prints the table and exits 1 with NOTHING written
+  and the feature's previous status intact** → on pass, write `feature_list.json`
+  atomically via `saveFeatureList` → screenshot warning (feature has zero screenshots →
+  `warning:` line, not an error) → `brain progress add --summary "shipped <slug>:
+  <evidence capped 120>"` (internal call).
+
+  Superseded order, for the record: set status → write → checkpoint → brainCheck →
+  exit 1 with the flip already on disk ("status already flipped — say so honestly in
+  output"). Reporting the failure honestly did not stop later reads from seeing a
+  feature marked shipped on a brain that never passed its checks — that is state
+  degradation with a receipt attached, not an acceptable trade. `brainCheck` gained an
+  optional `opts.list` so a projection can be validated without being written.
 - `features set-status <slug> --status shipped` now REQUIRES --evidence (usage error otherwise).
 - Codex detection: `CODEX_SANDBOX` or `CODEX_THREAD_ID` env present → poll next_step
   strings append: "You appear to be running under Codex: keep this poll attached to

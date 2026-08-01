@@ -55,8 +55,21 @@ Run `brain playbook` for the live id/use_when index; `brain playbook <id>` for t
 ## Record state (end of task / checkpoint)
 
 - `brain progress add --summary "..." --next "..."` — append a session checkpoint
-- `brain features set-status <slug> --status <planned|in-progress|shipped|blocked|cut>` — flip feature state (enforces one-in-progress policy; `--status shipped` requires `--evidence`)
-- `brain check` — deterministic harness invariants (feature list validity, one-in-progress, doc paths, dependency refs, plan/review file integrity, verification docs, verify.json shape when present); exit 1 on any failure, CI-usable
+- `brain features set-status <slug> --status <planned|in-progress|shipped|blocked|cut>` — flip feature state (enforces one-in-progress policy; `--status shipped` requires `--evidence` **and passes the same preflight as `brain ship` — it refuses and writes nothing if any check would fail**. Transitions *out* of a state are never gated, so a broken record stays repairable)
+- `brain check` — deterministic harness invariants (feature-list **schema** validity — duplicate ids/slugs, unknown status, shipped-without-evidence all fail — one-in-progress per declared policy, doc paths, dependency refs, `features/index.md` agreeing with the tracker, plan/review file integrity, verification docs having a **readable** verdict with resolvable image links, verify.json shape when present); exit 1 on any failure, CI-usable
+- `brain features index [--write]` — GENERATE the `features/index.md` status table from `feature_list.json` (bounded by `<!-- brain:features-table -->` markers so surrounding prose survives). Hand-maintaining that mirror is how a tracker and its human-facing index end up disagreeing
+- `brain receipt <feature> [--date <d>] [--verified-by <who>] [--allow-dirty]` — stamp a commit-bound provenance receipt into a verification doc, written BY THE TOOL: HEAD at stamp time plus the actual gate results for that feature from `runs/gates.jsonl`. Refuses on a dirty tree (a receipt naming HEAD while the tree differs describes code in no commit) and refuses to stamp a doc whose verdict is unreadable — a hand-written receipt is a claim about provenance, not provenance
+- `brain check --strict` — adds two: every `shipped` feature must have a verification doc whose verdict parses to PASS, **and** that doc must carry a `brain:verification` receipt naming a commit that is an ancestor of HEAD. Opt-in here so brains predating the invariants do not go red on upgrade; `brain ship` and `set-status --status shipped` **always** enforce both, since shipping is the moment the claim is made
+- **Verification receipts** — a verdict with no commit is unfalsifiable (the doc is mutable and date-named, so "it passed" could describe any tree that ever existed). Put this block in every verification doc; it renders as nothing:
+  ```
+  <!-- brain:verification
+  commit: <short sha, e.g. `git rev-parse --short HEAD`>
+  verified_by: feature-verifier
+  commands: bun run test (exit 0); bun run typecheck (exit 0)
+  -->
+  ```
+- `brain metrics [--limit N]` — gate effectiveness over `runs/gates.jsonl` (written by every `brain verify`): first-pass rate, per-check failure counts, p50/p95 duration. It also names any check that has never failed in 3+ runs — a gate with no failing fixture is a claim, not a check. Without this the harness can only prove it is *intact*, never that it *works*
+- `brain init --state-only --dir <repo> --yes` — for a repo CLONED from a template: wipes inherited state (`features/`, `runs/`, `plans/`, `screenshots/`, `evals/`) and keeps the docs (`rules/`, `recipes/`, `codebase/`, `high-level-architecture/`, `HARNESS.md`, `verify.json`) — the clone inherits the stack along with the code, but not another project's history. Bare `brain init` still refuses a non-empty `.brain`
 - `brain` (home) shows an open `sessions[...]` table whenever a review session isn't ended yet
 
 ## Verify — run declared project checks (`.brain/verify.json`)
@@ -146,9 +159,11 @@ set-status <slug> --status in-progress` → per step `runs append <slug> --step
 "..." --observed "..."` (verbatim command output, not a paraphrase) → `shots add
 --feature <slug> --step NN-name` on every visual test, pass AND fail → a
 verification doc per `playbook verify` → `brain ship <slug> --evidence "..."`
-(requires evidence; no-ops if already shipped; warns — does not block — on zero
-screenshots; checkpoints; runs `brain check` and reports failures honestly
-without rolling back the ship). `runs/progress.md` stays a rolling cursor;
+(requires evidence; no-ops if already shipped; **preflights `brain check`
+against the projected state and refuses the ship if anything would fail —
+nothing is written, the feature keeps its previous status, exit 1**; on pass it
+writes atomically, warns — does not block — on zero screenshots, and
+checkpoints). `runs/progress.md` stays a rolling cursor;
 `features/<slug>/runs/*.md` is the deep, verbatim record.
 
 - `npx -y brain-axi watch <feature>` — opens the live execution dashboard in

@@ -1,0 +1,1512 @@
+#!/usr/bin/env node
+// State-invariant check — zero deps, zero network, no browser.
+//
+// This repo has no test framework by policy (.brain/HARNESS.md: "Verification =
+// invoke the affected command against .brain/ and eyeball the result"). That
+// works for output formatting; it does not work for invariants, because the
+// whole point of an invariant is that it holds on inputs nobody thought to type
+// by hand. Every case below is a shape that USED to pass silently:
+// feature_list.json containing `{}`, a duplicate slug, an unknown status, a
+// shipped feature with no evidence, a Verdict line without an emoji.
+//
+// It asserts two layers:
+//   1. the pure validators/parsers in lib/state.js, called directly
+//   2. brainCheck() against synthetic brains built in a temp dir, so the
+//      invariant is proven where `brain check` actually reads it
+//
+// Run: node scripts/check-state-invariants.mjs   (exit 1 on any failure)
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import {
+  validateFeatureListShape,
+  validateFeatureListStructure,
+  oneInProgressEnforced,
+  parseVerdict,
+  parseVerdictDetail,
+  parseReceipt,
+  writeFileAtomic,
+  STATUSES,
+} from "../lib/state.js";
+import { brainCheck } from "../lib/review/brain-data.js";
+
+const failures = [];
+let assertions = 0;
+
+function ok(label, cond, detail) {
+  assertions++;
+  if (!cond) failures.push(`${label}${detail ? ` — ${detail}` : ""}`);
+}
+
+// A shape validator must REJECT and say why. "Returns some error" is not enough:
+// a message that names the wrong field sends the next agent to the wrong place.
+function rejects(label, input, expectFragment) {
+  const msg = validateFeatureListShape(input);
+  assertions++;
+  if (msg === null) {
+    failures.push(`${label} — expected rejection, got null (accepted as valid)`);
+    return;
+  }
+  if (expectFragment && !msg.includes(expectFragment)) {
+    failures.push(`${label} — rejected, but message "${msg}" does not mention "${expectFragment}"`);
+  }
+}
+
+function accepts(label, input) {
+  const msg = validateFeatureListShape(input);
+  assertions++;
+  if (msg !== null) failures.push(`${label} — expected valid, got "${msg}"`);
+}
+
+// ---------------------------------------------------------------------------
+// 1. Feature-list schema
+// ---------------------------------------------------------------------------
+
+const validFeature = {
+  id: "feat-001",
+  name: "Thing",
+  slug: "thing",
+  doc: ".brain/features/thing/thing.md",
+  status: "in-progress",
+  description: "d",
+  dependencies: [],
+  evidence: "",
+  owners: ["sean"],
+};
+
+const validList = {
+  updated: "2026-07-31",
+  policy: { one_in_progress_at_a_time: true },
+  features: [validFeature],
+};
+
+accepts("valid list", validList);
+accepts("empty features array", { features: [] });
+accepts("no policy key", { features: [validFeature] });
+
+// The five non-objects that all used to pass as "feature_list.json parses".
+rejects("bare {}", {}, `"features" must be an array`);
+rejects("bare []", [], "must be a JSON object");
+rejects("a string", "hello", "must be a JSON object");
+rejects("a number", 42, "must be a JSON object");
+rejects("null", null, "must be a JSON object");
+rejects("features as a string", { features: "nope" }, `"features" must be an array`);
+rejects("features as an object", { features: {} }, `"features" must be an array`);
+
+rejects("feature is not an object", { features: ["x"] }, "features[0] must be an object");
+
+for (const field of ["id", "name", "slug", "status", "doc"]) {
+  const f = { ...validFeature };
+  delete f[field];
+  rejects(`missing ${field}`, { features: [f] }, `features[0].${field}`);
+  rejects(`empty ${field}`, { features: [{ ...validFeature, [field]: "  " }] }, `features[0].${field}`);
+}
+
+rejects(
+  "unknown status",
+  { features: [{ ...validFeature, status: "done" }] },
+  `is not one of ${STATUSES.join("|")}`
+);
+for (const status of STATUSES) {
+  const f = { ...validFeature, status, evidence: status === "shipped" ? "proof" : "" };
+  accepts(`status ${status} accepted`, { features: [f] });
+}
+
+rejects(
+  "shipped without evidence",
+  { features: [{ ...validFeature, status: "shipped", evidence: "" }] },
+  "evidence is required"
+);
+rejects(
+  "shipped with missing evidence key",
+  { features: [{ id: "a", name: "n", slug: "s", doc: "d", status: "shipped" }] },
+  "evidence is required"
+);
+accepts("shipped with evidence", {
+  features: [{ ...validFeature, status: "shipped", evidence: "verified 2026-07-31" }],
+});
+
+rejects(
+  "duplicate id",
+  { features: [validFeature, { ...validFeature, slug: "other" }] },
+  "is not unique"
+);
+rejects(
+  "duplicate slug",
+  { features: [validFeature, { ...validFeature, id: "feat-002" }] },
+  "is not unique"
+);
+
+rejects(
+  "dependencies not an array",
+  { features: [{ ...validFeature, dependencies: "core" }] },
+  "dependencies must be an array"
+);
+rejects(
+  "dependency entry not a string",
+  { features: [{ ...validFeature, dependencies: [1] }] },
+  "dependencies[0]"
+);
+rejects(
+  "owners entry empty",
+  { features: [{ ...validFeature, owners: [""] }] },
+  "owners[0]"
+);
+rejects("policy not an object", { features: [], policy: "yes" }, `"policy" must be an object`);
+rejects(
+  "policy flag not a boolean",
+  { features: [], policy: { one_in_progress_at_a_time: "yes" } },
+  "must be a boolean"
+);
+
+// ---------------------------------------------------------------------------
+// 2. Verdict parsing — both accepted forms, and the gap that hid between them
+// ---------------------------------------------------------------------------
+
+ok("emoji PASS", parseVerdict("**Verdict**: ✅ PASS — all good") === "PASS");
+ok("emoji FAIL", parseVerdict("**Verdict**: ❌ FAIL — broken") === "FAIL");
+ok("emoji BLOCKED", parseVerdict("**Verdict**: ⛔ BLOCKED — no env") === "BLOCKED");
+
+// The regression this whole item exists for: a real doc in a real repo
+// (otel-tracing/verifications/2026-07-29.md) that read as `unknown` on every
+// display surface while brain check passed it.
+ok(
+  "bare-word PASS (the otel-tracing case)",
+  parseVerdict("**Verdict**: PASS (live smoke against the dev server + 301-test unit suite)") === "PASS",
+  `got "${parseVerdict("**Verdict**: PASS (live smoke)")}"`
+);
+ok("bare-word FAIL", parseVerdict("**Verdict**: FAIL — regression") === "FAIL");
+ok("bare-word BLOCKED", parseVerdict("**Verdict**: BLOCKED pending creds") === "BLOCKED");
+ok("lowercase word", parseVerdict("**Verdict**: pass") === "PASS");
+
+// Emoji wins when both are present and disagree — the emoji is the form the
+// playbook mandates, so it is the more deliberate signal.
+ok("emoji beats word", parseVerdict("**Verdict**: ❌ FAIL (not a PASS)") === "FAIL");
+
+const noLine = parseVerdictDetail("# Verification\n\nNo verdict here.");
+ok("no Verdict line -> unknown", noLine.verdict === "unknown");
+ok("no Verdict line -> hasLine false", noLine.hasLine === false);
+ok("no Verdict line -> form none", noLine.form === "none");
+
+const garbage = parseVerdictDetail("**Verdict**: looks fine to me");
+ok("unreadable Verdict line -> unknown", garbage.verdict === "unknown");
+ok("unreadable Verdict line -> hasLine true", garbage.hasLine === true);
+
+ok("emoji form reported", parseVerdictDetail("**Verdict**: ✅ PASS").form === "emoji");
+ok("word form reported", parseVerdictDetail("**Verdict**: PASS").form === "word");
+ok("empty input safe", parseVerdict("") === "unknown");
+ok("undefined input safe", parseVerdict(undefined) === "unknown");
+ok("bullet-prefixed line parses", parseVerdict("- **Verdict**: ✅ PASS") === "PASS");
+
+// --- spoofing. The token must LEAD the value, not merely appear in it. -------
+ok(
+  "negated verdict is NOT a pass",
+  parseVerdict("**Verdict**: this is not PASS") === "unknown",
+  `got "${parseVerdict("**Verdict**: this is not PASS")}"`
+);
+ok("prose mentioning PASS is not a pass", parseVerdict("**Verdict**: we could not PASS the suite") === "unknown");
+ok(
+  "verdict inside a fenced block does not count",
+  parseVerdict("Example:\n\n```\n**Verdict**: ✅ PASS\n```\n") === "unknown",
+  `got "${parseVerdict("Example:\n\n```\n**Verdict**: ✅ PASS\n```\n")}"`
+);
+ok(
+  "tilde-fenced block also excluded",
+  parseVerdict("~~~\n**Verdict**: ✅ PASS\n~~~\n") === "unknown"
+);
+ok(
+  "a real verdict outside a fence still parses when a fenced example exists",
+  parseVerdict("```\n**Verdict**: ✅ PASS\n```\n\n**Verdict**: ❌ FAIL — the real one\n") === "FAIL"
+);
+{
+  const two = parseVerdictDetail("**Verdict**: ✅ PASS\n\n**Verdict**: ❌ FAIL\n");
+  ok("two verdict lines are ambiguous, not first-wins", two.verdict === "unknown", two.verdict);
+  ok("ambiguous form reported", two.form === "ambiguous", two.form);
+}
+{
+  const conflict = parseVerdictDetail("**Verdict**: ✅ FAIL");
+  ok("emoji contradicting its word is ambiguous", conflict.verdict === "unknown", conflict.verdict);
+  ok("conflicting form reported", conflict.form === "conflicting", conflict.form);
+}
+
+// Spoofs found by an independent adversarial review — each scored as a clean
+// PASS before being closed.
+ok(
+  "4-space indented code block is not a verdict",
+  parseVerdict("Example:\n\n    **Verdict**: ✅ PASS\n\ndone") === "unknown",
+  `got "${parseVerdict("Example:\n\n    **Verdict**: ✅ PASS\n")}"`
+);
+ok(
+  "an UNCLOSED fence swallows the rest of the doc",
+  parseVerdict("```\n**Verdict**: ✅ PASS") === "unknown",
+  `got "${parseVerdict("```\n**Verdict**: ✅ PASS")}"`
+);
+ok(
+  "a TRAILING contradicting emoji is conflicting",
+  parseVerdict("**Verdict**: ✅ PASS ❌") === "unknown",
+  `got "${parseVerdict("**Verdict**: ✅ PASS ❌")}"`
+);
+ok(
+  "restating the SAME verdict is not ambiguous",
+  parseVerdict("**Verdict**: ✅ PASS\n\nsummary\n\n**Verdict**: ✅ PASS") === "PASS",
+  "a doc that repeats its verdict in a summary should still parse"
+);
+ok(
+  "three-space indent still parses (not a code block)",
+  parseVerdict("   **Verdict**: ✅ PASS") === "PASS"
+);
+
+// --- structure vs full validation: repair must stay possible ----------------
+{
+  const legacy = { features: [{ ...validFeature, status: "shipped", evidence: "" }] };
+  ok(
+    "a legacy shipped-without-evidence record is a FULL-shape failure",
+    validateFeatureListShape(legacy) !== null
+  );
+  ok(
+    "...but NOT a structure failure, so the CLI can still repair it",
+    validateFeatureListStructure(legacy) === null,
+    "structure validation rejected a repairable record — set-status would be locked out"
+  );
+  ok("structure rejects a non-array features", validateFeatureListStructure({ features: 1 }) !== null);
+  ok("structure rejects a non-object entry", validateFeatureListStructure({ features: ["x"] }) !== null);
+  ok("structure rejects a non-object root", validateFeatureListStructure([]) !== null);
+}
+
+// --- one-in-progress policy: ONE definition for setter and checker ----------
+ok("absent policy enforces", oneInProgressEnforced({ features: [] }) === true);
+ok("policy true enforces", oneInProgressEnforced({ policy: { one_in_progress_at_a_time: true } }) === true);
+ok("explicit false opts out", oneInProgressEnforced({ policy: { one_in_progress_at_a_time: false } }) === false);
+ok("empty policy object enforces", oneInProgressEnforced({ policy: {} }) === true);
+ok("null list enforces", oneInProgressEnforced(null) === true);
+
+// ---------------------------------------------------------------------------
+// 3. Atomic write
+// ---------------------------------------------------------------------------
+
+const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "brain-state-check-"));
+
+{
+  const target = path.join(tmpRoot, "nested", "out.json");
+  writeFileAtomic(target, '{"a":1}\n');
+  ok("atomic write creates the file", fs.readFileSync(target, "utf8") === '{"a":1}\n');
+  const leftovers = fs.readdirSync(path.dirname(target)).filter((f) => f.includes(".tmp-"));
+  ok("no temp file left behind", leftovers.length === 0, leftovers.join(", "));
+
+  writeFileAtomic(target, '{"a":2}\n');
+  ok("atomic write overwrites", fs.readFileSync(target, "utf8") === '{"a":2}\n');
+}
+
+// The four assertions above pass verbatim if writeFileAtomic is replaced with a
+// plain fs.writeFileSync — they describe writeFileSync's contract, not
+// atomicity, while rules/state.md advertises this section as proving the atomic
+// path. Below are the assertions that actually discriminate. Each one FAILS
+// against a naive mkdirSync+writeFileSync implementation; that is the only
+// property that makes them worth the lines.
+{
+  const target = path.join(tmpRoot, "atomic", "swap.json");
+  writeFileAtomic(target, "old content\n");
+  fs.chmodSync(target, 0o600);
+
+  // 1. REPLACE, don't truncate-in-place. rename(2) swaps the directory entry to
+  //    a different inode; writeFileSync reuses the same one. This is the whole
+  //    reason a concurrent reader never observes a half-written file.
+  const beforeIno = fs.statSync(target).ino;
+
+  // 2. A reader holding the file open across the write keeps seeing the OLD
+  //    bytes, complete and consistent — never a truncated prefix of the new
+  //    ones. Under writeFileSync this fd observes the new (or partial) content.
+  const heldFd = fs.openSync(target, "r");
+
+  writeFileAtomic(target, "new content, materially longer than the old\n");
+
+  const afterIno = fs.statSync(target).ino;
+  ok(
+    "atomic write swaps the inode (rename, not truncate-in-place)",
+    beforeIno !== afterIno,
+    `inode unchanged (${beforeIno}) — this is writeFileSync behavior, not rename`
+  );
+
+  const viaHeldFd = fs.readFileSync(heldFd, "utf8");
+  fs.closeSync(heldFd);
+  ok(
+    "a reader open across the write still sees the whole OLD file",
+    viaHeldFd === "old content\n",
+    `held fd saw ${JSON.stringify(viaHeldFd)}`
+  );
+
+  // 3. Mode survives. The temp file is created fresh, so without an explicit
+  //    copy the target silently reverts to the default 0644 — a 0600 file would
+  //    be widened by the act of writing it.
+  ok(
+    "atomic write preserves the target's mode",
+    (fs.statSync(target).mode & 0o777) === 0o600,
+    `mode is ${(fs.statSync(target).mode & 0o777).toString(8)}, expected 600`
+  );
+
+  ok("atomic write landed the new content", fs.readFileSync(target, "utf8").startsWith("new content"));
+
+  // 4. A fresh file in a directory that does not exist yet still lands, and
+  //    leaves no temp behind. (Separate from the mode case: nothing to inherit.)
+  const deep = path.join(tmpRoot, "atomic", "a", "b", "c.json");
+  writeFileAtomic(deep, "deep\n");
+  ok("atomic write creates missing dirs", fs.readFileSync(deep, "utf8") === "deep\n");
+  ok(
+    "no temp file left behind in a freshly created dir",
+    fs.readdirSync(path.dirname(deep)).every((f) => !f.includes(".tmp-"))
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 4. brainCheck against synthetic brains — the invariant where it is read
+// ---------------------------------------------------------------------------
+
+function makeBrain(name, featureList, opts = {}) {
+  const { verdictDoc } = opts;
+  const brain = path.join(tmpRoot, name, ".brain");
+  fs.mkdirSync(path.join(brain, "features"), { recursive: true });
+  fs.mkdirSync(path.join(brain, "runs"), { recursive: true });
+  fs.writeFileSync(path.join(brain, "runs", "progress.md"), "# Progress\n\n---\n");
+  fs.writeFileSync(
+    path.join(brain, "features", "feature_list.json"),
+    JSON.stringify(featureList, null, 2) + "\n"
+  );
+  // Write a GENERATED index by default. Fixtures without one are why a ship
+  // deadlock in indexed brains went unnoticed: no test ever exercised the shape
+  // every real brain has. Pass {noIndex:true} to test its absence deliberately.
+  if (!opts.noIndex && Array.isArray(featureList.features) && featureList.features.length) {
+    const rows = featureList.features.map(
+      (f) => `| ${f.name} | [\`${f.slug}/${f.slug}.md\`](${f.slug}/${f.slug}.md) | ${f.status} | — |`
+    );
+    fs.writeFileSync(
+      path.join(brain, "features", "index.md"),
+      [
+        "# Features",
+        "",
+        "<!-- brain:features-table -->",
+        "| Feature | Memo | Status | Latest verification |",
+        "|---------|------|--------|---------------------|",
+        ...rows,
+        "<!-- /brain:features-table -->",
+        "",
+      ].join("\n")
+    );
+  }
+
+  for (const f of Array.isArray(featureList.features) ? featureList.features : []) {
+    const dir = path.join(brain, "features", f.slug);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `${f.slug}.md`), `# ${f.name}\n`);
+    if (verdictDoc) {
+      const vdir = path.join(dir, "verifications");
+      fs.mkdirSync(vdir, { recursive: true });
+      fs.writeFileSync(path.join(vdir, "2026-07-31.md"), verdictDoc);
+    }
+  }
+  return brain;
+}
+
+function checkNamed(brain, name) {
+  const rows = brainCheck(brain);
+  const row = rows.find((r) => r.check === name);
+  return row || { check: name, status: "MISSING", detail: "no such check row" };
+}
+
+function featureFor(slug, over = {}) {
+  return {
+    id: `id-${slug}`,
+    name: slug,
+    slug,
+    doc: `.brain/features/${slug}/${slug}.md`,
+    status: "planned",
+    dependencies: [],
+    evidence: "",
+    owners: ["sean"],
+    ...over,
+  };
+}
+
+const SCHEMA_CHECK = "feature_list.json is valid";
+
+{
+  const brain = makeBrain("clean", { updated: "2026-07-31", features: [featureFor("alpha")] });
+  const row = checkNamed(brain, SCHEMA_CHECK);
+  ok(`clean brain passes "${SCHEMA_CHECK}"`, row.status === "pass", `${row.status}: ${row.detail}`);
+  const failed = brainCheck(brain).filter((r) => r.status === "fail");
+  ok("clean brain has zero failing checks", failed.length === 0, failed.map((r) => r.check).join(", "));
+}
+
+{
+  // The headline case: valid JSON, invalid state.
+  const brain = makeBrain("dupslug", {
+    features: [featureFor("alpha"), { ...featureFor("alpha"), id: "id-2" }],
+  });
+  const row = checkNamed(brain, SCHEMA_CHECK);
+  ok("duplicate slug fails the schema check", row.status === "fail", `${row.status}: ${row.detail}`);
+  ok("duplicate slug detail names uniqueness", /not unique/.test(row.detail || ""), row.detail);
+}
+
+{
+  const brain = makeBrain("badstatus", { features: [featureFor("alpha", { status: "done" })] });
+  const row = checkNamed(brain, SCHEMA_CHECK);
+  ok("unknown status fails the schema check", row.status === "fail", `${row.status}: ${row.detail}`);
+}
+
+{
+  const brain = makeBrain("shipped-no-evidence", {
+    features: [featureFor("alpha", { status: "shipped", evidence: "" })],
+  });
+  const row = checkNamed(brain, SCHEMA_CHECK);
+  ok("shipped without evidence fails the schema check", row.status === "fail", `${row.status}: ${row.detail}`);
+}
+
+{
+  const brain = path.join(tmpRoot, "emptyobj", ".brain");
+  fs.mkdirSync(path.join(brain, "features"), { recursive: true });
+  fs.mkdirSync(path.join(brain, "runs"), { recursive: true });
+  fs.writeFileSync(path.join(brain, "runs", "progress.md"), "# Progress\n\n---\n");
+  fs.writeFileSync(path.join(brain, "features", "feature_list.json"), "{}\n");
+  const row = checkNamed(brain, SCHEMA_CHECK);
+  ok("bare {} fails the schema check", row.status === "fail", `${row.status}: ${row.detail}`);
+}
+
+{
+  // Two features in-progress must fail regardless of whether `policy` is
+  // present — brainCheck used to hardcode the invariant while
+  // `features set-status` consulted policy, so the two disagreed.
+  const brain = makeBrain("two-inprogress", {
+    features: [
+      featureFor("alpha", { status: "in-progress" }),
+      featureFor("beta", { status: "in-progress" }),
+    ],
+  });
+  const row = checkNamed(brain, "at most one feature in-progress");
+  ok("two in-progress fails", row.status === "fail", `${row.status}: ${row.detail}`);
+}
+
+{
+  // Verdict docs: both forms must reach the same conclusion in brainCheck.
+  const word = makeBrain("verdict-word", { features: [featureFor("alpha")] }, {
+    verdictDoc: "# V\n\n**Verdict**: PASS (bare word)\n",
+  });
+  const emoji = makeBrain("verdict-emoji", { features: [featureFor("beta")] }, {
+    verdictDoc: "# V\n\n**Verdict**: ✅ PASS\n",
+  });
+  const wordRow = brainCheck(word).find((r) => /Verdict/.test(r.check));
+  const emojiRow = brainCheck(emoji).find((r) => /Verdict/.test(r.check));
+  ok("bare-word verdict doc passes brainCheck", wordRow && wordRow.status === "pass",
+    wordRow && `${wordRow.status}: ${wordRow.detail}`);
+  ok("emoji verdict doc passes brainCheck", emojiRow && emojiRow.status === "pass",
+    emojiRow && `${emojiRow.status}: ${emojiRow.detail}`);
+
+  const unreadable = makeBrain("verdict-bad", { features: [featureFor("gamma")] }, {
+    verdictDoc: "# V\n\n**Verdict**: looks fine\n",
+  });
+  const badRow = brainCheck(unreadable).find((r) => /Verdict/.test(r.check));
+  ok("unreadable verdict fails brainCheck", badRow && badRow.status === "fail",
+    badRow && `${badRow.status}: ${badRow.detail}`);
+}
+
+{
+  // Image links in verdict docs. Without a NEGATIVE fixture this check is
+  // theater: every real verdict doc happens to contain no markdown images, so
+  // the green row proves nothing.
+  const good = makeBrain("shots-ok", { features: [featureFor("alpha")] }, {
+    verdictDoc: "# V\n\n**Verdict**: ✅ PASS\n\n![step](../screenshots/01-a.png)\n",
+  });
+  fs.mkdirSync(path.join(good, "features", "alpha", "screenshots"), { recursive: true });
+  fs.writeFileSync(path.join(good, "features", "alpha", "screenshots", "01-a.png"), "x");
+  const goodRow = brainCheck(good).find((r) => r.check === "verification doc image links resolve");
+  ok("resolvable image link passes", goodRow && goodRow.status === "pass",
+    goodRow && `${goodRow.status}: ${goodRow.detail}`);
+
+  const bad = makeBrain("shots-missing", { features: [featureFor("beta")] }, {
+    verdictDoc: "# V\n\n**Verdict**: ✅ PASS\n\n![step](../screenshots/99-nope.png)\n",
+  });
+  const badRow = brainCheck(bad).find((r) => r.check === "verification doc image links resolve");
+  ok("dangling image link FAILS", badRow && badRow.status === "fail",
+    badRow && `${badRow.status}: ${badRow.detail}`);
+  ok("dangling image detail names the target", badRow && /99-nope\.png/.test(badRow.detail || ""),
+    badRow && badRow.detail);
+}
+
+{
+  // index.md drift — the defect that was live in both real repos.
+  const brain = makeBrain("index-drift", {
+    features: [featureFor("alpha", { status: "shipped", evidence: "proof" })],
+  });
+  fs.writeFileSync(
+    path.join(brain, "features", "index.md"),
+    "| Feature | File | Status |\n|---|---|---|\n| Alpha | [`alpha/alpha.md`](alpha/alpha.md) | in-progress |\n"
+  );
+  const row = brainCheck(brain).find((r) => r.check === "features/index.md agrees with the tracker");
+  ok("index drift FAILS", row && row.status === "fail", row && `${row.status}: ${row.detail}`);
+  ok("index drift names both values", row && /shipped/.test(row.detail) && /in-progress/.test(row.detail),
+    row && row.detail);
+
+  // And agreeing is a pass, so the check is not simply always-red.
+  fs.writeFileSync(
+    path.join(brain, "features", "index.md"),
+    "| Feature | File | Status |\n|---|---|---|\n| Alpha | [`alpha/alpha.md`](alpha/alpha.md) | shipped |\n"
+  );
+  const okRow = brainCheck(brain).find((r) => r.check === "features/index.md agrees with the tracker");
+  ok("index agreement passes", okRow && okRow.status === "pass", okRow && `${okRow.status}: ${okRow.detail}`);
+}
+
+{
+  // Drift-check holes found by the same independent review: one false positive
+  // and four false negatives, each of which let real drift pass.
+  const brain = makeBrain("index-edge", {
+    features: [
+      featureFor("alpha", { status: "shipped", evidence: "proof" }),
+      featureFor("beta", { status: "planned" }),
+    ],
+  });
+  const idx = path.join(brain, "features", "index.md");
+  const driftRow = () =>
+    brainCheck(brain).find((r) => r.check === "features/index.md agrees with the tracker");
+
+  const HEAD = "| Feature | File | Status |\n|---|---|---|\n";
+  const betaOk = "| Beta | [`beta/beta.md`](beta/beta.md) | planned |\n";
+
+  // False positive: prose with a pipe + a doc link + one status word.
+  fs.writeFileSync(
+    idx,
+    HEAD +
+      "| Alpha | [`alpha/alpha.md`](alpha/alpha.md) | shipped |\n" +
+      betaOk +
+      "\nNote: the pipeline was **blocked** by CI, see [`alpha/alpha.md`](alpha/alpha.md)\n"
+  );
+  ok("prose line is not judged as a status row", driftRow()?.status === "pass", driftRow()?.detail);
+
+  // False negative 1: capitalized status.
+  fs.writeFileSync(idx, HEAD + "| Alpha | [`alpha/alpha.md`](alpha/alpha.md) | Planned |\n" + betaOk);
+  ok("capitalized status is still compared", driftRow()?.status === "fail", driftRow()?.detail);
+
+  // False negative 2: two status words in one row.
+  fs.writeFileSync(
+    idx,
+    HEAD + "| Alpha | [`alpha/alpha.md`](alpha/alpha.md) | was in-progress, now shipped |\n" + betaOk
+  );
+  ok("row with two status words is unverifiable, not a pass", driftRow()?.status === "fail", driftRow()?.detail);
+
+  // False negative 3: one row links two features, drift on the second.
+  fs.writeFileSync(
+    idx,
+    HEAD + "| Both | [`alpha/alpha.md`](alpha/alpha.md) [`beta/beta.md`](beta/beta.md) | shipped |\n"
+  );
+  ok("every linked feature in a row is attributed", driftRow()?.status === "fail", driftRow()?.detail);
+
+  // False negative 4: a tracker feature missing from the index entirely.
+  fs.writeFileSync(idx, HEAD + "| Alpha | [`alpha/alpha.md`](alpha/alpha.md) | shipped |\n");
+  const missing = driftRow();
+  ok("a feature absent from index.md is reported", missing?.status === "fail", missing?.detail);
+  ok("...and names the missing slug", /beta/.test(missing?.detail || ""), missing?.detail);
+}
+
+{
+  // shipped ⇒ PASS verification. Opt-in for ambient `brain check`, always on at
+  // the ship gate — so both behaviors need pinning.
+  const noDoc = makeBrain("strict-nodoc", {
+    features: [featureFor("alpha", { status: "shipped", evidence: "trust me" })],
+  });
+  const lenient = brainCheck(noDoc).find((r) => /PASS verification/.test(r.check));
+  ok("shipped-without-proof is INVISIBLE without --strict", lenient === undefined,
+    "the invariant must stay opt-in so existing brains do not go red on upgrade");
+  const strict = brainCheck(noDoc, { strict: true }).find((r) => /PASS verification/.test(r.check));
+  ok("shipped-without-proof FAILS under strict", strict && strict.status === "fail",
+    strict && `${strict.status}: ${strict.detail}`);
+  ok("strict detail names the unproven slug", strict && /alpha/.test(strict.detail || ""), strict?.detail);
+
+  const withPass = makeBrain(
+    "strict-pass",
+    { features: [featureFor("beta", { status: "shipped", evidence: "verified" })] },
+    { verdictDoc: "# V\n\n**Verdict**: ✅ PASS\n" }
+  );
+  const passRow = brainCheck(withPass, { strict: true }).find((r) => /PASS verification/.test(r.check));
+  ok("shipped WITH a PASS doc passes strict", passRow && passRow.status === "pass",
+    passRow && `${passRow.status}: ${passRow.detail}`);
+
+  // A FAIL verdict is not proof of shipping — the doc existing is not the point.
+  const withFail = makeBrain(
+    "strict-fail",
+    { features: [featureFor("gamma", { status: "shipped", evidence: "verified" })] },
+    { verdictDoc: "# V\n\n**Verdict**: ❌ FAIL\n" }
+  );
+  const failRow = brainCheck(withFail, { strict: true }).find((r) => /PASS verification/.test(r.check));
+  ok("a FAIL verdict does not satisfy shipped", failRow && failRow.status === "fail",
+    failRow && `${failRow.status}: ${failRow.detail}`);
+  ok("...and says the docs exist but none PASS", failRow && /none PASS/.test(failRow.detail || ""),
+    failRow?.detail);
+}
+
+{
+  // Receipts. A PASS with no commit is unfalsifiable — the doc is a mutable,
+  // date-named markdown file, so "it passed" could describe any tree that ever
+  // existed. These fixtures need a REAL git repo, because the cases that matter
+  // are provenance ones.
+  const RECEIPT_ROW = "every PASS verification is bound to a commit";
+  const repo = path.join(tmpRoot, "receipt-repo");
+  fs.mkdirSync(repo, { recursive: true });
+  const g = (...args) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
+  g("init", "-q");
+  g("config", "user.email", "fixture@example.com");
+  g("config", "user.name", "Fixture");
+  fs.writeFileSync(path.join(repo, "a.txt"), "1\n");
+  g("add", "-A");
+  g("commit", "-qm", "one");
+  const realSha = (g("rev-parse", "--short", "HEAD").stdout || "").trim();
+  // Capture the branch by NAME: `checkout -` does not reliably return from an
+  // orphan branch, and getting this wrong silently inverts both assertions below.
+  const mainBranch = (g("rev-parse", "--abbrev-ref", "HEAD").stdout || "").trim();
+
+  // An orphan commit: a real object reachable from no branch HEAD can see — i.e.
+  // a verdict taken on code that never landed.
+  g("checkout", "-q", "--orphan", "sidebranch");
+  fs.writeFileSync(path.join(repo, "b.txt"), "2\n");
+  g("add", "-A");
+  g("commit", "-qm", "orphan");
+  const orphanSha = (g("rev-parse", "--short", "HEAD").stdout || "").trim();
+  g("checkout", "-q", mainBranch);
+  ok(
+    "fixture repo is back on the original branch",
+    (g("rev-parse", "--short", "HEAD").stdout || "").trim() === realSha,
+    "HEAD is not the first commit — the ancestor assertions below would be inverted"
+  );
+
+  ok("fixture repo produced a real sha", /^[0-9a-f]{7,}$/.test(realSha), realSha);
+  ok("fixture repo produced an orphan sha", /^[0-9a-f]{7,}$/.test(orphanSha), orphanSha);
+
+  function receiptBrain(name, receiptLines) {
+    const brain = path.join(repo, name, ".brain");
+    fs.mkdirSync(path.join(brain, "features", "alpha", "verifications"), { recursive: true });
+    fs.mkdirSync(path.join(brain, "runs"), { recursive: true });
+    fs.writeFileSync(path.join(brain, "runs", "progress.md"), "# Progress\n\n---\n");
+    fs.writeFileSync(
+      path.join(brain, "features", "feature_list.json"),
+      JSON.stringify(
+        { features: [featureFor("alpha", { status: "shipped", evidence: "proof" })] },
+        null,
+        2
+      ) + "\n"
+    );
+    fs.writeFileSync(path.join(brain, "features", "alpha", "alpha.md"), "# alpha\n");
+    fs.writeFileSync(
+      path.join(brain, "features", "alpha", "verifications", "2026-07-31.md"),
+      `# V\n\n**Verdict**: ✅ PASS\n\n${receiptLines}\n`
+    );
+    return brain;
+  }
+
+  const rowOf = (brain) => brainCheck(brain, { strict: true }).find((r) => r.check === RECEIPT_ROW);
+
+  const noReceipt = receiptBrain("no-receipt", "");
+  ok("PASS with no receipt fails strict", rowOf(noReceipt)?.status === "fail", rowOf(noReceipt)?.detail);
+  ok(
+    "...and says the receipt is missing",
+    /no brain:verification receipt/.test(rowOf(noReceipt)?.detail || ""),
+    rowOf(noReceipt)?.detail
+  );
+
+  const noCommit = receiptBrain("no-commit", "<!-- brain:verification\nverified_by: fixture\n-->");
+  ok("receipt without a commit fails", rowOf(noCommit)?.status === "fail", rowOf(noCommit)?.detail);
+
+  const bogus = receiptBrain(
+    "bogus-commit",
+    "<!-- brain:verification\ncommit: deadbeef\nverified_by: fixture\n-->"
+  );
+  ok("receipt naming a commit not in the repo fails", rowOf(bogus)?.status === "fail", rowOf(bogus)?.detail);
+
+  const orphan = receiptBrain(
+    "orphan-commit",
+    `<!-- brain:verification\ncommit: ${orphanSha}\nverified_by: fixture\n-->`
+  );
+  const orphanRow = rowOf(orphan);
+  ok("receipt on a commit that never landed fails", orphanRow?.status === "fail", orphanRow?.detail);
+  ok("...and says it is not an ancestor", /not an ancestor/.test(orphanRow?.detail || ""), orphanRow?.detail);
+
+  const good = receiptBrain(
+    "good-commit",
+    `<!-- brain:verification\ncommit: ${realSha}\nverified_by: fixture\n-->`
+  );
+  ok("receipt on an ancestor of HEAD passes", rowOf(good)?.status === "pass", rowOf(good)?.detail);
+
+  const r = parseReceipt("<!-- brain:verification\ncommit: abc1234\nverified_by: x\ncommands: a; b\n-->");
+  ok("receipt commit parsed", r.commit === "abc1234", r.commit);
+  ok("receipt verified_by parsed", r.verified_by === "x", r.verified_by);
+  ok("receipt commands parsed", r.commands === "a; b", r.commands);
+  ok("absent receipt is not an error", parseReceipt("nothing here").present === false);
+}
+
+// ---------------------------------------------------------------------------
+// 5. ship is preflight-then-commit — the CLI, invoked as a subprocess
+//
+// The regression: ship used to write feature_list.json AND append a progress
+// checkpoint, THEN run brainCheck, then exit 1 with the flip already on disk.
+// The only honest proof is byte-comparing the files around a refused ship.
+// ---------------------------------------------------------------------------
+
+
+// A PASS verdict doc that also satisfies the strict receipt gate. Temp brains are
+// not git repos, so receipt PRESENCE is the ceiling there — provenance is checked
+// against a real repo in the receipt section below.
+const PASS_DOC =
+  "# V\n\n**Verdict**: \u2705 PASS\n\n<!-- brain:verification\ncommit: abc1234\nverified_by: fixture\n-->\n";
+
+const CLI = path.resolve(new URL("../bin/brain.js", import.meta.url).pathname);
+
+function shipAgainst(brain, slug) {
+  const res = spawnSync(
+    process.execPath,
+    [CLI, "ship", slug, "--evidence", "synthetic evidence for the invariant check", "--brain", brain],
+    { encoding: "utf8" }
+  );
+  return { status: res.status, out: (res.stdout || "") + (res.stderr || "") };
+}
+
+{
+  // A brain that is coherent EXCEPT for a dangling dependency ref, so
+  // brainCheck fails for a reason unrelated to the feature being shipped.
+  const brain = makeBrain(
+    "ship-refuse",
+    {
+      updated: "2026-07-31",
+      policy: { one_in_progress_at_a_time: true },
+      features: [
+        featureFor("alpha", { status: "in-progress", dependencies: ["ghost"] }),
+      ],
+    },
+    { verdictDoc: PASS_DOC }
+  );
+  const flPath = path.join(brain, "features", "feature_list.json");
+  const progressPath = path.join(brain, "runs", "progress.md");
+  const beforeFl = fs.readFileSync(flPath, "utf8");
+  const beforeProgress = fs.readFileSync(progressPath, "utf8");
+
+  const { status, out } = shipAgainst(brain, "alpha");
+
+  ok("refused ship exits non-zero", status === 1, `exit ${status}`);
+  ok("refused ship says refused", /refused/.test(out), out.split("\n")[0]);
+  ok(
+    "refused ship leaves feature_list.json byte-identical",
+    fs.readFileSync(flPath, "utf8") === beforeFl,
+    "feature_list.json was modified by a refused ship"
+  );
+  ok(
+    "refused ship leaves progress.md byte-identical",
+    fs.readFileSync(progressPath, "utf8") === beforeProgress,
+    "progress.md was modified by a refused ship"
+  );
+  ok(
+    "refused ship did not flip status on disk",
+    JSON.parse(fs.readFileSync(flPath, "utf8")).features[0].status === "in-progress"
+  );
+}
+
+{
+  // The happy path still ships, so the guard is not simply refusing everything.
+  const brain = makeBrain(
+    "ship-accept",
+    {
+      updated: "2026-07-31",
+      policy: { one_in_progress_at_a_time: true },
+      features: [featureFor("alpha", { status: "in-progress" })],
+    },
+    { verdictDoc: PASS_DOC }
+  );
+  const flPath = path.join(brain, "features", "feature_list.json");
+  const { status, out } = shipAgainst(brain, "alpha");
+  ok("clean ship exits 0", status === 0, `exit ${status}: ${out.split("\n")[0]}`);
+  const after = JSON.parse(fs.readFileSync(flPath, "utf8")).features[0];
+  ok("clean ship flips status", after.status === "shipped", after.status);
+  ok("clean ship records evidence", /synthetic evidence/.test(after.evidence || ""), after.evidence);
+  ok("clean ship leaves no temp file", fs.readdirSync(path.dirname(flPath)).every((f) => !f.includes(".tmp-")));
+}
+
+{
+  // The bypass: `features set-status --status shipped` used to write shipped
+  // state with no brainCheck at all, so hardening `ship` alone moved the hole
+  // rather than closing it.
+  const brain = makeBrain(
+    "setstatus-bypass",
+    { features: [featureFor("alpha", { status: "in-progress", dependencies: ["ghost"] })] },
+    { verdictDoc: PASS_DOC }
+  );
+  const flPath = path.join(brain, "features", "feature_list.json");
+  const before = fs.readFileSync(flPath, "utf8");
+  const res = spawnSync(
+    process.execPath,
+    [CLI, "features", "set-status", "alpha", "--status", "shipped", "--evidence", "bypass attempt", "--brain", brain],
+    { encoding: "utf8" }
+  );
+  ok("set-status shipped is gated too", res.status === 1, `exit ${res.status}`);
+  ok(
+    "refused set-status leaves feature_list.json byte-identical",
+    fs.readFileSync(flPath, "utf8") === before
+  );
+
+  // De-escalation stays UNGATED on purpose: gating it would lock the operator
+  // out of repairing the very records that make a brain incoherent.
+  const down = spawnSync(
+    process.execPath,
+    [CLI, "features", "set-status", "alpha", "--status", "blocked", "--brain", brain],
+    { encoding: "utf8" }
+  );
+  ok("de-escalation is not blocked by a failing brain", down.status === 0,
+    `exit ${down.status}: ${(down.stdout || "").split("\n")[0]}`);
+}
+
+{
+  // init --state-only: the clone case. A repo cloned from a template inherits
+  // the TEMPLATE's features, cursor, and run notes — context drift shipped as a
+  // default. Docs must survive (the clone inherits the stack along with the
+  // code); state must not (it is another project's history).
+  const root = path.join(tmpRoot, "cloned-repo");
+  const brain = path.join(root, ".brain");
+  fs.mkdirSync(path.join(brain, "features", "inherited"), { recursive: true });
+  fs.mkdirSync(path.join(brain, "runs"), { recursive: true });
+  fs.mkdirSync(path.join(brain, "plans", "old-plan"), { recursive: true });
+  fs.mkdirSync(path.join(brain, "rules"), { recursive: true });
+  fs.mkdirSync(path.join(brain, "recipes"), { recursive: true });
+  fs.writeFileSync(path.join(brain, "HARNESS.md"), "# harness\n");
+  fs.writeFileSync(path.join(brain, "rules", "frontend.md"), "# stack rule\n");
+  fs.writeFileSync(path.join(brain, "recipes", "add-thing.md"), "# recipe\n");
+  fs.writeFileSync(
+    path.join(brain, "runs", "progress.md"),
+    "# Progress\n\n---\n\n## 2020-01-01 — someone else's release\n"
+  );
+  fs.writeFileSync(path.join(brain, "features", "inherited", "inherited.md"), "# inherited\n");
+  fs.writeFileSync(
+    path.join(brain, "features", "feature_list.json"),
+    JSON.stringify(
+      { features: [featureFor("inherited", { status: "shipped", evidence: "theirs" })] },
+      null,
+      2
+    ) + "\n"
+  );
+
+  const res = spawnSync(process.execPath, [CLI, "init", "--state-only", "--dir", root, "--yes"], {
+    encoding: "utf8",
+  });
+  ok("init --state-only exits 0", res.status === 0, `exit ${res.status}: ${(res.stdout || "").slice(0, 200)}`);
+
+  const list = JSON.parse(fs.readFileSync(path.join(brain, "features", "feature_list.json"), "utf8"));
+  ok(
+    "inherited features are gone",
+    Array.isArray(list.features) && list.features.length === 0,
+    JSON.stringify(list.features)
+  );
+  ok("inherited feature folder is gone", !fs.existsSync(path.join(brain, "features", "inherited")));
+  ok("inherited plans are gone", !fs.existsSync(path.join(brain, "plans", "old-plan")));
+  const progress = fs.readFileSync(path.join(brain, "runs", "progress.md"), "utf8");
+  ok("cursor no longer holds another project's history", !/someone else/.test(progress));
+  ok("cursor has a fresh first checkpoint", /brain init/.test(progress), progress.slice(0, 120));
+
+  // The half that must SURVIVE — wiping these forces every clone to re-derive
+  // the stack conventions it inherited along with the code.
+  ok("stack rules kept", fs.existsSync(path.join(brain, "rules", "frontend.md")));
+  ok("recipes kept", fs.existsSync(path.join(brain, "recipes", "add-thing.md")));
+  ok("HARNESS.md kept", fs.existsSync(path.join(brain, "HARNESS.md")));
+
+  // A reset brain must be coherent, not merely empty.
+  const after = spawnSync(process.execPath, [CLI, "check", "--brain", brain], { encoding: "utf8" });
+  ok("a reset brain passes brain check", after.status === 0, (after.stdout || "").slice(0, 300));
+
+  // Refuses on an absent brain rather than silently scaffolding one.
+  const empty = path.join(tmpRoot, "not-a-brain");
+  fs.mkdirSync(empty, { recursive: true });
+  const noBrain = spawnSync(process.execPath, [CLI, "init", "--state-only", "--dir", empty, "--yes"], {
+    encoding: "utf8",
+  });
+  ok("init --state-only refuses when there is no brain", noBrain.status === 1, `exit ${noBrain.status}`);
+}
+
+
+{
+  // Drift false-negatives found by adversarial review AFTER the check shipped.
+  const brain = makeBrain("index-fn", {
+    features: [
+      featureFor("alpha", { status: "shipped", evidence: "proof" }),
+      featureFor("beta", { status: "planned" }),
+    ],
+  });
+  const idx = path.join(brain, "features", "index.md");
+  const driftRow = () =>
+    brainCheck(brain).find((r) => r.check === "features/index.md agrees with the tracker");
+
+  // A GUTTED index used to report "no rows to compare" and pass — deleting the
+  // table was the cheapest way to silence the check.
+  fs.writeFileSync(idx, "# Features\n\nNo table here.\n");
+  ok("gutted index.md FAILS", driftRow()?.status === "fail", driftRow()?.detail);
+
+  // "in progress" (space, not hyphen) is not a status; the row used to skip.
+  fs.writeFileSync(
+    idx,
+    "| F | File | Status |\n|---|---|---|\n" +
+      "| Alpha | [`alpha/alpha.md`](alpha/alpha.md) | in progress |\n" +
+      "| Beta | [`beta/beta.md`](beta/beta.md) | planned |\n"
+  );
+  const noStatus = driftRow();
+  ok("row with an unrecognizable status FAILS", noStatus?.status === "fail", noStatus?.detail);
+  ok(
+    "...and says the status was not recognized",
+    /no recognizable status/.test(noStatus?.detail || ""),
+    noStatus?.detail
+  );
+}
+
+{
+  // B1 — the scope of the strict ship gate.
+  //
+  // `brain ship` is always strict. Preflighting the WHOLE brain meant one legacy
+  // feature that predates the invariant refused EVERY future ship in the repo,
+  // which made the flagship gate unusable in the two repos that own it. Shipping
+  // X asserts that X works; it does not assert that a feature shipped a year ago
+  // has a receipt.
+  const brain = makeBrain(
+    "strict-scope",
+    {
+      features: [
+        // Legacy: shipped long ago, no verification doc. Must NOT block others.
+        featureFor("legacy", { status: "shipped", evidence: "shipped before the invariant" }),
+        featureFor("fresh", { status: "in-progress" }),
+      ],
+    },
+    { verdictDoc: PASS_DOC }
+  );
+  // makeBrain wrote a PASS doc for BOTH features; remove legacy's so it is unproven.
+  fs.rmSync(path.join(brain, "features", "legacy", "verifications"), { recursive: true, force: true });
+
+  const whole = brainCheck(brain, { strict: true }).filter((r) => r.status === "fail");
+  // Assert the RIGHT row failed, not merely that something did. `whole.length > 0`
+  // was satisfied by any unrelated regression anywhere in brainCheck, so it would
+  // have gone on passing after the check it names stopped working.
+  ok(
+    "unscoped strict still reports the legacy gap (it is the audit)",
+    whole.some(
+      (r) => r.check === "every shipped feature has a PASS verification" && /legacy/.test(r.detail)
+    ),
+    `expected the PASS-verification row to name "legacy"; got ${whole.map((r) => r.check).join(", ") || "no failures"}`
+  );
+
+  // `scope` is the current name; `strictScope` is kept as a read-compat alias
+  // and must still narrow the gate identically.
+  const scoped = brainCheck(brain, { strict: true, strictScope: "fresh" }).filter((r) => r.status === "fail");
+  const scopedNewName = brainCheck(brain, { strict: true, scope: "fresh" }).filter((r) => r.status === "fail");
+  ok(
+    "the strictScope alias behaves exactly like scope",
+    scopedNewName.length === scoped.length,
+    `scope=${scopedNewName.length} vs strictScope=${scoped.length}`
+  );
+  ok(
+    "strict scoped to the shipping feature ignores unrelated legacy gaps",
+    scoped.length === 0,
+    scoped.map((r) => `${r.check}: ${r.detail}`).join(" | ")
+  );
+
+  // And the CLI actually ships it, rather than being blocked by `legacy`.
+  const res = spawnSync(
+    process.execPath,
+    [CLI, "ship", "fresh", "--evidence", "scoped strict proof", "--brain", brain],
+    { encoding: "utf8" }
+  );
+  ok("ship succeeds despite an unrelated unproven legacy feature", res.status === 0,
+    `exit ${res.status}: ${(res.stdout || "").split("\n").slice(0, 4).join(" / ")}`);
+
+  // But it still refuses when THIS feature lacks proof.
+  const brain2 = makeBrain("strict-scope-2", {
+    features: [featureFor("unproven", { status: "in-progress" })],
+  });
+  const res2 = spawnSync(
+    process.execPath,
+    [CLI, "ship", "unproven", "--evidence", "no doc at all", "--brain", brain2],
+    { encoding: "utf8" }
+  );
+  ok("ship still refuses when the shipping feature itself has no proof", res2.status === 1,
+    `exit ${res2.status}`);
+}
+
+
+{
+  // END-TO-END SHIP INTO AN INDEXED BRAIN.
+  //
+  // This is the test whose absence let a deadlock ship: the index-drift check ran
+  // against the PROJECTED state, but features/index.md is generated FROM the
+  // tracker, so on disk it still (correctly) said in-progress. Every ship in
+  // every indexed brain was refused, and the only escape was hand-editing the
+  // index to a premature `shipped`. A gate satisfiable only by lying is worse
+  // than no gate. Nothing caught it because no fixture ever shipped a feature
+  // through a brain that had an index.
+  const brain = makeBrain(
+    "e2e-indexed-ship",
+    { features: [featureFor("alpha", { status: "in-progress" })] },
+    { verdictDoc: PASS_DOC }
+  );
+  const idxRes = spawnSync(
+    process.execPath,
+    [CLI, "features", "index", "--write", "--create", "--brain", brain],
+    { encoding: "utf8" }
+  );
+  ok("features index --write --create scaffolds the index", idxRes.status === 0,
+    `exit ${idxRes.status}: ${(idxRes.stdout || "").slice(0, 160)}`);
+  const idxPath = path.join(brain, "features", "index.md");
+  ok("index.md exists after --create", fs.existsSync(idxPath));
+  ok("generated index shows in-progress before the ship",
+    /alpha[\s\S]*in-progress/.test(fs.readFileSync(idxPath, "utf8")));
+
+  const ship = spawnSync(
+    process.execPath,
+    [CLI, "ship", "alpha", "--evidence", "e2e indexed ship", "--brain", brain],
+    { encoding: "utf8" }
+  );
+  ok("ship SUCCEEDS in an indexed brain", ship.status === 0,
+    `exit ${ship.status}: ${(ship.stdout || "").split("\n").slice(0, 5).join(" / ")}`);
+  ok("ship regenerated the index", /index: features\/index\.md regenerated/.test(ship.stdout || ""),
+    (ship.stdout || "").slice(0, 200));
+  ok("index now shows shipped", /alpha[\s\S]*shipped/.test(fs.readFileSync(idxPath, "utf8")));
+
+  const after = spawnSync(process.execPath, [CLI, "check", "--brain", brain], { encoding: "utf8" });
+  ok("brain check passes after the ship (no drift left behind)", after.status === 0,
+    (after.stdout || "").slice(0, 300));
+}
+
+{
+  // B.2 — a MISSING index is not agreement. Deleting the file was the cheapest
+  // permanent way to silence the drift check.
+  const brain = makeBrain(
+    "index-missing",
+    { features: [featureFor("alpha", { status: "planned" })] },
+    { noIndex: true }
+  );
+  const row = brainCheck(brain).find((r) => r.check === "features/index.md agrees with the tracker");
+  ok("missing index.md with tracked features FAILS", row?.status === "fail", row?.detail);
+  ok("...and points at --create", /--create/.test(row?.detail || ""), row?.detail);
+}
+
+{
+  // B.1 — the receipt lookahead defeated itself: it scanned the rest of the
+  // document, so ANY doc containing a receipt kept every earlier comment
+  // unstripped. The invisible-verdict attack then worked precisely on the docs
+  // that satisfy the strict gate.
+  ok(
+    "a verdict hidden in a comment does not score even when a receipt follows",
+    parseVerdict("<!--\n**Verdict**: ✅ PASS\n-->\n\n<!-- brain:verification\ncommit: abc\n-->") ===
+      "unknown"
+  );
+  ok(
+    "a verdict inside the receipt body itself does not score",
+    parseVerdict("<!-- brain:verification\ncommit: abc\n**Verdict**: ✅ PASS\n-->") === "unknown"
+  );
+  ok(
+    "a real verdict alongside a receipt still parses",
+    parseVerdict("**Verdict**: ✅ PASS\n\n<!-- brain:verification\ncommit: abc\n-->") === "PASS"
+  );
+}
+
+
+{
+  // N1 — an UNCLOSED html comment hides everything after it in every renderer.
+  // The closed case was fixed; the unclosed one was not considered, which is the
+  // same oversight the fence rules already made once.
+  ok("unclosed comment hides a verdict", parseVerdict("<!--\n**Verdict**: ✅ PASS") === "unknown");
+  ok(
+    "unclosed comment + a valid receipt still scores nothing",
+    parseVerdict("<!--\n**Verdict**: ✅ PASS\n\n<!-- brain:verification\ncommit: abc1234\n-->") === "unknown"
+  );
+
+  // N6 — symbolic refs resolve through git but move, so they bind to nothing.
+  for (const ref of ["HEAD", "main", "v1.0.0", "HEAD~2", "origin/main"]) {
+    const r = parseReceipt(`<!-- brain:verification\ncommit: ${ref}\n-->`);
+    ok(`receipt commit "${ref}" is rejected as symbolic`, r.commit === null && r.commit_symbolic === true,
+      JSON.stringify(r));
+  }
+  const hex = parseReceipt("<!-- brain:verification\ncommit: 1a2b3c4\n-->");
+  ok("a hex sha is accepted", hex.commit === "1a2b3c4" && hex.commit_symbolic === false, JSON.stringify(hex));
+}
+
+{
+  // N4/N5 — the exemption key had no integrity check, so adding a slug turned the
+  // gate off for it. New work could ship unverified by listing itself.
+  const gfRow = (brain) =>
+    brainCheck(brain, { strict: true }).find((r) => r.check === "strict grandfather list is legitimate");
+
+  const unknown = makeBrain("gf-unknown", {
+    policy: { strict_grandfathered: ["ghost"] },
+    features: [featureFor("alpha", { status: "shipped", evidence: "e" })],
+  });
+  ok("grandfathering an unknown slug FAILS", gfRow(unknown)?.status === "fail", gfRow(unknown)?.detail);
+
+  const notShipped = makeBrain("gf-notshipped", {
+    policy: { strict_grandfathered: ["beta"] },
+    features: [
+      featureFor("alpha", { status: "shipped", evidence: "e" }),
+      featureFor("beta", { status: "in-progress" }),
+    ],
+  });
+  const r = gfRow(notShipped);
+  ok("grandfathering a non-shipped slug FAILS", r?.status === "fail", r?.detail);
+  ok("...and says why", /not shipped/.test(r?.detail || ""), r?.detail);
+
+  const cut = makeBrain("gf-cut", {
+    policy: { strict_grandfathered: ["gamma"] },
+    features: [featureFor("gamma", { status: "cut", evidence: "" })],
+  });
+  ok("grandfathering a CUT slug FAILS (the real template bug)", gfRow(cut)?.status === "fail", gfRow(cut)?.detail);
+
+  // A legitimate list passes, so the check is not simply always-red.
+  const good = makeBrain("gf-good", {
+    policy: { strict_grandfathered: ["alpha"] },
+    features: [featureFor("alpha", { status: "shipped", evidence: "legacy" })],
+  });
+  ok("a legitimate grandfather list passes", gfRow(good)?.status === "pass", gfRow(good)?.detail);
+}
+
+{
+  // N2 — set-status must regenerate the derived index too. Wiring regen into ship
+  // alone let set-status take the brain green -> red while exiting 0.
+  const brain = makeBrain(
+    "setstatus-regen",
+    { features: [featureFor("alpha", { status: "planned" })] },
+    { verdictDoc: PASS_DOC }
+  );
+  const res = spawnSync(
+    process.execPath,
+    [CLI, "features", "set-status", "alpha", "--status", "blocked", "--brain", brain],
+    { encoding: "utf8" }
+  );
+  ok("set-status exits 0", res.status === 0, `exit ${res.status}`);
+  ok("set-status regenerated the index", /index: features\/index\.md regenerated/.test(res.stdout || ""),
+    (res.stdout || "").slice(0, 200));
+  const after = spawnSync(process.execPath, [CLI, "check", "--brain", brain], { encoding: "utf8" });
+  ok("brain check is still green after set-status", after.status === 0,
+    (after.stdout || "").slice(0, 300));
+}
+
+{
+  // N3 — ship must not leave drift behind in the markerless / missing index
+  // states. Both previously exited 0 and left `brain check` red.
+  const markerless = makeBrain(
+    "ship-markerless",
+    { features: [featureFor("alpha", { status: "in-progress" })] },
+    { verdictDoc: PASS_DOC }
+  );
+  fs.writeFileSync(
+    path.join(markerless, "features", "index.md"),
+    "| F | File | Status |\n|---|---|---|\n| Alpha | [`alpha/alpha.md`](alpha/alpha.md) | in-progress |\n"
+  );
+  const res = spawnSync(
+    process.execPath,
+    [CLI, "ship", "alpha", "--evidence", "markerless index", "--brain", markerless],
+    { encoding: "utf8" }
+  );
+  const combined = (res.stdout || "") + (res.stderr || "");
+  ok(
+    "ship into a markerless index does NOT silently succeed",
+    res.status === 1 && /post_ship_checks/.test(combined),
+    `exit ${res.status}: ${combined.slice(0, 260)}`
+  );
+  ok("...and says the markers are missing", /brain:features-table markers/.test(combined), combined.slice(0, 200));
+}
+
+// ---------------------------------------------------------------------------
+// 8. Rows that shipped with NO fixture at all
+//
+// rules/state.md: "a validator with no failing fixture is a claim, not a
+// check." Nine brainCheck rows were shipped in violation of that line, in the
+// branch that wrote it — including the raw-HTML ban, which is 20 lines of
+// careful logic with a paragraph of justification and no test. Each case below
+// is a mutation that previously survived the suite untouched.
+// ---------------------------------------------------------------------------
+
+// Assert one named row has one named status. Every earlier "some check failed"
+// assertion could be satisfied by an unrelated regression.
+function rowStatus(checks, name) {
+  const row = checks.find((r) => r.check === name);
+  return row ? row.status : `<no row "${name}">`;
+}
+
+{
+  const brain = makeBrain("rows-clean", { features: [featureFor("alpha", { status: "in-progress" })] }, { verdictDoc: PASS_DOC });
+  const clean = brainCheck(brain);
+  for (const row of [
+    "every feature doc path resolves",
+    "runs/progress.md exists",
+    "plan meta.json files parse",
+    "reviews.jsonl lines parse",
+    "verification docs contain no raw HTML",
+    "verification doc image links resolve",
+  ]) {
+    ok(`baseline: "${row}" passes on a clean brain`, rowStatus(clean, row) === "pass", `${row} -> ${rowStatus(clean, row)}`);
+  }
+
+  // --- feature doc paths resolve -------------------------------------------
+  fs.rmSync(path.join(brain, "features", "alpha", "alpha.md"));
+  ok(
+    "a missing feature doc fails its row",
+    rowStatus(brainCheck(brain), "every feature doc path resolves") === "fail"
+  );
+  fs.writeFileSync(path.join(brain, "features", "alpha", "alpha.md"), "# Alpha\n");
+
+  // --- runs/progress.md exists ---------------------------------------------
+  const progress = path.join(brain, "runs", "progress.md");
+  const progressBody = fs.readFileSync(progress);
+  fs.rmSync(progress);
+  ok(
+    "a missing runs/progress.md fails its row",
+    rowStatus(brainCheck(brain), "runs/progress.md exists") === "fail"
+  );
+  fs.writeFileSync(progress, progressBody);
+
+  // --- plan meta.json files parse ------------------------------------------
+  const planDir = path.join(brain, "features", "alpha", "plans", "some-plan");
+  fs.mkdirSync(planDir, { recursive: true });
+  fs.writeFileSync(path.join(planDir, "meta.json"), "{ not json");
+  ok(
+    "a malformed plan meta.json fails its row",
+    rowStatus(brainCheck(brain), "plan meta.json files parse") === "fail"
+  );
+  fs.writeFileSync(path.join(planDir, "meta.json"), JSON.stringify({ slug: "some-plan" }) + "\n");
+  ok(
+    "...and passes once it parses",
+    rowStatus(brainCheck(brain), "plan meta.json files parse") === "pass"
+  );
+
+  // --- reviews.jsonl lines parse -------------------------------------------
+  fs.writeFileSync(path.join(planDir, "reviews.jsonl"), '{"round":1}\nNOT JSON\n');
+  ok(
+    "a malformed reviews.jsonl line fails its row",
+    rowStatus(brainCheck(brain), "reviews.jsonl lines parse") === "fail"
+  );
+  fs.writeFileSync(path.join(planDir, "reviews.jsonl"), '{"round":1}\n\n');
+  ok(
+    "...and a blank trailing line is not a parse failure",
+    rowStatus(brainCheck(brain), "reviews.jsonl lines parse") === "pass"
+  );
+
+  // --- verification docs contain no raw HTML -------------------------------
+  // The ban exists because a verdict inside <details> renders collapsed and one
+  // inside <div> renders as literal asterisks — the rendered doc and the parsed
+  // doc disagree. The receipt is the ONE permitted HTML construct.
+  const vdoc = path.join(brain, "features", "alpha", "verifications", "2026-07-31.md");
+  for (const [label, html] of [
+    ["<details>", "<details><summary>proof</summary>\n\n**Verdict**: ✅ PASS\n\n</details>"],
+    ["<div>", "<div>\n\n**Verdict**: ✅ PASS\n\n</div>"],
+    ["<br>", "**Verdict**: ✅ PASS<br>"],
+  ]) {
+    fs.writeFileSync(vdoc, `# V\n\n${html}\n\n<!-- brain:verification\ncommit: abc1234\n-->\n`);
+    ok(
+      `raw HTML ${label} in a verification doc fails the ban`,
+      rowStatus(brainCheck(brain), "verification docs contain no raw HTML") === "fail",
+      `${label} -> ${rowStatus(brainCheck(brain), "verification docs contain no raw HTML")}`
+    );
+  }
+  // The receipt itself must NOT trip the ban it is exempt from.
+  fs.writeFileSync(vdoc, PASS_DOC);
+  ok(
+    "the brain:verification receipt is exempt from the raw-HTML ban",
+    rowStatus(brainCheck(brain), "verification docs contain no raw HTML") === "pass",
+    rowStatus(brainCheck(brain), "verification docs contain no raw HTML")
+  );
+
+  // --- verification doc image links resolve --------------------------------
+  fs.writeFileSync(vdoc, PASS_DOC + "\n![step](../screenshots/01-nope.png)\n");
+  ok(
+    "a verification doc citing a missing screenshot fails its row",
+    rowStatus(brainCheck(brain), "verification doc image links resolve") === "fail"
+  );
+  const shotDir = path.join(brain, "features", "alpha", "screenshots");
+  fs.mkdirSync(shotDir, { recursive: true });
+  fs.writeFileSync(path.join(shotDir, "01-nope.png"), "not really a png");
+  ok(
+    "...and passes once the screenshot exists",
+    rowStatus(brainCheck(brain), "verification doc image links resolve") === "pass"
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 9. SCOPE — the gate/audit split, for every per-feature row
+//
+// strictScope narrowed only the two strict rows. The other seven still swept
+// the whole brain at the ship gate, so one stray <div> in an UNRELATED legacy
+// verification doc, one moved screenshot, or one malformed plan meta.json
+// refused every future ship in the repo — pointing at a file the shipper never
+// touched. Same deadlock strictScope already fixed once, left half-fixed.
+// ---------------------------------------------------------------------------
+
+{
+  const brain = makeBrain(
+    "scope-unrelated-debt",
+    {
+      features: [
+        featureFor("rotten", { status: "shipped", evidence: "shipped before the invariant" }),
+        featureFor("fresh", { status: "in-progress" }),
+      ],
+      policy: { strict_grandfathered: ["rotten"] },
+    },
+    { verdictDoc: PASS_DOC }
+  );
+
+  // Three independent kinds of rot, all belonging to `rotten`, none to `fresh`.
+  const rottenVdoc = path.join(brain, "features", "rotten", "verifications", "2026-07-31.md");
+  fs.writeFileSync(
+    rottenVdoc,
+    "# V\n\n<div>\n\n**Verdict**: ✅ PASS\n\n</div>\n\n![gone](../screenshots/99-missing.png)\n"
+  );
+  const rottenPlan = path.join(brain, "features", "rotten", "plans", "old-plan");
+  fs.mkdirSync(rottenPlan, { recursive: true });
+  fs.writeFileSync(path.join(rottenPlan, "meta.json"), "{ truncated");
+
+  const audit = brainCheck(brain).filter((r) => r.status === "fail");
+  ok(
+    "unscoped, all three kinds of unrelated rot are reported (it is the audit)",
+    ["verification docs contain no raw HTML", "verification doc image links resolve", "plan meta.json files parse"].every(
+      (name) => audit.some((r) => r.check === name)
+    ),
+    audit.map((r) => r.check).join(", ") || "nothing failed"
+  );
+
+  const gate = brainCheck(brain, { list: JSON.parse(fs.readFileSync(path.join(brain, "features", "feature_list.json"), "utf8")), strict: true, scope: "fresh" }).filter(
+    (r) => r.status === "fail"
+  );
+  ok(
+    "scoped to `fresh`, none of `rotten`'s debt is reported",
+    gate.length === 0,
+    gate.map((r) => `${r.check}: ${r.detail}`).join(" | ")
+  );
+
+  // A MISSING FEATURE DOC on the unrelated feature, too. This row was the ONE
+  // per-feature check the scope pass missed: every other one was narrowed while
+  // this kept sweeping the whole tracker, so unrelated documentation debt still
+  // refused a valid ship. Found by an independent reviewer rather than by the
+  // fixtures above — none of them deleted a doc belonging to a DIFFERENT
+  // feature, so the whole class was untested.
+  fs.rmSync(path.join(brain, "features", "rotten", "rotten.md"));
+  const docAudit = brainCheck(brain).filter((r) => r.status === "fail");
+  ok(
+    "unscoped, a missing doc on another feature is reported",
+    docAudit.some((r) => r.check === "every feature doc path resolves"),
+    docAudit.map((r) => r.check).join(", ") || "nothing failed"
+  );
+  const docGate = brainCheck(brain, { strict: true, scope: "fresh" }).filter((r) => r.status === "fail");
+  ok(
+    "scoped, a missing doc on another feature does NOT block",
+    !docGate.some((r) => r.check === "every feature doc path resolves"),
+    docGate.map((r) => `${r.check}: ${r.detail}`).join(" | ")
+  );
+
+  // And end-to-end through the CLI: the ship must actually go through.
+  const res = spawnSync(
+    process.execPath,
+    [CLI, "ship", "fresh", "--evidence", "unrelated rot must not block this", "--brain", brain],
+    { encoding: "utf8" }
+  );
+  ok(
+    "ship succeeds despite raw HTML, a dead image link, and a bad plan on ANOTHER feature",
+    res.status === 0,
+    `exit ${res.status}: ${((res.stdout || "") + (res.stderr || "")).slice(0, 300)}`
+  );
+
+  // The audit is unchanged by the ship — scoping the gate must not silence the report.
+  const after = brainCheck(brain).filter((r) => r.status === "fail");
+  ok(
+    "the whole-brain audit still reports the rot after the scoped ship",
+    after.some((r) => r.check === "verification docs contain no raw HTML"),
+    after.map((r) => r.check).join(", ") || "nothing failed"
+  );
+}
+
+{
+  // The other half: rot on the feature BEING shipped still refuses it. Scoping
+  // must narrow the gate, not disable it.
+  const brain = makeBrain(
+    "scope-own-debt",
+    { features: [featureFor("alpha", { status: "in-progress" })] },
+    { verdictDoc: PASS_DOC }
+  );
+  fs.writeFileSync(
+    path.join(brain, "features", "alpha", "verifications", "2026-07-31.md"),
+    "# V\n\n<div>\n\n**Verdict**: ✅ PASS\n\n</div>\n\n<!-- brain:verification\ncommit: abc1234\n-->\n"
+  );
+  const res = spawnSync(
+    process.execPath,
+    [CLI, "ship", "alpha", "--evidence", "own rot must block"],
+    { encoding: "utf8", env: { ...process.env }, cwd: path.dirname(brain) }
+  );
+  const combined = (res.stdout || "") + (res.stderr || "");
+  ok(
+    "ship IS refused when the raw HTML is on the feature being shipped",
+    res.status === 1 && /raw HTML/.test(combined),
+    `exit ${res.status}: ${combined.slice(0, 300)}`
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 10. A gate over the empty set is not a pass
+//
+// Once every shipped feature sits on policy.strict_grandfathered, the strict
+// rows evaluate NOTHING and used to report `pass` with "0 shipped feature(s)
+// proven" — a green tick over the empty set, printed by the very commit that
+// promoted strict "from advisory to a gate".
+// ---------------------------------------------------------------------------
+
+{
+  const brain = makeBrain("strict-vacuous", {
+    features: [featureFor("legacy", { status: "shipped", evidence: "predates the invariant" })],
+    policy: { strict_grandfathered: ["legacy"] },
+  });
+  const rows = brainCheck(brain, { strict: true });
+  ok(
+    "a strict gate with nothing to evaluate reports skip, not pass",
+    rowStatus(rows, "every shipped feature has a PASS verification") === "skip",
+    rowStatus(rows, "every shipped feature has a PASS verification")
+  );
+  ok(
+    "the receipt row skips too",
+    rowStatus(rows, "every PASS verification is bound to a commit") === "skip"
+  );
+  ok(
+    "the skip names the outstanding debt",
+    /1 shipped feature\(s\), 1 on policy\.strict_grandfathered/.test(
+      rows.find((r) => r.check === "every shipped feature has a PASS verification").detail
+    ),
+    rows.find((r) => r.check === "every shipped feature has a PASS verification").detail
+  );
+  ok(
+    "skip is not a failure — exit stays 0",
+    rows.filter((r) => r.status === "fail").length === 0,
+    rows.filter((r) => r.status === "fail").map((r) => r.check).join(", ")
+  );
+
+  // With one feature OFF the list, the gate has something to evaluate again and
+  // must go back to reporting a real verdict.
+  const brain2 = makeBrain(
+    "strict-nonvacuous",
+    {
+      features: [
+        featureFor("legacy", { status: "shipped", evidence: "predates the invariant" }),
+        featureFor("proven", { status: "shipped", evidence: "verified" }),
+      ],
+      policy: { strict_grandfathered: ["legacy"] },
+    },
+    { verdictDoc: PASS_DOC }
+  );
+  fs.rmSync(path.join(brain2, "features", "legacy", "verifications"), { recursive: true, force: true });
+  const rows2 = brainCheck(brain2, { strict: true });
+  ok(
+    "with one feature off the list the gate evaluates again",
+    rowStatus(rows2, "every shipped feature has a PASS verification") === "pass",
+    rowStatus(rows2, "every shipped feature has a PASS verification")
+  );
+}
+
+fs.rmSync(tmpRoot, { recursive: true, force: true });
+
+// ---------------------------------------------------------------------------
+
+if (failures.length) {
+  console.error(`state-invariants: ${failures.length} failure(s) of ${assertions} assertion(s)`);
+  for (const f of failures) console.error(`  ${f}`);
+  process.exit(1);
+}
+console.log(`state-invariants: ok — ${assertions} assertions (schema, verdict parsing, atomic write, brainCheck)`);

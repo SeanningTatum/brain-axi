@@ -17,12 +17,28 @@ import {
   addShot,
   timeline as brainTimeline,
   listVerifications,
+  buildFeaturesTable,
   getVerification,
   appendRunStep,
   brainCheck,
   recordPr,
   listAnnotations,
 } from "../lib/review/brain-data.js";
+import {
+  STATUSES,
+  featureListPath,
+  saveFeatureList,
+  writeFileAtomic,
+  validateFeatureListShape,
+  validateFeatureListStructure,
+  oneInProgressEnforced,
+  gitShortHead,
+  gitWorktreeDirty,
+  isGitRepo,
+  parseReceipt,
+  parseVerdictDetail,
+  VERDICT_ACCEPTED,
+} from "../lib/state.js";
 import { sessionKey, stateDir, listSessions } from "../lib/review/store.js";
 import { PLAYBOOKS } from "../lib/review/playbooks.js";
 import {
@@ -239,11 +255,8 @@ function collapseHome(p) {
   return p.startsWith(home) ? "~" + p.slice(home.length) : p;
 }
 
-const STATUSES = ["planned", "in-progress", "shipped", "blocked", "cut"];
-
-function featureListPath(brain) {
-  return path.join(brain, "features", "feature_list.json");
-}
+// STATUSES and featureListPath now come from lib/state.js (imported above) so
+// the schema has ONE definition shared with brainCheck.
 
 function loadFeatureList(brain) {
   const p = featureListPath(brain);
@@ -251,13 +264,31 @@ function loadFeatureList(brain) {
     opError(`missing ${path.relative(process.cwd(), p)}`, [
       "Create features/feature_list.json in the brain, or check --brain path",
     ]);
+  let parsed;
   try {
-    return JSON.parse(fs.readFileSync(p, "utf8"));
+    parsed = JSON.parse(fs.readFileSync(p, "utf8"));
   } catch (e) {
     opError(`feature_list.json is not valid JSON (${e.message})`, [
       `Fix the JSON in ${path.relative(process.cwd(), p)}`,
     ]);
   }
+  // STRUCTURE only, deliberately. Every caller below trusts
+  // list.features.find/map unconditionally, so a non-array `features` must hard
+  // fail rather than throw a bare TypeError. But field-level problems (a legacy
+  // shipped record with no evidence, say) must NOT block reads — otherwise the
+  // only way to repair the record is hand-editing JSON, and `features
+  // set-status` — the repair tool — is exactly what gets locked out.
+  // `brain check` owns full-field validation.
+  const structureError = validateFeatureListStructure(parsed);
+  if (structureError)
+    opError(`feature_list.json is invalid: ${structureError}`, [
+      `Fix ${path.relative(process.cwd(), p)}, then run \`brain check\``,
+    ]);
+  // Surface field problems without blocking: stderr keeps stdout a clean TOON
+  // payload (rules/toon-axi.md) while still telling the operator.
+  const shapeError = validateFeatureListShape(parsed);
+  if (shapeError) process.stderr.write(`warning: feature_list.json: ${shapeError} (run \`brain check\`)\n`);
+  return parsed;
 }
 
 // progress.md: preamble, then entries separated by lines of "---".
@@ -479,6 +510,124 @@ function cmdHome(argv) {
   print(lines);
 }
 
+// Generated features/index.md table. Drift between the tracker and this
+// hand-maintained mirror is now DETECTED, but detection still means a human
+// notices and fixes it — generating retires the class instead. Bounded by
+// markers so surrounding prose is never clobbered.
+const FEATURES_TABLE_OPEN = "<!-- brain:features-table -->";
+const FEATURES_TABLE_CLOSE = "<!-- /brain:features-table -->";
+
+// Rewrite the generated table in place. Returns "written" | "unchanged" |
+// "no-markers" | "missing" — never throws, because a ship must not fail on a
+// derived doc.
+// Failures the WRITE introduced, not failures that were already there.
+//
+// A flat post-write check punished the wrong thing: de-escalating a feature in a
+// brain that already had an unrelated failing check exited 1, even though the
+// command fixed nothing and broke nothing. Repair paths must stay usable, so the
+// question is "did this write make it worse?", not "is the brain perfect?".
+function newFailuresAfter(before, after) {
+  const key = (c) => `${c.check}::${c.detail}`;
+  const had = new Set(before.map(key));
+  return after.filter((c) => !had.has(key(c)));
+}
+
+function regenerateFeaturesIndex(brain) {
+  try {
+    const indexPath = path.join(brain, "features", "index.md");
+    if (!fs.existsSync(indexPath)) return "missing";
+    const content = fs.readFileSync(indexPath, "utf8");
+    const open = content.indexOf(FEATURES_TABLE_OPEN);
+    const close = content.indexOf(FEATURES_TABLE_CLOSE);
+    if (open === -1 || close === -1 || close < open) return "no-markers";
+    const list = JSON.parse(fs.readFileSync(featureListPath(brain), "utf8"));
+    const table = buildFeaturesTable(brain, list);
+    const next =
+      content.slice(0, open + FEATURES_TABLE_OPEN.length) + "\n" + table + "\n" + content.slice(close);
+    if (next === content) return "unchanged";
+    writeFileAtomic(indexPath, next);
+    return "written";
+  } catch {
+    return "missing";
+  }
+}
+
+function cmdFeaturesIndex(argv) {
+  const spec = {
+    "--write": { value: false, desc: "write the table into features/index.md between its markers" },
+    "--create": { value: false, desc: "with --write: create features/index.md (with markers) when absent" },
+  };
+  const { flags } = parseArgs(argv, spec, "features index");
+  if (flags.help)
+    helpBlock(
+      "features index",
+      "Generate the features/index.md status table from feature_list.json (the source of truth)",
+      spec,
+      ["brain features index", "brain features index --write"]
+    );
+  const brain = findBrain(flags.brain);
+  const list = loadFeatureList(brain);
+  const table = buildFeaturesTable(brain, list);
+  const indexPath = path.join(brain, "features", "index.md");
+
+  if (!flags.write) {
+    print([
+      "table: |",
+      ...table.split("\n").map((l) => "  " + l),
+      ...toonList("help", [
+        `Run \`brain features index --write\` to write it into ${path.relative(process.cwd(), indexPath)}`,
+        `The target must contain ${FEATURES_TABLE_OPEN} and ${FEATURES_TABLE_CLOSE} markers`,
+      ]),
+    ]);
+    return;
+  }
+
+  if (!fs.existsSync(indexPath)) {
+    if (!flags.create)
+      opError(`missing ${path.relative(process.cwd(), indexPath)}`, [
+        `Run \`brain features index --write --create\` to scaffold it`,
+        `Or create it with the ${FEATURES_TABLE_OPEN} / ${FEATURES_TABLE_CLOSE} markers around the table`,
+      ]);
+    writeFileAtomic(
+      indexPath,
+      [
+        "# Features",
+        "",
+        "> **Generated between the markers — do not hand-edit.** Run `brain features index --write`.",
+        "> `feature_list.json` is the source of truth; `brain check` fails on any disagreement.",
+        "",
+        FEATURES_TABLE_OPEN,
+        FEATURES_TABLE_CLOSE,
+        "",
+      ].join("\n")
+    );
+  }
+  const content = fs.readFileSync(indexPath, "utf8");
+  const open = content.indexOf(FEATURES_TABLE_OPEN);
+  const close = content.indexOf(FEATURES_TABLE_CLOSE);
+  if (open === -1 || close === -1 || close < open)
+    opError("features/index.md has no brain:features-table markers", [
+      `Wrap the status table in ${FEATURES_TABLE_OPEN} … ${FEATURES_TABLE_CLOSE}`,
+      "Markers keep generation from clobbering the surrounding prose",
+    ]);
+
+  const next =
+    content.slice(0, open + FEATURES_TABLE_OPEN.length) + "\n" + table + "\n" + content.slice(close);
+  const changed = next !== content;
+  if (changed) writeFileAtomic(indexPath, next);
+  print([
+    "features index:",
+    kv("file", path.relative(process.cwd(), indexPath), 2),
+    kv("rows", list.features.length, 2),
+    kv("action", changed ? "written" : "already up to date", 2),
+    ...toonList("help", [
+      changed
+        ? "Run `brain check` to confirm the tracker and the index now agree"
+        : "Nothing to do — the generated table already matches the tracker",
+    ]),
+  ]);
+}
+
 function cmdFeatures(argv) {
   const sub = argv[0] && !argv[0].startsWith("--") ? argv[0] : "list";
   const rest = sub === argv[0] ? argv.slice(1) : argv;
@@ -486,6 +635,7 @@ function cmdFeatures(argv) {
   if (sub === "list") return cmdFeaturesList(rest);
   if (sub === "view") return cmdFeaturesView(rest);
   if (sub === "set-status") return cmdFeaturesSetStatus(rest);
+  if (sub === "index") return cmdFeaturesIndex(rest);
   usageError(`unknown subcommand \`features ${sub}\``, [
     "valid subcommands: list (default), view <slug>, set-status <slug> --status <status>",
   ]);
@@ -632,8 +782,11 @@ function cmdFeaturesSetStatus(argv) {
     return;
   }
 
-  // Brain policy: at most one feature in-progress at a time.
-  if (flags.status === "in-progress" && list.policy?.one_in_progress_at_a_time) {
+  // Brain policy: at most one feature in-progress at a time. Shared helper —
+  // this used to test `list.policy?.…` (absent policy = not enforced) while
+  // brainCheck enforced it, so a brain with no policy key could be pushed into
+  // a state `brain check` then failed.
+  if (flags.status === "in-progress" && oneInProgressEnforced(list)) {
     const other = list.features.find((f) => f.status === "in-progress" && f !== feat);
     if (other)
       opError(`policy one_in_progress_at_a_time: ${other.slug} is already in-progress`, [
@@ -642,21 +795,87 @@ function cmdFeaturesSetStatus(argv) {
   }
 
   const previous = feat.status;
+  const preWriteChecks = brainCheck(brain).filter((c) => c.status === "fail");
+
+  // Transitions INTO shipped get the same preflight as `brain ship`. Without
+  // this, `set-status --status shipped --evidence "..."` was a complete bypass
+  // of the ship gate: it wrote shipped state with no brainCheck at all, so
+  // hardening `ship` alone would have moved the hole rather than closed it.
+  //
+  // Only shipped is gated. Every other transition (including OUT of a bad
+  // shipped record, back to planned/blocked/cut) stays unguarded on purpose —
+  // gating de-escalations would lock the operator out of repairing exactly the
+  // states that make a brain incoherent.
+  if (flags.status === "shipped") {
+    const projected = {
+      ...list,
+      features: list.features.map((f) =>
+        f === feat ? { ...f, status: "shipped", evidence: flags.evidence || f.evidence } : f
+      ),
+    };
+    // strict: shipping is the moment the claim is made, so proof is required
+    // here even though ambient `brain check` leaves it opt-in.
+    // Scoped to this feature — see the note in cmdShip. Unrelated brain debt
+    // must not refuse a ship.
+    const checks = brainCheck(brain, { list: projected, strict: true, scope: feat.slug });
+    const failed = checks.filter((c) => c.status === "fail");
+    if (failed.length) {
+      print([
+        `feature: refused — ${failed.length} harness check(s) would fail`,
+        kv("slug", feat.slug, 2),
+        kv("status", `${previous} (unchanged — nothing was written)`, 2),
+        ...toonTable("checks", failed, ["check", "status", "detail"]),
+        ...toonList("help", [
+          `Fix the failing detail(s) above, then re-run \`brain features set-status ${feat.slug} --status shipped --evidence "..."\``,
+          `\`brain ship ${feat.slug} --evidence "..."\` applies the same gate and also checkpoints`,
+        ]),
+      ]);
+      process.exit(1);
+      return;
+    }
+  }
+
   feat.status = flags.status;
   if (flags.evidence) feat.evidence = flags.evidence;
-  list.updated = new Date().toISOString().slice(0, 10);
-  fs.writeFileSync(featureListPath(brain), JSON.stringify(list, null, 2) + "\n");
+  saveFeatureList(brain, list);
+
+  // The derived index must follow EVERY status write, not just `ship`. Wiring it
+  // into ship alone left `set-status` able to take the brain from green to red
+  // while exiting 0 — the same "hardened one path, moved the hole" mistake the
+  // ship gate already made once.
+  const regenStatus = regenerateFeaturesIndex(brain);
+
+  // Re-verify AFTER the write, exactly as `ship` does. Omitting it was the THIRD
+  // occurrence of hardening one write path and forgetting its twin, so the two
+  // paths are now symmetric by construction rather than by memory.
+  const postStatus = newFailuresAfter(
+    preWriteChecks,
+    brainCheck(brain).filter((c) => c.status === "fail")
+  );
 
   print([
     "feature:",
     kv("slug", feat.slug, 2),
     kv("status", feat.status, 2),
     kv("previous", previous, 2),
+    ...(regenStatus === "written" ? [kv("index", "features/index.md regenerated", 2)] : []),
+    ...(regenStatus === "no-markers"
+      ? ["warning: features/index.md has no brain:features-table markers — update it by hand or `brain check` will report drift"]
+      : []),
+    ...(regenStatus === "missing"
+      ? ["warning: features/index.md absent — run `brain features index --write --create`"]
+      : []),
+    ...(postStatus.length ? toonTable("post_write_checks", postStatus, ["check", "status", "detail"]) : []),
     ...toonList("help", [
-      `Update the doc changelog in ${feat.doc || ".brain/features/<slug>.md"}`,
+      ...(postStatus.length
+        ? [
+            `${feat.slug} is now "${feat.status}", but ${postStatus.length} check(s) fail AFTER the write — fix the detail(s) above`,
+          ]
+        : [`Update the doc changelog in ${feat.doc || ".brain/features/<slug>.md"}`]),
       "Run `brain progress add --summary \"...\"` to checkpoint this change",
     ]),
   ]);
+  if (postStatus.length) process.exit(1);
 }
 
 // ---------------------------------------------------------------------------
@@ -664,13 +883,24 @@ function cmdFeaturesSetStatus(argv) {
 // ---------------------------------------------------------------------------
 
 function cmdCheck(argv) {
-  const { flags } = parseArgs(argv, {}, "check");
+  const spec = {
+    "--strict": {
+      value: false,
+      desc: "also require a PASS verification doc for every shipped feature",
+    },
+  };
+  const { flags } = parseArgs(argv, spec, "check");
   if (flags.help)
-    helpBlock("check", "Run deterministic brain-harness invariant checks (CI-usable: exit 1 on any failure)", {}, [
-      "brain check",
-    ]);
+    helpBlock(
+      "check",
+      "Run deterministic brain-harness invariant checks (CI-usable: exit 1 on any failure)",
+      spec,
+      ["brain check", "brain check --strict"]
+    );
   const brain = findBrain(flags.brain);
-  const checks = brainCheck(brain);
+  // --strict is opt-in here because brains predating the invariant would go red
+  // on upgrade (read-compat, rules/state.md). `brain ship` always enforces it.
+  const checks = brainCheck(brain, { strict: !!flags.strict });
   // Evals are optional: evalChecks returns [] when the repo has no eval
   // suites, so a brain without AI work sees exactly the rows it saw before —
   // even one scaffolded by this version's `brain init` (which writes only
@@ -740,6 +970,284 @@ function runVerifyCheck(check, cwd) {
 
 // Builds the TOON lines shared between stdout and the `--feature` run-note
 // step, so the recorded evidence matches what the agent actually saw.
+// ---------------------------------------------------------------------------
+// Gate telemetry — .brain/runs/gates.jsonl
+//
+// Append-only, one row per gate execution. Mirrors the runs.jsonl summary-row
+// convention already used by the evals subsystem so there is one shape to learn.
+// Never throws: losing a metrics row must not fail a verify run.
+// ---------------------------------------------------------------------------
+
+function gatesLogPath(brain) {
+  return path.join(brain, "runs", "gates.jsonl");
+}
+
+function recordGateRuns(brain, { stage, feature, results }) {
+  try {
+    const runsDir = path.join(brain, "runs");
+    if (!fs.existsSync(runsDir)) return null;
+    const at = new Date().toISOString();
+    const repoRoot = path.dirname(path.resolve(brain));
+    const branch = resolveBranch(brain, undefined);
+    const commit = gitShortHead(repoRoot);
+    const rows = results.map((r) =>
+      JSON.stringify({
+        at,
+        stage,
+        check: r.check,
+        status: r.status,
+        exit: r.exit,
+        seconds: r.seconds,
+        branch,
+        commit,
+        ...(feature ? { feature } : {}),
+      })
+    );
+    fs.appendFileSync(gatesLogPath(brain), rows.join("\n") + "\n");
+    return rows.length;
+  } catch {
+    return null;
+  }
+}
+
+function readGateRows(brain) {
+  const p = gatesLogPath(brain);
+  if (!fs.existsSync(p)) return [];
+  const rows = [];
+  for (const line of fs.readFileSync(p, "utf8").split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      rows.push(JSON.parse(line));
+    } catch {
+      // A corrupt row is not worth failing a report over — skip it.
+    }
+  }
+  return rows;
+}
+
+function pct(n, d) {
+  return d ? Number(((n / d) * 100).toFixed(1)) : null;
+}
+
+function quantile(sorted, q) {
+  if (!sorted.length) return null;
+  const i = Math.min(sorted.length - 1, Math.floor(q * sorted.length));
+  return sorted[i];
+}
+
+// ---------------------------------------------------------------------------
+// brain receipt — stamp provenance into a verification doc, by TOOL
+//
+// Receipts were hand-authored, which left two holes: the commit could name any
+// ancestor (including one predating the feature entirely, so the verdict
+// described code that never contained it), and `verified_by`/`commands` were
+// free text nobody produced or checked. A hand-written receipt is a claim about
+// provenance, not provenance.
+//
+// This writes the block from what the tool actually observed: HEAD at stamp
+// time, plus the most recent gate results for that feature out of
+// runs/gates.jsonl. It refuses when the tree is dirty, because a receipt naming
+// HEAD while the working tree differs from HEAD is describing code that is not
+// in any commit.
+// ---------------------------------------------------------------------------
+
+function cmdReceipt(argv) {
+  const spec = {
+    "--date": { value: true, desc: "verification doc date to stamp (default: the newest)" },
+    "--verified-by": { value: true, desc: "who/what ran the verification (default: the caller)" },
+    "--allow-dirty": {
+      value: false,
+      desc: "stamp even though the working tree differs from HEAD (records `dirty: true`)",
+    },
+  };
+  const { flags, positionals } = parseArgs(argv, spec, "receipt");
+  if (flags.help)
+    helpBlock(
+      "receipt",
+      "Stamp a commit-bound provenance receipt into a feature's verification doc",
+      spec,
+      ["brain receipt authentication", 'brain receipt authentication --verified-by "feature-verifier"'],
+      ["<feature> — feature slug from `brain features`"]
+    );
+  const slug = positionals[0];
+  if (!slug) usageError("missing required argument <feature>", ["brain receipt <feature>"]);
+
+  const brain = findBrain(flags.brain);
+  const repoRoot = path.dirname(path.resolve(brain));
+  if (!isGitRepo(repoRoot))
+    opError("not a git repo — a receipt with no commit proves nothing", [
+      "Run this inside a git repository, or omit the receipt and accept `provenance unverifiable`",
+    ]);
+
+  const docs = listVerifications(brain, slug);
+  if (!docs.length)
+    opError(`no verification doc for "${slug}"`, [
+      "Run `brain playbook verify` and write the verdict doc first — a receipt annotates evidence, it does not create it",
+    ]);
+  const doc = flags.date ? docs.find((d) => d.date === flags.date) : docs[0];
+  if (!doc)
+    opError(`no verification doc dated ${flags.date} for "${slug}"`, [
+      `known dates: ${docs.map((d) => d.date).join(", ")}`,
+    ]);
+
+  const dirty = gitWorktreeDirty(repoRoot);
+  if (dirty && !flags["allow-dirty"])
+    opError("working tree differs from HEAD — a receipt would name a commit that is not what was verified", [
+      "Commit the change first, then re-run `brain receipt " + slug + "`",
+      "Or pass --allow-dirty to record it explicitly as dirty (weaker evidence, honestly labelled)",
+    ]);
+
+  const commit = gitShortHead(repoRoot);
+  const absDoc = path.resolve(brain, doc.file);
+  let content;
+  try {
+    content = fs.readFileSync(absDoc, "utf8");
+  } catch (e) {
+    opError(`cannot read ${doc.file}: ${e.message}`, ["Check the file exists and is readable"]);
+  }
+
+  const { verdict } = parseVerdictDetail(content);
+  if (verdict === "unknown")
+    opError(`${doc.file} has no readable verdict — refusing to stamp provenance onto an unreadable claim`, [
+      `Fix the verdict line first: ${VERDICT_ACCEPTED}`,
+    ]);
+
+  // Commands come from what `brain verify` actually ran for this feature, not
+  // from a flag — that is the whole point.
+  const rows = readGateRows(brain).filter((r) => r.feature === slug);
+  const latestAt = rows.length ? rows[rows.length - 1].at : null;
+  const observed = rows.filter((r) => r.at === latestAt);
+  const commands = observed.length
+    ? observed.map((r) => `${r.check} (exit ${r.exit === null ? "timeout" : r.exit})`).join("; ")
+    : "";
+
+  const verifiedBy = flags["verified-by"] || process.env.USER || "unknown";
+  const block = [
+    "<!-- brain:verification",
+    `verdict: ${verdict}`,
+    `commit: ${commit}`,
+    `stamped_at: ${new Date().toISOString()}`,
+    `verified_by: ${verifiedBy}`,
+    ...(commands ? [`commands: ${commands}`] : []),
+    ...(dirty ? ["dirty: true"] : []),
+    "-->",
+  ].join("\n");
+
+  const existing = parseReceipt(content);
+  const next = existing.present
+    ? content.replace(/<!--\s*brain:verification[\s\S]*?-->/, block)
+    : content.replace(/\s*$/, "\n\n" + block + "\n");
+  writeFileAtomic(absDoc, next);
+
+  print([
+    "receipt:",
+    kv("feature", slug, 2),
+    kv("doc", doc.file, 2),
+    kv("verdict", verdict, 2),
+    kv("commit", commit, 2),
+    kv("action", existing.present ? "replaced" : "added", 2),
+    ...(commands ? [kv("commands", commands, 2)] : []),
+    ...(dirty ? ["warning: recorded with dirty: true — the tree differed from HEAD"] : []),
+    ...toonList("help", [
+      commands
+        ? "Run `brain check --strict` to confirm the receipt resolves to an ancestor of HEAD"
+        : "No gate rows for this feature yet — run `brain verify --stage verify --feature " +
+          slug +
+          "` first so `commands` records what actually ran, then re-stamp",
+    ]),
+  ]);
+}
+
+function cmdMetrics(argv) {
+  const spec = {
+    "--limit": { value: true, desc: "only consider the most recent N gate rows" },
+  };
+  const { flags } = parseArgs(argv, spec, "metrics");
+  if (flags.help)
+    helpBlock(
+      "metrics",
+      "Gate effectiveness over .brain/runs/gates.jsonl — first-pass rate, which gate fails most, duration",
+      spec,
+      ["brain metrics", "brain metrics --limit 200"],
+      []
+    );
+  const brain = findBrain(flags.brain);
+  let rows = readGateRows(brain);
+  if (flags.limit) {
+    const n = parseInt(flags.limit, 10);
+    if (!Number.isFinite(n) || n <= 0)
+      usageError("--limit must be a positive integer", ["brain metrics --limit 200"]);
+    rows = rows.slice(-n);
+  }
+
+  if (rows.length === 0) {
+    print([
+      "metrics: no gate runs recorded yet",
+      ...toonList("help", [
+        "Run `brain verify --stage baseline` — every check execution appends a row to runs/gates.jsonl",
+        "Metrics answer whether the gates catch anything; a harness with none can only prove it is intact",
+      ]),
+    ]);
+    return;
+  }
+
+  const total = rows.length;
+  const passed = rows.filter((r) => r.status === "pass").length;
+
+  // Group by (at, stage) — one `brain verify` invocation shares a timestamp, so
+  // this is the unit a human means by "did it pass first try".
+  const runs = new Map();
+  for (const r of rows) {
+    const key = `${r.at}|${r.stage}`;
+    if (!runs.has(key)) runs.set(key, []);
+    runs.get(key).push(r);
+  }
+  const runList = [...runs.values()];
+  const cleanRuns = runList.filter((g) => g.every((r) => r.status === "pass")).length;
+
+  const byCheck = new Map();
+  for (const r of rows) {
+    if (!byCheck.has(r.check)) byCheck.set(r.check, { check: r.check, runs: 0, failures: 0, secs: [] });
+    const e = byCheck.get(r.check);
+    e.runs++;
+    if (r.status !== "pass") e.failures++;
+    if (typeof r.seconds === "number") e.secs.push(r.seconds);
+  }
+  const perCheck = [...byCheck.values()]
+    .map((e) => {
+      const sorted = e.secs.slice().sort((a, b) => a - b);
+      return {
+        check: e.check,
+        runs: e.runs,
+        failures: e.failures,
+        caught_pct: pct(e.failures, e.runs),
+        p50_s: quantile(sorted, 0.5),
+        p95_s: quantile(sorted, 0.95),
+      };
+    })
+    // Most-failing first: the gates that never fail are the ones to question.
+    .sort((a, b) => b.failures - a.failures || b.runs - a.runs);
+
+  const neverFailed = perCheck.filter((c) => c.failures === 0 && c.runs >= 3);
+
+  const lines = [
+    "metrics:",
+    kv("gate_executions", total, 2),
+    kv("verify_runs", runList.length, 2),
+    kv("first_pass_rate_pct", pct(cleanRuns, runList.length), 2),
+    kv("gate_pass_rate_pct", pct(passed, total), 2),
+    kv("window", `${rows[0].at} → ${rows[rows.length - 1].at}`, 2),
+    ...toonTable("per_check", perCheck, ["check", "runs", "failures", "caught_pct", "p50_s", "p95_s"]),
+  ];
+  const help = [];
+  if (neverFailed.length)
+    help.push(
+      `Never failed in ${neverFailed[0].runs}+ runs: ${neverFailed.map((c) => c.check).join(", ")} — confirm each CAN fail (a gate with no failing fixture is a claim, not a check)`
+    );
+  help.push("Run `brain verify --stage verify` to add rows");
+  print([...lines, ...toonList("help", help)]);
+}
+
 function buildVerifyReportLines(results) {
   const lines = [
     ...toonTable(
@@ -955,6 +1463,16 @@ function cmdVerify(argv) {
   const results = selected.map((check) => runVerifyCheck(check, repoRoot));
   const failing = results.filter((r) => r.status !== "pass");
 
+  // Persist one row per gate execution. Everything needed already existed and
+  // was thrown away: without it nobody can answer "do these gates catch
+  // anything, and how often do we pass first try?" — which is the difference
+  // between a harness that is intact and one that is working.
+  recordGateRuns(brain, {
+    stage: flags.only ? `only:${flags.only}` : stage,
+    feature: feat ? feat.slug : null,
+    results,
+  });
+
   const reportLines = buildVerifyReportLines(results);
   const lines = [...reportLines];
   lines.push(kv("summary", `${results.length - failing.length}/${results.length} pass`));
@@ -1019,10 +1537,64 @@ function cmdShip(argv) {
   }
 
   const previous = feat.status;
+  const preShipChecks = brainCheck(brain).filter((c) => c.status === "fail");
+
+  // PREFLIGHT, then commit. Project the next state in memory and validate it
+  // BEFORE any write, so a failing check leaves the brain exactly as it was.
+  // This replaces the previous order (write feature_list.json, append the
+  // checkpoint, then run brainCheck and exit 1 with the flip already on disk) —
+  // that behavior was specified, not accidental, and reporting the failure
+  // honestly did not undo the fact that later reads saw a feature marked
+  // shipped on a brain that never passed its checks.
+  const projected = {
+    ...list,
+    features: list.features.map((f) =>
+      f === feat ? { ...f, status: "shipped", evidence: flags.evidence } : f
+    ),
+  };
+
+  // strict: a ship without a PASS verification is exactly the premature "done"
+  // this harness exists to prevent.
+  // `scope` makes this a GATE, not an audit: every per-feature row (doc paths,
+  // dependency refs, verdicts, raw HTML, image links, plans) narrows to the
+  // feature being shipped. Unscoped, one stray <div> in some OTHER feature's
+  // legacy verification doc, or one moved screenshot, refused EVERY future ship
+  // — with a message naming a file the shipper never touched. That is the
+  // deadlock `strictScope` already fixed for the two strict rows, left
+  // half-fixed for the other seven.
+  //
+  // Deliberately NOT a before/after diff: a dangling dependency on the feature
+  // being shipped is pre-existing AND disqualifying, so "did this write make it
+  // worse?" is the wrong question here. "Is this feature fit to ship?" is.
+  const checks = brainCheck(brain, { list: projected, strict: true, scope: feat.slug });
+  const failed = checks.filter((c) => c.status === "fail");
+  if (failed.length) {
+    print([
+      `ship: refused — ${failed.length} harness check(s) would fail`,
+      kv("slug", feat.slug, 2),
+      kv("status", `${previous} (unchanged — nothing was written)`, 2),
+      ...toonTable("checks", failed, ["check", "status", "detail"]),
+      ...toonList("help", [
+        `Every row above concerns ${feat.slug} — unrelated brain debt does not block a ship`,
+        `Fix the failing detail(s) above, then re-run \`brain ship ${feat.slug} --evidence "..."\``,
+        "Run `brain check` to re-verify without attempting the ship",
+      ]),
+    ]);
+    process.exit(1);
+    return;
+  }
+
   feat.status = "shipped";
   feat.evidence = flags.evidence;
-  list.updated = new Date().toISOString().slice(0, 10);
-  fs.writeFileSync(featureListPath(brain), JSON.stringify(list, null, 2) + "\n");
+
+  // Shipping touches TWO files (feature_list.json + runs/progress.md). Each
+  // write is atomic on its own, but the pair was not: a failure on the second
+  // left a feature marked shipped with no checkpoint recording it. Snapshot the
+  // first file's bytes and restore them if the second throws, so the pair is
+  // all-or-nothing.
+  const flPath = featureListPath(brain);
+  const flBefore = fs.existsSync(flPath) ? fs.readFileSync(flPath) : null;
+  saveFeatureList(brain, list);
 
   const lines = ["ship:", kv("slug", feat.slug, 2), kv("previous", previous, 2), kv("status", "shipped", 2)];
 
@@ -1030,17 +1602,41 @@ function cmdShip(argv) {
   if (shots.length === 0) lines.push(`warning: ${feat.slug} has zero screenshots — evidence is unverified visually`);
 
   const evidenceCapped = flags.evidence.length > 120 ? flags.evidence.slice(0, 120) : flags.evidence;
-  const checkpointResult = appendProgressEntry(brain, { summary: `shipped ${feat.slug}: ${evidenceCapped}` });
+  let checkpointResult;
+  try {
+    checkpointResult = appendProgressEntry(brain, { summary: `shipped ${feat.slug}: ${evidenceCapped}` });
+  } catch (e) {
+    if (flBefore !== null) writeFileAtomic(flPath, flBefore);
+    opError(`checkpoint failed, ship rolled back: ${e.message}`, [
+      `${feat.slug} is still "${previous}" — feature_list.json was restored`,
+      `Fix runs/progress.md, then re-run \`brain ship ${feat.slug} --evidence "..."\``,
+    ]);
+  }
+  // A MISSING progress.md is not a write failure — appendProgressEntry returns
+  // null by design so a brain without a cursor still ships. Warn, don't roll back.
   if (checkpointResult) lines.push(kv("checkpoint", `shipped ${feat.slug}: ${evidenceCapped}`, 2));
   else lines.push("warning: runs/progress.md not found — checkpoint not recorded");
 
-  const checks = brainCheck(brain);
-  const failed = checks.filter((c) => c.status === "fail");
-  if (failed.length) {
-    lines.push(...toonTable("checks", checks, ["check", "status", "detail"]));
+  // Regenerate the derived index so the tracker and its human-facing mirror are
+  // never out of step even for a moment. The drift check is skipped during
+  // preflight (the index describes disk, not a projection), so this is where the
+  // two are reconciled.
+  const regen = regenerateFeaturesIndex(brain);
+  if (regen === "written") lines.push(kv("index", "features/index.md regenerated", 2));
+  else if (regen === "no-markers")
+    lines.push("warning: features/index.md has no brain:features-table markers — update it by hand or `brain check` will report drift");
+  else if (regen === "missing")
+    lines.push("warning: features/index.md absent — run `brain features index --write --create`");
+
+  // Re-verify AFTER the write. Preflight validated a projection; only this can
+  // assert the invariant the ship actually left behind, and it is what makes
+  // "no drift left behind" a checked claim rather than a comment.
+  const post = newFailuresAfter(preShipChecks, brainCheck(brain).filter((c) => c.status === "fail"));
+  if (post.length) {
+    lines.push(...toonTable("post_ship_checks", post, ["check", "status", "detail"]));
     lines.push(
       ...toonList("help", [
-        `${feat.slug} is now shipped (status change was not rolled back) — but ${failed.length} harness check(s) are failing; fix the detail(s) above and re-run \`brain check\``,
+        `${feat.slug} shipped, but ${post.length} check(s) fail AFTER the write — fix the detail(s) above`,
       ])
     );
     print(lines);
@@ -1239,7 +1835,9 @@ function appendProgressEntry(brain, { summary, branch, feature, runNote, next, e
   } else {
     updated = progress.raw.trimEnd() + "\n\n---\n\n" + entry + "\n";
   }
-  fs.writeFileSync(progress.path, updated);
+  // Atomic: this is a read-modify-rewrite of the WHOLE progress file, so a
+  // crash mid-write would truncate the entire session cursor.
+  writeFileAtomic(progress.path, updated);
   return { date, branch: resolvedBranch, file: progress.path };
 }
 
@@ -3147,12 +3745,111 @@ function promptYesNo(question) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// init --state-only — the clone case
+//
+// A repo cloned from a template inherits the TEMPLATE's `.brain`: its features,
+// its rolling cursor, its run notes, its screenshots. Bare `brain init` refuses
+// (correctly — it must never clobber), so there was no supported way to start
+// clean, and every clone was born believing it had shipped another project's
+// features. That is context drift installed as a default.
+//
+// The split is by subsystem, not by age: STATE is another project's history and
+// must go; DOCS describe the stack the clone inherits along with the code, so
+// they stay. Nothing is archived — the template's git history already has it.
+// ---------------------------------------------------------------------------
+
+const STATE_ONLY_WIPE = ["features", "runs", "plans", "screenshots", "evals"];
+const STATE_ONLY_KEEP = [
+  "rules",
+  "recipes",
+  "codebase",
+  "high-level-architecture",
+  "transcripts",
+  "emails",
+  "HARNESS.md",
+  "verify.json",
+  "CHANGELOG.md",
+];
+
+function initStateOnly(flags) {
+  if (flags.brain !== undefined)
+    usageError("--brain is not meaningful for `init --state-only` — pass --dir <repo root>", [
+      "brain init --state-only --dir <repo-root> --yes",
+    ]);
+  const root = path.resolve(flags.dir || ".");
+  const brainDir = path.join(root, ".brain");
+  if (!fs.existsSync(brainDir))
+    opError(`no ${path.relative(process.cwd(), brainDir)} to reset`, [
+      "Run `brain init` to scaffold a new harness instead",
+    ]);
+
+  // Destructive and irreversible in the working tree — require an explicit
+  // acknowledgement when nobody is watching.
+  if (!flags.yes && !process.stdin.isTTY)
+    opError("refusing to wipe brain state non-interactively without --yes", [
+      `brain init --state-only --dir ${path.relative(process.cwd(), root) || "."} --yes`,
+      `It deletes ${STATE_ONLY_WIPE.join(", ")} under .brain/ and keeps ${STATE_ONLY_KEEP.slice(0, 4).join(", ")}, …`,
+    ]);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const branch = resolveBranch(brainDir, undefined);
+  const removed = [];
+  const kept = [];
+
+  for (const name of STATE_ONLY_WIPE) {
+    const target = path.join(brainDir, name);
+    if (!fs.existsSync(target)) continue;
+    fs.rmSync(target, { recursive: true, force: true });
+    removed.push(name);
+  }
+  for (const name of STATE_ONLY_KEEP) {
+    if (fs.existsSync(path.join(brainDir, name))) kept.push(name);
+  }
+
+  // Re-scaffold the state subsystem only, reusing the same templates `init` uses
+  // so a reset brain and a fresh one are byte-identical in shape.
+  const created = [];
+  writeInitFile(created, root, featureListPath(brainDir), initFeatureListJson(today));
+  writeInitFile(created, root, path.join(brainDir, "runs", "progress.md"), initProgressMd(today, branch));
+
+  const checks = brainCheck(brainDir);
+  const failed = checks.filter((c) => c.status === "fail");
+
+  const lines = [
+    "init:",
+    kv("mode", "state-only", 2),
+    kv("brain", path.relative(process.cwd(), brainDir) || ".brain", 2),
+    ...toonList("removed", removed.length ? removed : ["(nothing — state was already empty)"], 2),
+    ...toonList("kept", kept.length ? kept : ["(no doc sections found)"], 2),
+    ...toonList("created", created, 2),
+  ];
+  if (failed.length) lines.push(...toonTable("checks", failed, ["check", "status", "detail"]));
+  print([
+    ...lines,
+    ...toonList(
+      "help",
+      failed.length
+        ? [`${failed.length} check(s) failing after reset — run \`brain check\` for the full table`]
+        : [
+            "Brain state is clean — run `brain` for the dashboard",
+            "Fill in the kept doc sections for THIS project, then `brain playbook start` on the first task",
+          ]
+    ),
+  ]);
+  if (failed.length) process.exit(1);
+}
+
 function cmdInit(argv) {
   const spec = {
     "--dir": { value: true, desc: "target root directory to scaffold .brain into (default: cwd)" },
     "--agents-md": { value: false, desc: "write an AGENTS.md pointer + CLAUDE.md symlink" },
     "--no-agents-md": { value: false, desc: "skip the AGENTS.md pointer (default when non-interactive)" },
     "--yes": { value: false, desc: "accept defaults non-interactively (skips the AGENTS.md prompt)" },
+    "--state-only": {
+      value: false,
+      desc: "reset an EXISTING .brain's state (features/, runs/, plans/) but keep its docs — for a repo cloned from a template",
+    },
   };
   const { flags } = parseArgs(argv, spec, "init");
   if (flags.help)
@@ -3160,8 +3857,14 @@ function cmdInit(argv) {
       "init",
       "Scaffold a minimal .brain skeleton (5-subsystem harness stub) into a repo",
       spec,
-      ["brain init", "brain init --dir ./my-repo", "brain init --agents-md", "brain init --yes"]
+      [
+        "brain init",
+        "brain init --dir ./my-repo",
+        "brain init --agents-md",
+        "brain init --state-only --yes",
+      ]
     );
+  if (flags["state-only"]) return initStateOnly(flags);
   if (flags.brain !== undefined)
     usageError("--brain is not meaningful for `init` — this command CREATES a .brain, it doesn't read one", [
       "brain init [--dir <path>]  (defaults to scaffolding .brain in the current directory)",
@@ -3499,8 +4202,21 @@ Run \`brain playbook\` for the live id/use_when index; \`brain playbook <id>\` f
 ## Record state (end of task / checkpoint)
 
 - \`brain progress add --summary "..." --next "..."\` — append a session checkpoint
-- \`brain features set-status <slug> --status <planned|in-progress|shipped|blocked|cut>\` — flip feature state (enforces one-in-progress policy; \`--status shipped\` requires \`--evidence\`)
-- \`brain check\` — deterministic harness invariants (feature list validity, one-in-progress, doc paths, dependency refs, plan/review file integrity, verification docs, verify.json shape when present); exit 1 on any failure, CI-usable
+- \`brain features set-status <slug> --status <planned|in-progress|shipped|blocked|cut>\` — flip feature state (enforces one-in-progress policy; \`--status shipped\` requires \`--evidence\` **and passes the same preflight as \`brain ship\` — it refuses and writes nothing if any check would fail**. Transitions *out* of a state are never gated, so a broken record stays repairable)
+- \`brain check\` — deterministic harness invariants (feature-list **schema** validity — duplicate ids/slugs, unknown status, shipped-without-evidence all fail — one-in-progress per declared policy, doc paths, dependency refs, \`features/index.md\` agreeing with the tracker, plan/review file integrity, verification docs having a **readable** verdict with resolvable image links, verify.json shape when present); exit 1 on any failure, CI-usable
+- \`brain features index [--write]\` — GENERATE the \`features/index.md\` status table from \`feature_list.json\` (bounded by \`<!-- brain:features-table -->\` markers so surrounding prose survives). Hand-maintaining that mirror is how a tracker and its human-facing index end up disagreeing
+- \`brain receipt <feature> [--date <d>] [--verified-by <who>] [--allow-dirty]\` — stamp a commit-bound provenance receipt into a verification doc, written BY THE TOOL: HEAD at stamp time plus the actual gate results for that feature from \`runs/gates.jsonl\`. Refuses on a dirty tree (a receipt naming HEAD while the tree differs describes code in no commit) and refuses to stamp a doc whose verdict is unreadable — a hand-written receipt is a claim about provenance, not provenance
+- \`brain check --strict\` — adds two: every \`shipped\` feature must have a verification doc whose verdict parses to PASS, **and** that doc must carry a \`brain:verification\` receipt naming a commit that is an ancestor of HEAD. Opt-in here so brains predating the invariants do not go red on upgrade; \`brain ship\` and \`set-status --status shipped\` **always** enforce both, since shipping is the moment the claim is made
+- **Verification receipts** — a verdict with no commit is unfalsifiable (the doc is mutable and date-named, so "it passed" could describe any tree that ever existed). Put this block in every verification doc; it renders as nothing:
+  \`\`\`
+  <!-- brain:verification
+  commit: <short sha, e.g. \`git rev-parse --short HEAD\`>
+  verified_by: feature-verifier
+  commands: bun run test (exit 0); bun run typecheck (exit 0)
+  -->
+  \`\`\`
+- \`brain metrics [--limit N]\` — gate effectiveness over \`runs/gates.jsonl\` (written by every \`brain verify\`): first-pass rate, per-check failure counts, p50/p95 duration. It also names any check that has never failed in 3+ runs — a gate with no failing fixture is a claim, not a check. Without this the harness can only prove it is *intact*, never that it *works*
+- \`brain init --state-only --dir <repo> --yes\` — for a repo CLONED from a template: wipes inherited state (\`features/\`, \`runs/\`, \`plans/\`, \`screenshots/\`, \`evals/\`) and keeps the docs (\`rules/\`, \`recipes/\`, \`codebase/\`, \`high-level-architecture/\`, \`HARNESS.md\`, \`verify.json\`) — the clone inherits the stack along with the code, but not another project's history. Bare \`brain init\` still refuses a non-empty \`.brain\`
 - \`brain\` (home) shows an open \`sessions[...]\` table whenever a review session isn't ended yet
 
 ## Verify — run declared project checks (\`.brain/verify.json\`)
@@ -3590,9 +4306,11 @@ set-status <slug> --status in-progress\` → per step \`runs append <slug> --ste
 "..." --observed "..."\` (verbatim command output, not a paraphrase) → \`shots add
 --feature <slug> --step NN-name\` on every visual test, pass AND fail → a
 verification doc per \`playbook verify\` → \`brain ship <slug> --evidence "..."\`
-(requires evidence; no-ops if already shipped; warns — does not block — on zero
-screenshots; checkpoints; runs \`brain check\` and reports failures honestly
-without rolling back the ship). \`runs/progress.md\` stays a rolling cursor;
+(requires evidence; no-ops if already shipped; **preflights \`brain check\`
+against the projected state and refuses the ship if anything would fail —
+nothing is written, the feature keeps its previous status, exit 1**; on pass it
+writes atomically, warns — does not block — on zero screenshots, and
+checkpoints). \`runs/progress.md\` stays a rolling cursor;
 \`features/<slug>/runs/*.md\` is the deep, verbatim record.
 
 - \`npx -y brain-axi watch <feature>\` — opens the live execution dashboard in
@@ -3795,6 +4513,8 @@ const COMMANDS = {
   playbook: cmdPlaybook,
   check: cmdCheck,
   verify: cmdVerify,
+  metrics: cmdMetrics,
+  receipt: cmdReceipt,
   ship: cmdShip,
   watch: cmdWatch,
   pr: cmdPr,

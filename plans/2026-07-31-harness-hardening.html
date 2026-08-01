@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Harness hardening — state integrity in brain-axi, then the template</title>
+<style>
+  :root {
+    --bg: #faf9f5; --surface: #ffffff; --fg: #141413; --fg-secondary: #3d3d3a;
+    --muted: #73726c; --border: #dedcd1; --highlight: #fff7ca; --accent: #d97757;
+    --space-2: 8px; --space-3: 16px; --space-4: 24px; --space-6: 40px;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+      Helvetica, Arial, sans-serif;
+    font-size: 16px; background: var(--bg); color: var(--fg); line-height: 1.6;
+    max-width: 72ch; margin: 0 auto; padding: var(--space-6) var(--space-4);
+  }
+  h1, h2, h3 {
+    font-family: Charter, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    font-weight: 600; line-height: 1.25; color: var(--fg);
+  }
+  h1 { font-size: 1.75em; }
+  h2 { font-size: 1.3em; font-weight: 500; margin-top: var(--space-6);
+    border-bottom: 1px solid var(--border); padding-bottom: var(--space-2); }
+  h3 { font-size: 1.05em; font-weight: 500; }
+  p, li { color: var(--fg-secondary); }
+  mark, .highlight { background: var(--highlight); color: var(--fg); padding: 0 2px; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88em; }
+  .chip { display: inline-block; padding: 2px 10px; border-radius: 999px;
+    font-size: 0.8em; font-weight: 600; border: 1px solid var(--border); }
+  .chip-status-draft { background: var(--surface); color: var(--muted); }
+  .chip-status-in-review { background: var(--highlight); color: var(--fg);
+    border-color: var(--highlight); }
+  .chip-status-reviewed { background: var(--fg); color: #fff; border-color: var(--fg); }
+  .chip-high { color: var(--accent); border-color: var(--accent); }
+  .chip-med { color: var(--fg-secondary); }
+  .chip-low { color: var(--muted); }
+  .decision-card { background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: var(--space-4); margin: var(--space-4) 0; }
+  table { width: 100%; border-collapse: collapse; margin: var(--space-3) 0;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    overflow: hidden; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid
+    var(--border); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  .tag-recommended { color: var(--accent); font-weight: 600; }
+  .btn-queue, .btn-approve, .btn-request-changes {
+    border: none; border-radius: 10px; padding: 8px 16px; font-weight: 600;
+    cursor: pointer; font-size: 0.95em;
+  }
+  .btn-queue, .btn-approve { background: var(--fg); color: #fff; }
+  .btn-request-changes { background: transparent; color: var(--fg);
+    border: 1px solid var(--border); }
+  .queue-ack { margin-left: var(--space-3); font-size: 0.9em; color: var(--muted); }
+  .checklist { list-style: none; padding: 0; }
+  .checklist li { margin: var(--space-2) 0; }
+  .item-removed { opacity: 0.45; text-decoration: line-through; }
+  .btn-item { background: none; border: none; color: var(--muted); cursor: pointer;
+    font-size: 0.9em; padding: 0 4px; }
+  .btn-add { background: none; border: 1px dashed var(--border); border-radius: 8px;
+    color: var(--muted); cursor: pointer; padding: 4px 12px; font-size: 0.9em; }
+  .arch-diagram .box { fill: var(--surface); stroke: var(--fg-secondary); stroke-width: 2; }
+  .arch-diagram .box-label { fill: var(--fg); font-size: 13px; }
+  .arch-diagram .arrow { stroke: var(--muted); stroke-width: 2; marker-end: url(#arrow); }
+  .arch-diagram .bad { stroke: var(--accent); }
+  figcaption { color: var(--muted); font-size: 0.88em; text-align: center;
+    margin-top: var(--space-2); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Harness hardening — state integrity in brain-axi, then the template</h1>
+  <div>
+    <span>2026-07-31</span> ·
+    <span>feature: state-integrity</span> ·
+    <span class="chip chip-status-draft">draft</span> ·
+    <span>round 0</span>
+  </div>
+</header>
+
+<section id="tldr">
+  <h2>TL;DR</h2>
+  <p>An audit of the <code>cf-saas-starter</code> harness — cross-checked by an independent
+  Codex pass that read the brain-axi source — landed at <strong>5/10</strong>. The process
+  scaffolding is good; the <mark>state layer's invariants are not enforced</mark>, and two of
+  the three named harness defects from the literature are live in the repo today and pass every
+  gate. We fix brain-axi first so every install inherits the fix, then wire the template to
+  consume it.</p>
+</section>
+
+<section id="product-brief">
+  <h2>Product brief</h2>
+  <p><strong>Who it's for:</strong> any agent operating a <code>.brain/</code> harness, and the
+  human who has to trust what it reports. brain-axi is a CLI someone invokes and whose output
+  format is a contract, so this is a user-facing change, not an internal refactor.</p>
+  <p><strong>The job it does today:</strong> tells you what's in flight, what shipped, and
+  whether the harness is coherent.</p>
+  <p><strong>What breaks that promise:</strong> it can report coherent while holding a
+  contradiction. <code>brain check</code> answers "is the harness <em>intact</em>?" and is
+  routinely read as "is the harness <em>working</em>?" Those are different questions and only
+  the first is implemented.</p>
+  <p><strong>Behavior change the user will actually notice:</strong> <code>brain ship</code>
+  stops flipping state when checks fail (today it flips anyway and says so), and
+  <code>brain check</code> starts failing on brains it used to pass.</p>
+</section>
+
+<section id="context">
+  <h2>Context — what the brain already says</h2>
+  <p>Three findings verified directly against source, not relayed:</p>
+  <table>
+    <thead><tr><th>Defect</th><th>Evidence</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Two verdict readers disagree about the same file</td>
+        <td><code>parseVerdict</code> (<code>lib/review/brain-data.js:577-584</code>) decides
+        <em>purely by emoji substring</em>, so <code>**Verdict**: PASS (live smoke…)</code>
+        returns <code>unknown</code>. <code>brainCheck:1039-1058</code> tests only for the
+        presence of <code>**Verdict**:</code>, so the same doc <strong>passes</strong>. The
+        emoji rule exists only in authoring prose (<code>playbooks.js:2494</code>).</td>
+      </tr>
+      <tr>
+        <td>State has already diverged, undetected</td>
+        <td>In the template: <code>feature_list.json</code> says <code>otel-tracing: shipped</code>;
+        <code>features/index.md:55</code> says <code>in-progress</code>. <code>brain check</code>
+        is green.</td>
+      </tr>
+      <tr>
+        <td><code>brain check</code> is not schema validation</td>
+        <td>Its first check asserts only that bytes are valid JSON.
+        <code>brain-data.js:956</code> — <code>(list &amp;&amp; list.features) || []</code> —
+        silently coerces anything else to empty. <code>status</code> is never checked against
+        <code>STATUSES</code>; <code>id</code>/<code>slug</code> uniqueness is never checked.</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Prior art in this brain:</strong> the <code>ai-work</code> plan
+  (<code>plans/2026-07-28-ai-work-harness.html</code>) built the evals subsystem this plan leans
+  on, and <code>plans/2026-07-30-launch-readiness.html</code> is the nearest prior scope call.
+  <code>feat-006 ai-work</code> currently holds the single in-progress slot.</p>
+  <p><strong>Two corrections to the audit, carried forward:</strong> <code>brain init</code>
+  already exists (it just refuses a non-empty <code>.brain/</code>), and <code>ship</code>'s
+  no-rollback is <em>documented intent</em> (<code>docs/REVIEW-ARCHITECTURE.md:534-540</code>) —
+  we are changing a decision, not fixing a bug.</p>
+</section>
+
+<section id="big-picture">
+  <h2>Big picture</h2>
+  <figure>
+  <svg class="arch-diagram" viewBox="0 0 640 300" width="100%" role="img"
+       aria-label="Today ship writes state then validates; proposed ship validates a projection then writes">
+    <defs>
+      <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6"
+              markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#73726c"></path>
+      </marker>
+    </defs>
+    <text x="20" y="24" class="box-label" font-weight="600">Today</text>
+    <rect class="box" x="20" y="38" width="120" height="46" rx="8"></rect>
+    <text x="80" y="66" class="box-label" text-anchor="middle">ship</text>
+    <line class="arrow bad" x1="140" y1="61" x2="215" y2="61"></line>
+    <rect class="box" x="220" y="38" width="150" height="46" rx="8"></rect>
+    <text x="295" y="59" class="box-label" text-anchor="middle">WRITE state</text>
+    <text x="295" y="75" class="box-label" text-anchor="middle" font-size="11">:1025 + :1033</text>
+    <line class="arrow" x1="370" y1="61" x2="445" y2="61"></line>
+    <rect class="box" x="450" y="38" width="150" height="46" rx="8"></rect>
+    <text x="525" y="59" class="box-label" text-anchor="middle">brainCheck</text>
+    <text x="525" y="75" class="box-label" text-anchor="middle" font-size="11">:1037 → exit 1</text>
+    <text x="450" y="105" class="box-label" font-size="11" fill="#d97757">lie persisted</text>
+
+    <text x="20" y="170" class="box-label" font-weight="600">Proposed</text>
+    <rect class="box" x="20" y="184" width="120" height="46" rx="8"></rect>
+    <text x="80" y="212" class="box-label" text-anchor="middle">ship</text>
+    <line class="arrow" x1="140" y1="207" x2="215" y2="207"></line>
+    <rect class="box" x="220" y="184" width="150" height="46" rx="8"></rect>
+    <text x="295" y="205" class="box-label" text-anchor="middle">project + validate</text>
+    <text x="295" y="221" class="box-label" text-anchor="middle" font-size="11">in memory</text>
+    <line class="arrow" x1="370" y1="207" x2="445" y2="207"></line>
+    <rect class="box" x="450" y="184" width="150" height="46" rx="8"></rect>
+    <text x="525" y="205" class="box-label" text-anchor="middle">WRITE atomic</text>
+    <text x="525" y="221" class="box-label" text-anchor="middle" font-size="11">only on pass</text>
+    <text x="220" y="252" class="box-label" font-size="11">fail → nothing written, exit 1</text>
+  </svg>
+  <figcaption>The one-line summary of Phase 1: move the validation in front of the write.</figcaption>
+  </figure>
+</section>
+
+<section id="product-decisions">
+  <h2>Product decisions</h2>
+  <table>
+    <thead><tr><th>Question</th><th>Call</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>Do existing brains break?</td><td>No — <code>--strict</code> for one release, then default</td>
+        <td>Read-compat is a declared rule (<code>rules/review-server.md:13</code>). A hard cutover would red-CI every install on upgrade.</td></tr>
+      <tr><td>Does a clone keep the template's stack docs?</td><td>Yes — wipe state, keep docs</td>
+        <td>The clone inherits the stack, so <code>rules/</code>, <code>recipes/</code>, <code>codebase/</code> are earned context; <code>features/</code>, <code>runs/</code>, <code>plans/</code> are another project's history.</td></tr>
+      <tr><td>Does <code>ship</code> keep its honest-report behavior?</td><td>No — preflight replaces it</td>
+        <td>Reporting a failure loudly is good; persisting the bad state anyway is what makes later reads wrong.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="decisions">
+  <h2>Decisions needed</h2>
+
+  <div class="decision-card" id="decision-ci" data-brain-action>
+    <p><strong>1. brain-axi has no CI at all. Add one?</strong> <code>skill --check</code> is
+    called "intended for CI" in four places and no workflow exists. Phase 1 adds a state-invariant
+    script that is worthless if nothing runs it.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-ci" id="opt-ci-gha"
+            value="GitHub Actions running brain verify --stage baseline" checked data-brain-action></td>
+          <td><label for="opt-ci-gha">GitHub Actions on PR
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Gates actually gate; PRs already used (#4–#16)</td>
+          <td>First CI surface in a repo that deliberately has none</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-ci" id="opt-ci-local"
+            value="Keep agent-run only, no CI" data-brain-action></td>
+          <td><label for="opt-ci-local">Keep agent-run only</label></td>
+          <td>Zero new surface; matches current policy</td>
+          <td>Every invariant depends on someone remembering</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-ci', 'Add CI to brain-axi?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-ci"></span>
+  </div>
+
+  <div class="decision-card" id="decision-eval-kind" data-brain-action>
+    <p><strong>2. Which eval kind scores the design-critic suite?</strong>
+    <code>EVAL_KINDS</code> offers <code>assertions | rubric | judge | human</code>. The suite
+    judges whether a rendered surface looks templated — from screenshots.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Can see</th><th>Cannot see</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-eval-kind" id="opt-ek-judge"
+            value="judge — model scores against the anti-slop checklist" checked data-brain-action></td>
+          <td><label for="opt-ek-judge">judge <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Whether the critic's verdict matches a known-bad/known-good label</td>
+          <td>Costs model calls per run; judge itself can drift</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-eval-kind" id="opt-ek-assert"
+            value="assertions — deterministic checks on critic output shape" data-brain-action></td>
+          <td><label for="opt-ek-assert">assertions</label></td>
+          <td>That the critic emitted a verdict + P0-P3 findings at all</td>
+          <td>Nothing about whether the verdict is <em>right</em></td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-eval-kind" id="opt-ek-human"
+            value="human — sampled human review" data-brain-action></td>
+          <td><label for="opt-ek-human">human sample</label></td>
+          <td>Ground truth</td>
+          <td>Does not run in CI; no regression gate</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-eval-kind', 'Which eval kind for the design-critic suite?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-eval-kind"></span>
+  </div>
+
+  <div class="decision-card" id="decision-model-pin" data-brain-action>
+    <p><strong>3. Model pin for the eval judge.</strong> Sets both the quality ceiling and the
+    bill. <code>suite.json</code> carries a <code>model</code> field today that nothing validates.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Tradeoff</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-model-pin" id="opt-mp-opus"
+            value="claude-opus-5 — highest judgment quality" checked data-brain-action></td>
+          <td><label for="opt-mp-opus">claude-opus-5 <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Best at "does this look generic" — the whole point. Highest cost, but the suite is opt-in and small.</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-model-pin" id="opt-mp-sonnet"
+            value="claude-sonnet-5 — cheaper, run more often" data-brain-action></td>
+          <td><label for="opt-mp-sonnet">claude-sonnet-5</label></td>
+          <td>~cheap enough to run per-PR; may miss subtle slop the checklist targets.</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-model-pin', 'Model pin for the eval judge?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-model-pin"></span>
+  </div>
+
+  <div class="decision-card" id="decision-gates-log" data-brain-action>
+    <p><strong>4. Where do gate-execution rows land?</strong> <code>brain verify</code> currently
+    persists nothing unless <code>--feature</code> is passed, and then only as prose in a markdown
+    fence.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-gates-log" id="opt-gl-global"
+            value=".brain/runs/gates.jsonl — one global append-only log" checked data-brain-action></td>
+          <td><label for="opt-gl-global">Global <code>runs/gates.jsonl</code>
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>One file to aggregate; works for gates with no feature</td>
+          <td>Grows unbounded; needs rotation eventually</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-gates-log" id="opt-gl-feature"
+            value="per-feature gates.jsonl under features/<slug>/" data-brain-action></td>
+          <td><label for="opt-gl-feature">Per-feature</label></td>
+          <td>Co-located with the feature, mirrors evals layout</td>
+          <td>Baseline runs belong to no feature; cross-feature metrics need a merge</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-gates-log', 'Where do gate-execution rows land?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-gates-log"></span>
+  </div>
+</section>
+
+<section id="prompt-contract">
+  <h2>Prompt contract</h2>
+  <p>This plan changes no product prompt. It puts an <em>existing</em> one under measurement —
+  <code>design-critic</code> (<code>.claude/agents/design-critic.md</code>, 150 lines, in the
+  template).</p>
+  <table>
+    <thead><tr><th>Field</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td>Job</td><td>Judge a rendered surface for generic-AI-design tells and return a SHIP / DO NOT SHIP verdict with P0-P3 findings.</td></tr>
+      <tr><td>Inputs</td><td>Screenshots only (never source) — 1-6 PNGs, ~200KB-2MB each, plus the anti-slop checklist.</td></tr>
+      <tr><td>Output shape</td><td>Per-tell verdicts + findings list + one overall verdict. The eval parses the overall verdict.</td></tr>
+      <tr><td>Known failure modes</td><td>Praise-bias (refuses to fail anything); over-triggering on deliberate minimalism; verdict prose without a parseable token.</td></tr>
+      <tr><td>Model + settings</td><td>Decision card 3.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="eval-plan">
+  <h2>Eval plan + golden set</h2>
+  <p><strong>Building the suite is step one</strong> — there is no baseline number, because
+  <code>brain evals</code> reports <code>0 suites</code> in both repos.</p>
+  <table>
+    <thead><tr><th>Band</th><th>Cases</th><th>Source</th></tr></thead>
+    <tbody>
+      <tr><td>Typical</td><td>4-6</td><td>real — the template's 33 committed screenshots</td></tr>
+      <tr><td>Edge</td><td>2-3</td><td>real — deliberate minimalism that must NOT be failed</td></tr>
+      <tr><td>Adversarial</td><td>3-4</td><td>real — the <code>/demo</code> slop postmortem, the surface that shipped and was cut</td></tr>
+      <tr><td>Refusal-correct</td><td>2</td><td>synthetic — non-UI screenshots the critic should decline to judge</td></tr>
+    </tbody>
+  </table>
+  <p>Held-out slice: two adversarial cases withheld from any prompt iteration, so improvement
+  cannot be fit to the test. Every defect in this audit gets frozen as a regression case via
+  <code>brain evals golden freeze</code>.</p>
+</section>
+
+<section id="plan-of-record">
+  <h2>Plan of record</h2>
+  <ol id="list-plan" data-list-section="plan-of-record">
+    <li><strong>Phase 1.0 — make the CLI verifiable.</strong> Acceptance:
+      <code>scripts/check-state-invariants.mjs</code> builds synthetic brains in a temp dir and
+      asserts <code>brainCheck</code> verdicts; registered in <code>.brain/verify.json</code>;
+      <code>brain verify --stage baseline</code> green.
+      <details><summary>Why first?</summary><p>brain-axi has zero automated tests by policy.
+      Every later item is unfalsifiable without this, and "eyeball the TOON" does not survive a
+      refactor of the thing producing the TOON.</p></details></li>
+    <li><strong>Phase 1.1-1.2 — schema + preflight ship + atomic writes.</strong> Acceptance:
+      <code>brain check</code> fails on duplicate slugs, bad status, shipped-without-evidence;
+      <code>ship</code> against a failing brain leaves <code>feature_list.json</code>
+      byte-identical (<code>git diff</code> empty) and exits 1; all three writers go through
+      <code>writeFileAtomic</code>.</li>
+    <li><strong>Phase 1.3-1.5 — one verdict parser, commit-bound evidence, shipped⇒PASS.</strong>
+      Acceptance: the template's OTEL doc reports <code>PASS</code> from both readers;
+      <code>unknown</code> is a failing row; docs without the frontmatter block report
+      <code>legacy</code> not <code>fail</code>; <code>--strict</code> flags the 2-of-7 coverage gap.</li>
+    <li><strong>Phase 1.6-1.9 — state-only init, metrics, generated index, small defects.</strong>
+      Acceptance: <code>init --state-only</code> on a copy leaves <code>rules/</code> +
+      <code>recipes/</code> intact and <code>brain check</code> green;
+      <code>brain metrics</code> non-empty after three <code>verify</code> runs.</li>
+    <li><strong>Phase 2 — template consumes it.</strong> Acceptance: <code>.brain/verify.json</code>
+      declares the real gates and <code>/verify-done</code> calls the registry; the AST checker
+      catches all four fixtures grep missed; new e2e specs green; design-critic suite clears its
+      threshold; fresh clone yields an empty cursor.</li>
+  </ol>
+  <button type="button" class="btn-add" data-brain-action
+    data-list-add="plan-of-record">+ Add phase</button>
+</section>
+
+<section id="files-changed">
+  <h2>Files that change</h2>
+  <table>
+    <thead><tr><th>Path</th><th>Change</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td><code>lib/state.js</code></td><td>new</td>
+        <td>Schema, validator, <code>parseVerdict</code>, <code>writeFileAtomic</code>, <code>saveFeatureList</code> — shared by <code>bin/</code> and <code>lib/review/</code></td></tr>
+      <tr><td><code>bin/brain.js</code></td><td>edit</td>
+        <td><code>cmdShip</code> reorder; <code>init --state-only</code>; <code>metrics</code> command; <code>skillContent()</code></td></tr>
+      <tr><td><code>lib/review/brain-data.js</code></td><td>edit</td>
+        <td><code>brainCheck</code> uses the validator; <code>parseVerdict</code> moves out; screenshot-link check</td></tr>
+      <tr><td><code>scripts/check-state-invariants.mjs</code></td><td>new</td>
+        <td>The regression net for 1.1-1.5</td></tr>
+      <tr><td><code>.github/workflows/ci.yml</code></td><td>new</td>
+        <td>Pending decision card 1</td></tr>
+      <tr><td><code>docs/REVIEW-ARCHITECTURE.md</code></td><td>edit</td>
+        <td>Binding contract: <code>ship</code> order at <code>:534-540</code>, plus a <code>lib/state.js</code> addendum</td></tr>
+      <tr><td><code>.brain/rules/index.md</code>, <code>.brain/HARNESS.md</code>, <code>.brain/CHANGELOG.md</code></td><td>edit</td>
+        <td>New module ownership entry + harness-shift row</td></tr>
+      <tr><td colspan="3"><em>Template repo (Phase 2)</em></td></tr>
+      <tr><td><code>.brain/verify.json</code>, <code>scripts/check-non-negotiables.ts</code></td><td>new</td>
+        <td>Gate registry; AST checker replacing the grep sweep</td></tr>
+      <tr><td><code>scripts/first-time-setup.ts</code>, <code>scripts/harness-check.sh</code>, <code>.github/workflows/ci.yml</code></td><td>edit</td>
+        <td>Call <code>init --state-only</code>; fail loudly when <code>brain</code> is absent; pin bun</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="golden-path">
+  <h2>Golden path</h2>
+  <ol>
+    <li>Agent finishes a feature and runs <code>brain verify --stage verify</code>. Each check's
+      <code>{status, exit, seconds}</code> appends a row to <code>gates.jsonl</code> stamped with
+      branch + commit.</li>
+    <li>Agent writes a verification doc with the <code>brain:verification</code> block —
+      verdict, the commit it was verified at, the commands and their exit codes, the screenshots.</li>
+    <li><code>brain ship &lt;slug&gt; --evidence "…"</code>. It projects the next state, runs
+      <code>brainCheck</code> against the projection: schema valid, one-in-progress honored,
+      doc paths resolve, verdict parses to PASS, screenshot links resolve.</li>
+    <li>All pass → atomic write of <code>feature_list.json</code>, checkpoint appended, exit 0.</li>
+    <li><code>brain metrics</code> now answers "did the gates catch anything, and how often did
+      we pass first try" — the question the harness could not answer before.</li>
+  </ol>
+</section>
+
+<section id="error-paths">
+  <h2>Error paths</h2>
+  <table>
+    <thead><tr><th>Failure</th><th>Detected by</th><th>Handled</th><th>Operator sees</th></tr></thead>
+    <tbody>
+      <tr><td>Checks fail during <code>ship</code></td><td>preflight <code>brainCheck</code></td>
+        <td>Nothing written</td><td><code>checks[]</code> table + exit 1; state unchanged</td></tr>
+      <tr><td>Verdict doc has no emoji and no bare keyword</td><td>unified <code>parseVerdict</code></td>
+        <td>Failing check row</td><td><code>verdict unparseable</code> + the accepted forms in <code>help[]</code></td></tr>
+      <tr><td>Verdict doc predates the frontmatter block</td><td><code>parseVerdict</code></td>
+        <td><code>legacy</code>, not <code>fail</code></td><td>Row saying strict mode will require it</td></tr>
+      <tr><td>Not a git repo</td><td><code>gitCommit()</code> returns <code>""</code></td>
+        <td>Evidence recorded without provenance</td><td>Existing degrade path, unchanged</td></tr>
+      <tr><td>Crash mid-write</td><td>—</td><td>temp + <code>renameSync</code></td>
+        <td>Either old or new file, never a truncated one</td></tr>
+      <tr><td><code>init --state-only</code> in a non-interactive shell</td><td>tty check</td>
+        <td>Refuses</td><td>Exit 2 + <code>--yes</code> hint</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="testing-plan">
+  <h2>Testing plan</h2>
+  <ul class="checklist" id="list-testing" data-list-section="testing-plan">
+    <li>Synthetic brains: <code>{}</code>, <code>[]</code>, <code>"hello"</code>, duplicate slug,
+      duplicate id, unknown status, shipped-without-evidence — each must produce a specific
+      failing row, not a crash and not a pass.</li>
+    <li>Both verdict styles (emoji and bare word) parse identically from both readers.</li>
+    <li><code>ship</code> atomicity proven with <code>git diff</code> after a failing preflight.</li>
+    <li><code>init --state-only</code> on a copy of the template brain: state gone, stack docs intact.</li>
+    <li>AST checker fixtures that must each fail: <code>throw err</code>, bare <code>try {}</code>,
+      single-quoted zod import, a new untested exported helper.</li>
+    <li>Clone simulation: fresh clone → <code>bun setup</code> → <code>brain progress</code>
+      returns an empty cursor, not v1.6.0.</li>
+    <li>Regression: the template's <code>./scripts/harness-check.sh</code> still passes 10/10.</li>
+    <li><strong>Regression gate (evals):</strong> every frozen case must pass — a frozen failure
+      is an unconditional fail regardless of aggregate. Aggregate gets
+      <code>aggregate_tolerance: 0.02</code> against the prior run.
+      <mark>Revert trigger: any frozen case flips, or the held-out slice drops while the visible
+      set improves</mark> (that pattern means the prompt was fit to the test).</li>
+  </ul>
+  <button type="button" class="btn-add" data-brain-action
+    data-list-add="testing-plan">+ Add check</button>
+</section>
+
+<section id="open-questions">
+  <h2>Open questions</h2>
+  <ul id="list-open" data-list-section="open-questions">
+    <li>Does <code>--strict</code> get a deprecation date, or live indefinitely as an opt-in?
+      Leaning: one release, then default, then delete the flag.</li>
+    <li>Should <code>brain check</code> gain a machine-readable <code>--json</code> output for CI,
+      or is the TOON contract sufficient to parse?</li>
+    <li>Cross-client hook parity (Codex, Cursor, Aider get no rule routing) — documented as a
+      known limitation for now. Worth its own plan?</li>
+    <li><code>EVAL_KINDS</code> is validated but never branched on. Honor it, or relabel it as
+      metadata?</li>
+  </ul>
+  <button type="button" class="btn-add" data-brain-action
+    data-list-add="open-questions">+ Add question</button>
+</section>
+
+<script>
+  function queueDecision(cardId, question) {
+    var card = document.getElementById(cardId);
+    var checked = card.querySelector('input[type="radio"]:checked');
+    if (!checked) return;
+    var choice = checked.value;
+    if (window.brain && typeof window.brain.queuePrompt === "function") {
+      window.brain.queuePrompt({
+        tag: "decision",
+        queueKey: cardId,
+        prompt: question + ": " + choice,
+        target: { type: "decision", question: question, choice: choice }
+      });
+    }
+    var ack = document.getElementById("ack-" + cardId);
+    if (ack) ack.textContent = "Queued: " + choice;
+  }
+</script>
+
+<script>
+  (function () {
+    function queueList(section, queueKey, prompt, action, item, index) {
+      if (window.brain && typeof window.brain.queuePrompt === "function") {
+        window.brain.queuePrompt({
+          tag: "list-edit",
+          queueKey: queueKey,
+          prompt: prompt,
+          target: { type: "list-edit", section: section, action: action, item: item, index: index }
+        });
+      }
+    }
+
+    function textOf(li) {
+      return (li.textContent || "").replace(/\s+/g, " ").trim().slice(0, 300);
+    }
+
+    function indexOf(li) {
+      var parent = li.parentElement;
+      return Array.prototype.indexOf.call(parent.children, li);
+    }
+
+    function decorate(list) {
+      var section = list.getAttribute("data-list-section");
+      Array.prototype.forEach.call(list.children, function (li) {
+        if (li.querySelector("[data-list-toggle]")) return;
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "btn-item";
+        btn.setAttribute("data-list-toggle", "");
+        btn.setAttribute("data-brain-action", "");
+        btn.textContent = "×";
+        btn.title = "Remove / restore this item";
+        li.appendChild(document.createTextNode(" "));
+        li.appendChild(btn);
+      });
+      list.setAttribute("data-decorated", "true");
+      return section;
+    }
+
+    document.addEventListener("click", function (e) {
+      var toggle = e.target.closest && e.target.closest("[data-list-toggle]");
+      if (toggle) {
+        var li = toggle.closest("li");
+        var list = li.parentElement;
+        var section = list.getAttribute("data-list-section");
+        var i = indexOf(li);
+        var removed = li.classList.toggle("item-removed");
+        queueList(
+          section,
+          section + ":" + i,
+          (removed ? "Remove from " : "Restore in ") + section + ": " + textOf(li),
+          removed ? "remove" : "restore",
+          textOf(li),
+          i
+        );
+        return;
+      }
+
+      var add = e.target.closest && e.target.closest("[data-list-add]");
+      if (add) {
+        var sec = add.getAttribute("data-list-add");
+        var text = window.prompt("New item for " + sec + ":");
+        if (!text) return;
+        var target = document.querySelector('[data-list-section="' + sec + '"]');
+        var item = document.createElement("li");
+        item.textContent = text;
+        target.appendChild(item);
+        decorate(target);
+        queueList(sec, sec + ":add:" + text.slice(0, 24), "Add to " + sec + ": " + text,
+          "add", text, indexOf(item));
+      }
+    });
+
+    document.addEventListener("dblclick", function (e) {
+      var li = e.target.closest && e.target.closest("[data-list-section] > li");
+      if (!li) return;
+      var list = li.parentElement;
+      var section = list.getAttribute("data-list-section");
+      var i = indexOf(li);
+      var next = window.prompt("Rewrite this item:", textOf(li));
+      if (!next) return;
+      li.textContent = next;
+      decorate(list);
+      queueList(section, section + ":" + i, "Rewrite in " + section + ": " + next,
+        "rewrite", next, i);
+    });
+
+    Array.prototype.forEach.call(
+      document.querySelectorAll("[data-list-section]"), decorate
+    );
+  })();
+</script>
+
+</body>
+</html>
