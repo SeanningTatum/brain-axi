@@ -1,6 +1,6 @@
 {
   "name": "brain-axi",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "AXI-compliant CLI for querying and updating a .brain agent harness directory",
   "type": "module",
   "bin": {
