@@ -1375,6 +1375,26 @@ function rowStatus(checks, name) {
     gate.map((r) => `${r.check}: ${r.detail}`).join(" | ")
   );
 
+  // A MISSING FEATURE DOC on the unrelated feature, too. This row was the ONE
+  // per-feature check the scope pass missed: every other one was narrowed while
+  // this kept sweeping the whole tracker, so unrelated documentation debt still
+  // refused a valid ship. Found by an independent reviewer rather than by the
+  // fixtures above — none of them deleted a doc belonging to a DIFFERENT
+  // feature, so the whole class was untested.
+  fs.rmSync(path.join(brain, "features", "rotten", "rotten.md"));
+  const docAudit = brainCheck(brain).filter((r) => r.status === "fail");
+  ok(
+    "unscoped, a missing doc on another feature is reported",
+    docAudit.some((r) => r.check === "every feature doc path resolves"),
+    docAudit.map((r) => r.check).join(", ") || "nothing failed"
+  );
+  const docGate = brainCheck(brain, { strict: true, scope: "fresh" }).filter((r) => r.status === "fail");
+  ok(
+    "scoped, a missing doc on another feature does NOT block",
+    !docGate.some((r) => r.check === "every feature doc path resolves"),
+    docGate.map((r) => `${r.check}: ${r.detail}`).join(" | ")
+  );
+
   // And end-to-end through the CLI: the ship must actually go through.
   const res = spawnSync(
     process.execPath,
