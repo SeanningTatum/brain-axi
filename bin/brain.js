@@ -1809,8 +1809,21 @@ function cmdTasks(argv) {
   // subcommand name unless it starts with --". Only dispatch to a named
   // subcommand when argv[0] actually IS one of the five verbs below;
   // otherwise the whole argv (slug included) passes through to list.
-  const sub = argv[0] && TASKS_SUBCOMMANDS.includes(argv[0]) ? argv[0] : "list";
-  const rest = sub === argv[0] ? argv.slice(1) : argv;
+  //
+  // A feature slugged like a verb ("release", "done") used to be unreachable:
+  // `brain tasks release` read as the verb, then failed for a missing <slug>.
+  // A verb needs a following argument to be a verb at all — every one of them
+  // takes at least a slug — so a bare `tasks <verb>` is the list form. An
+  // explicit `list` verb is the escape hatch for the remaining ambiguity, and
+  // it is documented in --help rather than working by accident.
+  // Every verb takes a positional immediately (`view <slug> <id>`,
+  // `claim <slug> <id>`, `add <slug>`), so a verb-shaped argv[0] followed by a
+  // flag — or by nothing — is a slug, not a verb.
+  const isVerb =
+    argv[0] && TASKS_SUBCOMMANDS.includes(argv[0]) && argv[1] && !argv[1].startsWith("-");
+  if (argv[0] === "list") return cmdTasksList(argv.slice(1));
+  const sub = isVerb ? argv[0] : "list";
+  const rest = isVerb ? argv.slice(1) : argv;
   if (sub === "view") return cmdTasksView(rest);
   if (sub === "add") return cmdTasksAdd(rest);
   if (sub === "claim") return cmdTasksClaim(rest);
@@ -1830,7 +1843,11 @@ function cmdTasksList(argv) {
       "tasks",
       "List tasks for a feature from features/<slug>/tasks.json",
       spec,
-      ["brain tasks task-coordination", "brain tasks task-coordination --status open"],
+      [
+        "brain tasks task-coordination",
+        "brain tasks task-coordination --status open",
+        "brain tasks list release   (explicit `list` — needed only when a slug is spelled like a verb)",
+      ],
       ["<slug> — feature slug from `brain features`"]
     );
   const slug = positionals[0];

@@ -48,13 +48,16 @@
     {
       "id": "t4",
       "title": "Harden the lock + close audit findings",
-      "status": "open",
+      "status": "done",
       "acceptance": "Regression tests for the stale-lock steal path: a backdated lock stolen from a LIVE holder must leave the victim refusing with reason lock-lost, tasks.json byte-identical, and the thief's lock intact after the victim's cleanup (the ownership-checked release). Plus: brain tasks dispatch must not break when a feature slug shadows a verb (view|add|claim|done|release) — currently 'brain tasks release' on a feature slugged release exits 2; document the list verb. Plus: decide receipt-without-commit — either require commit when receipt is present, or state it is reserved for a later phase.",
       "files": [
         "lib/state.js",
         "bin/brain.js",
         "scripts/check-state-invariants.mjs"
-      ]
+      ],
+      "owner": "coordinator",
+      "claimed_at": "2026-08-06T23:55:27.878Z",
+      "evidence": "Lock hardened: ownership token + pre-write ownership re-check; 4 new assertions verified to FAIL against the reverted rules (stolen-from holder wrote anyway, victim deleted the thief's live lock) and pass against the fix. Stale-breaker still recovers an abandoned lock. Verb/slug collision fixed — 'brain tasks release' on a feature slugged release now lists (was exit 2); explicit 'list' verb documented in --help. receipt.commit now required whenever a receipt is present. 375 assertions, check 18/18, strict 21/21, verify 4/4, skill clean."
     }
   ]
 }

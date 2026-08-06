@@ -2047,6 +2047,98 @@ ok("unblockedTasks on null is []", unblockedTasks(null).length === 0);
       `${lockLeaks} trial(s) left a .lock behind`
     );
   }
+
+  // ---------------------------------------------------------------------------
+  // The stale-lock STEAL path. Every claimer above finishes in milliseconds, so
+  // none of them can approach LOCK_STALE_MS — meaning the age-based breaker and
+  // the ownership rules had no coverage at all, only prose in a commit message.
+  // Adversarial review then broke exactly that gap: a holder whose section
+  // overran the threshold had its lock stolen, and its own cleanup deleted the
+  // THIEF's live lock, letting a third process in. Two processes in one critical
+  // section — the failure the lock exists to prevent.
+  //
+  // These assert the two rules that close it: a stolen-from holder writes
+  // nothing, and a holder releases only its own lock.
+  // ---------------------------------------------------------------------------
+  {
+    const brain = path.join(tmpRoot, "lock-steal", ".brain");
+    fs.mkdirSync(path.join(brain, "features", "demo"), { recursive: true });
+    const file = tasksPath(brain, "demo");
+    const lockPath = `${file}.lock`;
+    const seed = {
+      updated: "2026-08-06",
+      feature: "demo",
+      tasks: [{ id: "t1", title: "contested", status: "open", acceptance: "one winner only" }],
+    };
+    fs.writeFileSync(file, JSON.stringify(seed, null, 2) + "\n");
+    const before = fs.readFileSync(file, "utf8");
+
+    const { data, hash } = readTasks(brain, "demo");
+    data.tasks[0].status = "claimed";
+    data.tasks[0].owner = "victim";
+    data.tasks[0].claimed_at = "2026-08-06T00:00:00.000Z";
+
+    // Steal the lock while the victim is INSIDE its critical section: fire right
+    // after it reads tasks.json for the hash compare, i.e. before its final
+    // ownership check. This is what a breaker does to a live holder.
+    const realRead = fs.readFileSync;
+    let stolen = false;
+    fs.readFileSync = function (p, ...rest) {
+      const out = realRead.call(fs, p, ...rest);
+      if (!stolen && String(p) === file) {
+        stolen = true;
+        fs.writeFileSync(lockPath, "thief-token");
+      }
+      return out;
+    };
+    let stolenFrom;
+    try {
+      stolenFrom = writeTasksCas(brain, "demo", data, hash);
+    } finally {
+      fs.readFileSync = realRead;
+    }
+
+    ok("fixture sanity: the lock was actually stolen mid-section", stolen);
+    ok(
+      "a holder whose lock was stolen mid-section REFUSES instead of writing",
+      stolenFrom.ok === false,
+      JSON.stringify(stolenFrom)
+    );
+    ok(
+      "the refusal names the lock as the reason, not a stale hash",
+      stolenFrom.reason === "lock-lost",
+      `reason was ${stolenFrom.reason}`
+    );
+    ok(
+      "a stolen-from holder leaves tasks.json BYTE-IDENTICAL",
+      fs.readFileSync(file, "utf8") === before,
+      "the stolen-from holder wrote anyway — two winners are possible"
+    );
+    ok(
+      "a holder releases only its OWN lock, never the thief's live one",
+      fs.existsSync(lockPath) && realRead.call(fs, lockPath, "utf8") === "thief-token",
+      "the victim's cleanup deleted a lock it did not own"
+    );
+
+    // And the breaker must still work, or a SIGKILLed holder wedges the feature
+    // forever — the reason stealing exists at all.
+    fs.writeFileSync(lockPath, "dead-holder");
+    const stale = new Date(Date.now() - 10 * 60_000);
+    fs.utimesSync(lockPath, stale, stale);
+    const afterDead = readTasks(brain, "demo");
+    const recovered = writeTasksCas(
+      brain,
+      "demo",
+      { ...afterDead.data, updated: "2026-08-07" },
+      afterDead.hash
+    );
+    ok(
+      "an abandoned lock older than LOCK_STALE_MS is broken, not deadlocked on",
+      recovered.ok === true,
+      JSON.stringify(recovered)
+    );
+    ok("breaking a stale lock still releases it afterwards", !fs.existsSync(lockPath));
+  }
 }
 
 // ---------------------------------------------------------------------------
