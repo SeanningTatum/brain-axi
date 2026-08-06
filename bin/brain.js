@@ -26,6 +26,7 @@ import {
 } from "../lib/review/brain-data.js";
 import {
   STATUSES,
+  FEATURE_FIELDS,
   featureListPath,
   saveFeatureList,
   writeFileAtomic,
@@ -641,7 +642,6 @@ function cmdFeatures(argv) {
   ]);
 }
 
-const FEATURE_FIELDS = ["id", "name", "slug", "status", "description", "dependencies", "evidence", "owners", "doc"];
 
 function cmdFeaturesList(argv) {
   const spec = {
