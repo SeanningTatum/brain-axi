@@ -39,6 +39,12 @@ import {
   parseReceipt,
   parseVerdictDetail,
   VERDICT_ACCEPTED,
+  TASK_STATUSES,
+  tasksPath,
+  validateTasksShape,
+  unblockedTasks,
+  readTasks,
+  writeTasksCas,
 } from "../lib/state.js";
 import { sessionKey, stateDir, listSessions } from "../lib/review/store.js";
 import { PLAYBOOKS } from "../lib/review/playbooks.js";
@@ -292,6 +298,52 @@ function loadFeatureList(brain) {
   return parsed;
 }
 
+// tasks.json read-compat loader — mirrors loadFeatureList's contract: a
+// MISSING file is legal (no tasks yet, read-compat), but a file that exists
+// and fails validateTasksShape is a hard stop, since every caller below trusts
+// data.tasks unconditionally (a non-array `tasks` would throw on the first
+// .find/.map). Returns { data, hash }; data is null only when there is no
+// file at all.
+function requireTasks(brain, slug) {
+  const { data, hash } = readTasks(brain, slug);
+  if (data === null && hash === null) return { data: null, hash: null };
+  const shapeError = validateTasksShape(data, slug);
+  if (shapeError) {
+    const rel = path.relative(process.cwd(), tasksPath(brain, slug));
+    opError(`tasks.json for "${slug}" is invalid: ${shapeError}`, [
+      `Fix ${rel} by hand, or ask the coordinator to recreate it`,
+      "Run `brain check` for the full harness invariant report",
+    ]);
+  }
+  return { data, hash };
+}
+
+// Elapsed time since an ISO timestamp, coarse and human-scale — this is what
+// makes a stale claim visible in a list row without a second `view` call.
+// Returns null on an unparsable/future timestamp rather than a nonsense value.
+function formatElapsed(iso) {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  const mins = Math.floor(ms / 60000);
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h${mins % 60}m`;
+  const days = Math.floor(hours / 24);
+  return `${days}d${hours % 24}h`;
+}
+
+// Finds a task by id or opErrors naming the known ids — the same "no such
+// slug" shape cmdFeaturesView/cmdShip already use.
+function findTaskOr404(data, slug, id) {
+  const task = data.tasks.find((t) => t.id === id);
+  if (!task)
+    opError(`no task "${id}" for "${slug}"`, [
+      `known ids: ${data.tasks.map((t) => t.id).join(", ") || "(none)"}`,
+      `Run \`brain tasks ${slug}\` to list them`,
+    ]);
+  return task;
+}
+
 // progress.md: preamble, then entries separated by lines of "---".
 function parseProgress(brain) {
   const p = path.join(brain, "runs", "progress.md");
@@ -423,6 +475,23 @@ function bodyLines(label, content, { full, limit = 1200, fullCommand }) {
     lines.push(...toonList("help", [`Run \`${fullCommand}\` to see complete ${label}`]));
   }
   return lines;
+}
+
+// Same truncation contract as bodyLines (§3: preview + total-size note + a
+// --full escape hatch only when actually truncated), but as a NESTED field
+// inside a larger indented block, and WITHOUT an embedded help line — a
+// detail view with several long fields would otherwise grow one "help[1]:"
+// block per field. The caller collects `truncated` and folds a single --full
+// hint into its own one help list instead.
+function truncatedField(label, content, { full, limit = 1200, indent = 2 } = {}) {
+  const pad = " ".repeat(indent);
+  const text = String(content ?? "");
+  const truncated = !full && text.length > limit;
+  const shown = truncated ? text.slice(0, limit) : text;
+  const lines = [`${pad}${label}: |`];
+  for (const l of shown.split("\n")) lines.push(pad + "  " + l);
+  if (truncated) lines.push(`${pad}  ... (truncated, ${text.length} chars total)`);
+  return { lines, truncated };
 }
 
 // ---------------------------------------------------------------------------
@@ -1651,6 +1720,519 @@ function cmdShip(argv) {
     ])
   );
   print(lines);
+}
+
+// ---------------------------------------------------------------------------
+// Tasks — features/<slug>/tasks.json, the coordination layer BELOW a feature
+// (lib/state.js owns the schema, cycle detection, and CAS write; this is the
+// CLI surface over it). Every mutation follows the same preflight-then-commit
+// shape as cmdShip: read → project the change → validateTasksShape the
+// PROJECTION → only then writeTasksCas with the hash from the read.
+// ---------------------------------------------------------------------------
+
+function splitCsv(v) {
+  if (!v) return [];
+  return v
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+// Auto-generated ids only ever advance past ids matching the `t<N>` scheme —
+// a hand-picked id like "spike" is a leaf as far as numbering is concerned,
+// not a reason to guess at a scheme nobody declared.
+function nextTaskId(tasks) {
+  let max = 0;
+  for (const t of tasks) {
+    const m = /^t(\d+)$/.exec(t.id);
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return `t${max + 1}`;
+}
+
+const TASKS_SUBCOMMANDS = ["view", "add", "claim", "done", "release"];
+
+function cmdTasks(argv) {
+  // Unlike cmdFeatures/cmdRuns, the DEFAULT subcommand (list) itself takes a
+  // required positional (<slug>), so argv[0] can't be blindly treated as "the
+  // subcommand name unless it starts with --". Only dispatch to a named
+  // subcommand when argv[0] actually IS one of the five verbs below;
+  // otherwise the whole argv (slug included) passes through to list.
+  const sub = argv[0] && TASKS_SUBCOMMANDS.includes(argv[0]) ? argv[0] : "list";
+  const rest = sub === argv[0] ? argv.slice(1) : argv;
+  if (sub === "view") return cmdTasksView(rest);
+  if (sub === "add") return cmdTasksAdd(rest);
+  if (sub === "claim") return cmdTasksClaim(rest);
+  if (sub === "done") return cmdTasksDone(rest);
+  if (sub === "release") return cmdTasksRelease(rest);
+  return cmdTasksList(rest);
+}
+
+function cmdTasksList(argv) {
+  const spec = {
+    "--status": { value: true, desc: `filter by status (${TASK_STATUSES.join("|")})` },
+    "--limit": { value: true, desc: "max rows (default: 100)" },
+  };
+  const { flags, positionals } = parseArgs(argv, spec, "tasks");
+  if (flags.help)
+    helpBlock(
+      "tasks",
+      "List tasks for a feature from features/<slug>/tasks.json",
+      spec,
+      ["brain tasks task-coordination", "brain tasks task-coordination --status open"],
+      ["<slug> — feature slug from `brain features`"]
+    );
+  const slug = positionals[0];
+  if (!slug) usageError("missing required argument <slug>", ["brain tasks <slug>  (see `brain features` for slugs)"]);
+  if (flags.status && !TASK_STATUSES.includes(flags.status))
+    usageError(`invalid --status "${flags.status}"`, [`valid statuses: ${TASK_STATUSES.join(", ")}`]);
+  const limit = flags.limit ? parseInt(flags.limit, 10) : 100;
+  if (!Number.isInteger(limit) || limit < 1)
+    usageError(`invalid --limit "${flags.limit}"`, ["--limit takes a positive integer"]);
+
+  const brain = findBrain(flags.brain);
+  const { data } = requireTasks(brain, slug);
+  const allTasks = data ? data.tasks : [];
+
+  if (allTasks.length === 0) {
+    print([
+      `tasks: no tasks for ${slug} yet`,
+      ...toonList("help", [`Run \`brain tasks add ${slug} --title "..." --acceptance "..."\` to add the first task`]),
+    ]);
+    return;
+  }
+
+  // Computed over the FULL list regardless of --status, so the count line
+  // always answers "how many can I hand out right now" in one call (AXI §4) —
+  // narrowing the table to one status must not narrow this number too.
+  const unblockedIds = new Set(unblockedTasks(data).map((t) => t.id));
+
+  let rows = allTasks;
+  if (flags.status) rows = rows.filter((t) => t.status === flags.status);
+  const total = rows.length;
+  rows = rows.slice(0, limit);
+
+  if (total === 0) {
+    print([
+      `tasks: 0 ${flags.status} tasks for ${slug}`,
+      ...toonList("help", [`Run \`brain tasks ${slug}\` for all tasks`]),
+    ]);
+    return;
+  }
+
+  // A claimed row is exactly where a stale claim needs to be visible without a
+  // second `view` call — folded into the owner cell rather than a 5th column
+  // so the default schema stays the 4 fields AXI §2 asks for.
+  const display = rows.map((t) => {
+    let owner = t.owner || "";
+    if (t.status === "claimed" && t.claimed_at) {
+      const elapsed = formatElapsed(t.claimed_at);
+      if (elapsed) owner = owner ? `${owner} (held ${elapsed})` : `(held ${elapsed})`;
+    }
+    return { id: t.id, title: t.title, status: t.status, owner };
+  });
+
+  const counts = {};
+  for (const t of allTasks) counts[t.status] = (counts[t.status] || 0) + 1;
+  const countParts = TASK_STATUSES.filter((s) => counts[s]).map((s) => `${counts[s]} ${s}`);
+  const countLine =
+    `${allTasks.length} task${allTasks.length === 1 ? "" : "s"} — ${countParts.join(", ")}` +
+    ` (${unblockedIds.size} unblocked)`;
+
+  const lines = [kv("count", countLine)];
+  if (rows.length < total)
+    lines.push(kv("shown", `${rows.length} of ${total}${flags.status ? ` ${flags.status}` : ""}`));
+  lines.push(...toonTable("tasks", display, ["id", "title", "status", "owner"]));
+
+  const help = [`Run \`brain tasks view ${slug} <id>\` for full details`];
+  if (rows.length < total) help.push(`Run \`brain tasks ${slug} --limit ${total}\` for all ${total}`);
+  if (unblockedIds.size) help.push(`Run \`brain tasks claim ${slug} <id> --owner <name>\` to claim an unblocked task`);
+  help.push(`Run \`brain tasks add ${slug} --title "..." --acceptance "..."\` to add another task`);
+  lines.push(...toonList("help", help));
+  print(lines);
+}
+
+function cmdTasksView(argv) {
+  const spec = { "--full": { value: false, desc: "print the complete acceptance/evidence text" } };
+  const { flags, positionals } = parseArgs(argv, spec, "tasks view");
+  if (flags.help)
+    helpBlock(
+      "tasks view",
+      "Show one task: acceptance, deps, files, owner, claimed_at, evidence, receipt, and what blocks it",
+      spec,
+      ["brain tasks view task-coordination t1", "brain tasks view task-coordination t1 --full"],
+      ["<slug> — feature slug", "<id> — task id from `brain tasks <slug>`"]
+    );
+  const [slug, id] = positionals;
+  if (!slug) usageError("missing required argument <slug>", ["brain tasks view <slug> <id>"]);
+  if (!id)
+    usageError("missing required argument <id>", [
+      `brain tasks view ${slug} <id>  (see \`brain tasks ${slug}\` for ids)`,
+    ]);
+
+  const brain = findBrain(flags.brain);
+  const { data } = requireTasks(brain, slug);
+  if (!data || data.tasks.length === 0)
+    opError(`no tasks for "${slug}" yet`, [
+      `Run \`brain tasks add ${slug} --title "..." --acceptance "..."\` to add one`,
+    ]);
+  const task = findTaskOr404(data, slug, id);
+
+  const statusById = new Map(data.tasks.map((t) => [t.id, t.status]));
+  const deps = task.depends_on || [];
+  const blockedBy = deps.filter((d) => statusById.get(d) !== "done");
+
+  const lines = ["task:"];
+  lines.push(kv("id", task.id, 2));
+  lines.push(kv("title", task.title, 2));
+  lines.push(kv("status", task.status, 2));
+  lines.push(kv("owner", task.owner || "none", 2));
+  lines.push(kv("claimed_at", task.claimed_at || "none", 2));
+  if (task.status === "claimed" && task.claimed_at) {
+    const elapsed = formatElapsed(task.claimed_at);
+    if (elapsed) lines.push(kv("held", elapsed, 2));
+  }
+  lines.push(kv("depends_on", deps.length ? deps.join(" ") : "none", 2));
+  lines.push(kv("blocked_by", blockedBy.length ? blockedBy.join(" ") : "none", 2));
+  lines.push(kv("files", (task.files || []).length ? task.files.join(" ") : "none", 2));
+
+  let truncatedAny = false;
+  const acceptance = truncatedField("acceptance", task.acceptance, { full: !!flags.full });
+  lines.push(...acceptance.lines);
+  truncatedAny = truncatedAny || acceptance.truncated;
+
+  if (task.evidence) {
+    const evidence = truncatedField("evidence", task.evidence, { full: !!flags.full });
+    lines.push(...evidence.lines);
+    truncatedAny = truncatedAny || evidence.truncated;
+  } else {
+    lines.push(kv("evidence", "none", 2));
+  }
+
+  if (task.receipt && task.receipt.commit) {
+    lines.push("  receipt:");
+    lines.push(kv("commit", task.receipt.commit, 4));
+    if (task.receipt.verified_by) lines.push(kv("verified_by", task.receipt.verified_by, 4));
+    if (task.receipt.commands) lines.push(kv("commands", task.receipt.commands, 4));
+  } else {
+    lines.push(kv("receipt", "none", 2));
+  }
+
+  const help = [];
+  if (truncatedAny) help.push(`Run \`brain tasks view ${slug} ${id} --full\` to see the untruncated text`);
+  if (task.status === "open" && blockedBy.length === 0)
+    help.push(`Run \`brain tasks claim ${slug} ${id} --owner <name>\` to claim it`);
+  if (task.status === "open" && blockedBy.length)
+    help.push(`Blocked on ${blockedBy.join(", ")} — run \`brain tasks view ${slug} <blocker-id>\` to check them`);
+  if (task.status === "claimed") {
+    help.push(`Run \`brain tasks done ${slug} ${id} --evidence "..."\` once it is demonstrably done`);
+    help.push(`Run \`brain tasks release ${slug} ${id}\` to drop a stale claim`);
+  }
+  help.push(`Run \`brain tasks ${slug}\` to see all tasks`);
+  lines.push(...toonList("help", help));
+  print(lines);
+}
+
+function cmdTasksAdd(argv) {
+  const spec = {
+    "--title": { value: true, desc: "task title (required)" },
+    "--acceptance": { value: true, desc: "what makes this task checkably done (required)" },
+    "--depends-on": { value: true, desc: "comma-separated task ids this depends on" },
+    "--files": { value: true, desc: "comma-separated file paths this task touches" },
+    "--id": { value: true, desc: "task id (default: auto-generated t1, t2, ... from the current max)" },
+  };
+  const { flags, positionals } = parseArgs(argv, spec, "tasks add");
+  if (flags.help)
+    helpBlock(
+      "tasks add",
+      "Add a task to features/<slug>/tasks.json (creates the file on the first task)",
+      spec,
+      [
+        'brain tasks add task-coordination --title "The record" --acceptance "lib/state.js schema + CAS write, green"',
+        'brain tasks add task-coordination --title "The gate" --acceptance "..." --depends-on t1 --files lib/state.js,bin/brain.js',
+      ],
+      ["<slug> — feature slug from `brain features`"]
+    );
+  const slug = positionals[0];
+  if (!slug)
+    usageError("missing required argument <slug>", ['brain tasks add <slug> --title "..." --acceptance "..."']);
+  if (!flags.title || !flags.title.trim())
+    usageError("--title is required", [`brain tasks add ${slug} --title "..." --acceptance "..."`]);
+  if (!flags.acceptance || !flags.acceptance.trim())
+    usageError("--acceptance is required", [`brain tasks add ${slug} --title "${flags.title}" --acceptance "..."`]);
+
+  const brain = findBrain(flags.brain);
+  const { data, hash } = requireTasks(brain, slug);
+  const existing = data ? data.tasks : [];
+
+  let id = flags.id;
+  if (id) {
+    if (existing.some((t) => t.id === id))
+      opError(`task id "${id}" already exists for "${slug}"`, [
+        `known ids: ${existing.map((t) => t.id).join(", ")}`,
+        "Omit --id to auto-generate the next one",
+      ]);
+  } else {
+    id = nextTaskId(existing);
+  }
+
+  const dependsOn = splitCsv(flags["depends-on"]);
+  const files = splitCsv(flags.files);
+
+  const newTask = { id, title: flags.title, status: "open", acceptance: flags.acceptance };
+  if (dependsOn.length) newTask.depends_on = dependsOn;
+  if (files.length) newTask.files = files;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const projected = { ...(data || {}), feature: slug, updated: today, tasks: [...existing, newTask] };
+
+  // PREFLIGHT, then commit — the same order cmdShip enforces: validate the
+  // PROJECTED state before any write, so a bad --depends-on or a cycle leaves
+  // the file exactly as it was rather than writing first and reporting after.
+  const shapeError = validateTasksShape(projected, slug);
+  if (shapeError)
+    opError(`refused — ${shapeError}`, [
+      "Nothing was written",
+      `Run \`brain tasks ${slug}\` to see existing ids before retrying`,
+    ]);
+
+  const result = writeTasksCas(brain, slug, projected, hash);
+  if (!result.ok)
+    opError(result.message, [`Run \`brain tasks ${slug}\` to re-read the current state, then retry`]);
+
+  print([
+    "task:",
+    kv("slug", slug, 2),
+    kv("id", id, 2),
+    kv("title", flags.title, 2),
+    kv("status", "open", 2),
+    ...(dependsOn.length ? [kv("depends_on", dependsOn.join(" "), 2)] : []),
+    ...toonList("help", [
+      `Run \`brain tasks view ${slug} ${id}\` to see it in full`,
+      `Run \`brain tasks claim ${slug} ${id} --owner <name>\` to claim it`,
+      `Run \`brain tasks add ${slug} --title "..." --acceptance "..."\` to add another`,
+    ]),
+  ]);
+}
+
+function cmdTasksClaim(argv) {
+  const spec = { "--owner": { value: true, desc: "who is claiming this task (required)" } };
+  const { flags, positionals } = parseArgs(argv, spec, "tasks claim");
+  if (flags.help)
+    helpBlock(
+      "tasks claim",
+      "Claim an open task (compare-and-swap — refuses if held by someone else or blocked by an unfinished dependency)",
+      spec,
+      ["brain tasks claim task-coordination t2 --owner worker-a"],
+      ["<slug> — feature slug", "<id> — task id from `brain tasks <slug>`"]
+    );
+  const [slug, id] = positionals;
+  if (!slug) usageError("missing required argument <slug>", ["brain tasks claim <slug> <id> --owner <name>"]);
+  if (!id) usageError("missing required argument <id>", [`brain tasks claim ${slug} <id> --owner <name>`]);
+  if (!flags.owner || !flags.owner.trim())
+    usageError("--owner is required", [`brain tasks claim ${slug} ${id} --owner <name>`]);
+
+  const brain = findBrain(flags.brain);
+  const { data, hash } = requireTasks(brain, slug);
+  if (!data || data.tasks.length === 0)
+    opError(`no tasks for "${slug}" yet`, [
+      `Run \`brain tasks add ${slug} --title "..." --acceptance "..."\` to add one`,
+    ]);
+  const task = findTaskOr404(data, slug, id);
+
+  if (task.status === "claimed") {
+    // Idempotent no-op when the caller already holds it (AXI §6) — a worker
+    // re-asserting its own claim (e.g. after a retry) is not an error.
+    if (task.owner === flags.owner) {
+      print([
+        `task: ${slug}/${id} already claimed by ${flags.owner} (no-op)`,
+        ...toonList("help", [
+          `Run \`brain tasks done ${slug} ${id} --evidence "..."\` once it is demonstrably done`,
+        ]),
+      ]);
+      return;
+    }
+    opError(`${slug}/${id} is already claimed by "${task.owner}"`, [
+      `Run \`brain tasks ${slug}\` to re-list and claim a different task`,
+    ]);
+  }
+  if (task.status === "done")
+    opError(`${slug}/${id} is already done`, [`Run \`brain tasks view ${slug} ${id}\` to see its evidence`]);
+  if (task.status === "cut")
+    opError(`${slug}/${id} is cut — not claimable`, [`Run \`brain tasks ${slug}\` to see claimable tasks`]);
+  if (task.status === "blocked")
+    opError(`${slug}/${id} is marked blocked — not claimable`, [
+      `Run \`brain tasks view ${slug} ${id}\` for details`,
+    ]);
+
+  const statusById = new Map(data.tasks.map((t) => [t.id, t.status]));
+  const deps = task.depends_on || [];
+  const unmet = deps.filter((d) => statusById.get(d) !== "done");
+  if (unmet.length)
+    opError(`${slug}/${id} is blocked on ${unmet.join(", ")}`, [
+      `Run \`brain tasks ${slug}\` to see what is unblocked right now`,
+    ]);
+
+  const claimedAt = new Date().toISOString();
+  const today = claimedAt.slice(0, 10);
+  const projected = {
+    ...data,
+    feature: slug,
+    updated: today,
+    tasks: data.tasks.map((t) =>
+      t.id === id ? { ...t, status: "claimed", owner: flags.owner, claimed_at: claimedAt } : t
+    ),
+  };
+  const shapeError = validateTasksShape(projected, slug);
+  if (shapeError) opError(`refused — ${shapeError}`, ["Nothing was written"]);
+
+  const result = writeTasksCas(brain, slug, projected, hash);
+  if (!result.ok)
+    opError(result.message, [`Run \`brain tasks ${slug}\` to re-read the current state, then retry`]);
+
+  print([
+    "task:",
+    kv("slug", slug, 2),
+    kv("id", id, 2),
+    kv("status", "claimed", 2),
+    kv("owner", flags.owner, 2),
+    kv("claimed_at", claimedAt, 2),
+    ...toonList("help", [
+      `Run \`brain tasks done ${slug} ${id} --evidence "..."\` once it is demonstrably done`,
+      `Run \`brain tasks release ${slug} ${id}\` to drop the claim without closing it`,
+    ]),
+  ]);
+}
+
+function cmdTasksDone(argv) {
+  const spec = { "--evidence": { value: true, desc: "evidence this task is actually done (required)" } };
+  const { flags, positionals } = parseArgs(argv, spec, "tasks done");
+  if (flags.help)
+    helpBlock(
+      "tasks done",
+      "Close a task: evidence required — mirrors `brain ship`'s evidence gate",
+      spec,
+      ['brain tasks done task-coordination t2 --evidence "check-state-invariants green, 306 assertions"'],
+      ["<slug> — feature slug", "<id> — task id from `brain tasks <slug>`"]
+    );
+  const [slug, id] = positionals;
+  if (!slug) usageError("missing required argument <slug>", ['brain tasks done <slug> <id> --evidence "..."']);
+  if (!id) usageError("missing required argument <id>", [`brain tasks done ${slug} <id> --evidence "..."`]);
+  if (!flags.evidence || !flags.evidence.trim())
+    usageError("--evidence is required", [`brain tasks done ${slug} ${id} --evidence "..."`]);
+
+  const brain = findBrain(flags.brain);
+  const { data, hash } = requireTasks(brain, slug);
+  if (!data || data.tasks.length === 0)
+    opError(`no tasks for "${slug}" yet`, [
+      `Run \`brain tasks add ${slug} --title "..." --acceptance "..."\` to add one`,
+    ]);
+  const task = findTaskOr404(data, slug, id);
+
+  if (task.status === "done") {
+    print([
+      `task: ${slug}/${id} already done (no-op)`,
+      ...toonList("help", [`Run \`brain tasks view ${slug} ${id}\` to see the recorded evidence`]),
+    ]);
+    return;
+  }
+  if (task.status === "cut")
+    opError(`${slug}/${id} is cut — cannot be marked done`, [`Run \`brain tasks view ${slug} ${id}\` for details`]);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const projected = {
+    ...data,
+    feature: slug,
+    updated: today,
+    tasks: data.tasks.map((t) => (t.id === id ? { ...t, status: "done", evidence: flags.evidence } : t)),
+  };
+  const shapeError = validateTasksShape(projected, slug);
+  if (shapeError) opError(`refused — ${shapeError}`, ["Nothing was written"]);
+
+  const result = writeTasksCas(brain, slug, projected, hash);
+  if (!result.ok)
+    opError(result.message, [`Run \`brain tasks ${slug}\` to re-read the current state, then retry`]);
+
+  const remaining = projected.tasks.filter((t) => !["done", "cut"].includes(t.status)).length;
+  print([
+    "task:",
+    kv("slug", slug, 2),
+    kv("id", id, 2),
+    kv("status", "done", 2),
+    kv("evidence", flags.evidence.length > 120 ? flags.evidence.slice(0, 120) + "…" : flags.evidence, 2),
+    ...toonList("help", [
+      remaining
+        ? `Run \`brain tasks ${slug}\` — ${remaining} task(s) still open/claimed`
+        : `Run \`brain tasks ${slug}\` — every task is done or cut; consider \`brain ship ${slug} --evidence "..."\``,
+      'Run `brain progress add --summary "..."` to checkpoint this change',
+    ]),
+  ]);
+}
+
+function cmdTasksRelease(argv) {
+  const spec = {};
+  const { flags, positionals } = parseArgs(argv, spec, "tasks release");
+  if (flags.help)
+    helpBlock(
+      "tasks release",
+      "Clear a claim back to open — the stale-claim escape hatch (no TTL, always explicit)",
+      spec,
+      ["brain tasks release task-coordination t2"],
+      ["<slug> — feature slug", "<id> — task id from `brain tasks <slug>`"]
+    );
+  const [slug, id] = positionals;
+  if (!slug) usageError("missing required argument <slug>", ["brain tasks release <slug> <id>"]);
+  if (!id) usageError("missing required argument <id>", [`brain tasks release ${slug} <id>`]);
+
+  const brain = findBrain(flags.brain);
+  const { data, hash } = requireTasks(brain, slug);
+  if (!data || data.tasks.length === 0)
+    opError(`no tasks for "${slug}" yet`, [
+      `Run \`brain tasks add ${slug} --title "..." --acceptance "..."\` to add one`,
+    ]);
+  const task = findTaskOr404(data, slug, id);
+
+  if (task.status === "open") {
+    print([
+      `task: ${slug}/${id} already open (no-op)`,
+      ...toonList("help", [`Run \`brain tasks claim ${slug} ${id} --owner <name>\` to claim it`]),
+    ]);
+    return;
+  }
+  if (task.status !== "claimed")
+    opError(`${slug}/${id} is "${task.status}" — only a claimed task can be released`, [
+      `Run \`brain tasks view ${slug} ${id}\` for details`,
+    ]);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const projected = {
+    ...data,
+    feature: slug,
+    updated: today,
+    tasks: data.tasks.map((t) => {
+      if (t.id !== id) return t;
+      const { owner, claimed_at, ...rest } = t;
+      return { ...rest, status: "open" };
+    }),
+  };
+  const shapeError = validateTasksShape(projected, slug);
+  if (shapeError) opError(`refused — ${shapeError}`, ["Nothing was written"]);
+
+  const result = writeTasksCas(brain, slug, projected, hash);
+  if (!result.ok)
+    opError(result.message, [`Run \`brain tasks ${slug}\` to re-read the current state, then retry`]);
+
+  print([
+    "task:",
+    kv("slug", slug, 2),
+    kv("id", id, 2),
+    kv("status", "open", 2),
+    kv("previous_owner", task.owner || "unknown", 2),
+    ...toonList("help", [
+      `Run \`brain tasks claim ${slug} ${id} --owner <name>\` to claim it`,
+      `Run \`brain tasks ${slug}\` to see all tasks`,
+    ]),
+  ]);
 }
 
 // ---------------------------------------------------------------------------
@@ -4299,6 +4881,47 @@ doc at \`.brain/features/<slug>/verifications/<date>.md\` following
 \`brain playbook verify\` — this is how "it works" becomes checkable evidence
 instead of a claim.
 
+## Tasks — coordination BELOW a feature (\`brain tasks\`)
+
+A task is the unit a coordinator hands to a worker: smaller than a feature,
+tracked in \`features/<slug>/tasks.json\`, so the phase list survives a
+compaction or a handoff instead of living only in one agent's context window.
+Claims are compare-and-swap (a content hash from the read that must still
+match at write time), so two workers claiming at once cannot silently lose
+each other's write — the loser gets exit 1 and a \`help:\` line to re-list and
+retry, never a corrupted file.
+
+- \`brain tasks <slug>\` — list: \`id,title,status,owner\` plus a \`count:\` line
+  that already includes how many are unblocked (open, every \`depends_on\`
+  done) — no second call needed. A claimed row shows how long it has been
+  held (\`held 41m\`) right there, so a stale claim is visible without \`view\`.
+- \`brain tasks view <slug> <id>\` — full detail: acceptance, \`depends_on\`,
+  files, owner, \`claimed_at\`, evidence, receipt, and what it is **blocked
+  by** right now (computed from the other tasks' current status, not just
+  the declared list).
+- \`brain tasks add <slug> --title "..." --acceptance "..." [--depends-on
+  t1,t2] [--files a,b] [--id <id>]\` — creates \`tasks.json\` on the first
+  task; \`--id\` auto-generates (\`t1\`, \`t2\`, ...) from the current max when
+  omitted. \`--title\`/\`--acceptance\` are required — a task with no checkable
+  acceptance is the same premature-"done" shape the feature-level evidence
+  rule exists to prevent, one level further down.
+- \`brain tasks claim <slug> <id> --owner <name>\` — refuses (exit 1, naming
+  the current owner) if held by someone else; refuses (naming the unmet
+  dependency) if any \`depends_on\` is not \`done\`; re-claiming your OWN
+  claim is an idempotent no-op at exit 0.
+- \`brain tasks done <slug> <id> --evidence "..."\` — \`--evidence\` is
+  required (mirrors \`brain ship\`'s gate) and refuses on missing/blank (exit
+  2). Already-done is an idempotent no-op at exit 0 and never overwrites the
+  recorded evidence.
+- \`brain tasks release <slug> <id>\` — the stale-claim escape hatch: clears
+  owner/\`claimed_at\` back to \`open\`. No TTL by design — any fixed timeout is
+  wrong for some task, so release is always an explicit act.
+
+Every mutation preflights: read → project the change → validate the
+projection → only then write with the hash from the read (the same
+preflight-then-commit order \`brain ship\` already uses) — a bad write never
+lands partially.
+
 ## Execution loop — implementing an approved plan / working a feature to shipped
 
 Run \`npx -y brain-axi playbook execute\` and follow it. Short version: \`features
@@ -4497,6 +5120,7 @@ function cmdSkill(argv) {
 const COMMANDS = {
   init: cmdInit,
   features: cmdFeatures,
+  tasks: cmdTasks,
   progress: cmdProgress,
   runs: cmdRuns,
   docs: cmdDocs,

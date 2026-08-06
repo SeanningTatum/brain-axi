@@ -152,6 +152,47 @@ doc at `.brain/features/<slug>/verifications/<date>.md` following
 `brain playbook verify` — this is how "it works" becomes checkable evidence
 instead of a claim.
 
+## Tasks — coordination BELOW a feature (`brain tasks`)
+
+A task is the unit a coordinator hands to a worker: smaller than a feature,
+tracked in `features/<slug>/tasks.json`, so the phase list survives a
+compaction or a handoff instead of living only in one agent's context window.
+Claims are compare-and-swap (a content hash from the read that must still
+match at write time), so two workers claiming at once cannot silently lose
+each other's write — the loser gets exit 1 and a `help:` line to re-list and
+retry, never a corrupted file.
+
+- `brain tasks <slug>` — list: `id,title,status,owner` plus a `count:` line
+  that already includes how many are unblocked (open, every `depends_on`
+  done) — no second call needed. A claimed row shows how long it has been
+  held (`held 41m`) right there, so a stale claim is visible without `view`.
+- `brain tasks view <slug> <id>` — full detail: acceptance, `depends_on`,
+  files, owner, `claimed_at`, evidence, receipt, and what it is **blocked
+  by** right now (computed from the other tasks' current status, not just
+  the declared list).
+- `brain tasks add <slug> --title "..." --acceptance "..." [--depends-on
+  t1,t2] [--files a,b] [--id <id>]` — creates `tasks.json` on the first
+  task; `--id` auto-generates (`t1`, `t2`, ...) from the current max when
+  omitted. `--title`/`--acceptance` are required — a task with no checkable
+  acceptance is the same premature-"done" shape the feature-level evidence
+  rule exists to prevent, one level further down.
+- `brain tasks claim <slug> <id> --owner <name>` — refuses (exit 1, naming
+  the current owner) if held by someone else; refuses (naming the unmet
+  dependency) if any `depends_on` is not `done`; re-claiming your OWN
+  claim is an idempotent no-op at exit 0.
+- `brain tasks done <slug> <id> --evidence "..."` — `--evidence` is
+  required (mirrors `brain ship`'s gate) and refuses on missing/blank (exit
+  2). Already-done is an idempotent no-op at exit 0 and never overwrites the
+  recorded evidence.
+- `brain tasks release <slug> <id>` — the stale-claim escape hatch: clears
+  owner/`claimed_at` back to `open`. No TTL by design — any fixed timeout is
+  wrong for some task, so release is always an explicit act.
+
+Every mutation preflights: read → project the change → validate the
+projection → only then write with the hash from the read (the same
+preflight-then-commit order `brain ship` already uses) — a bad write never
+lands partially.
+
 ## Execution loop — implementing an approved plan / working a feature to shipped
 
 Run `npx -y brain-axi playbook execute` and follow it. Short version: `features

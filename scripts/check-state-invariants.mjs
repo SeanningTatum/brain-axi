@@ -28,6 +28,12 @@ import {
   parseReceipt,
   writeFileAtomic,
   STATUSES,
+  TASK_STATUSES,
+  validateTasksShape,
+  unblockedTasks,
+  tasksPath,
+  readTasks,
+  writeTasksCas,
 } from "../lib/state.js";
 import { brainCheck } from "../lib/review/brain-data.js";
 
@@ -55,6 +61,26 @@ function rejects(label, input, expectFragment) {
 
 function accepts(label, input) {
   const msg = validateFeatureListShape(input);
+  assertions++;
+  if (msg !== null) failures.push(`${label} — expected valid, got "${msg}"`);
+}
+
+// Same two helpers, for tasks.json. A validator that names the wrong field
+// sends the next agent to the wrong task — same reasoning as `rejects` above.
+function rejectsTasks(label, input, expectFragment, slug) {
+  const msg = validateTasksShape(input, slug);
+  assertions++;
+  if (msg === null) {
+    failures.push(`${label} — expected rejection, got null (accepted as valid)`);
+    return;
+  }
+  if (expectFragment && !msg.includes(expectFragment)) {
+    failures.push(`${label} — rejected, but message "${msg}" does not mention "${expectFragment}"`);
+  }
+}
+
+function acceptsTasks(label, input, slug) {
+  const msg = validateTasksShape(input, slug);
   assertions++;
   if (msg !== null) failures.push(`${label} — expected valid, got "${msg}"`);
 }
@@ -1497,6 +1523,558 @@ function rowStatus(checks, name) {
     "with one feature off the list the gate evaluates again",
     rowStatus(rows2, "every shipped feature has a PASS verification") === "pass",
     rowStatus(rows2, "every shipped feature has a PASS verification")
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 11. tasks.json — features/<slug>/tasks.json, the coordination layer below a
+// feature. Same discipline as the feature-list section above: every malformed
+// shape here is one that must produce exactly ONE message naming the right
+// index and field, never a silent coercion.
+// ---------------------------------------------------------------------------
+
+function validTask(over = {}) {
+  return {
+    id: "t1",
+    title: "The record",
+    status: "open",
+    acceptance: "what makes this task checkably done",
+    depends_on: [],
+    files: ["lib/state.js"],
+    ...over,
+  };
+}
+
+const validTasks = {
+  updated: "2026-08-06",
+  feature: "task-coordination",
+  tasks: [validTask()],
+};
+
+acceptsTasks("valid task list", validTasks, "task-coordination");
+acceptsTasks("valid task list, no slug given to check against", validTasks);
+acceptsTasks("empty tasks array", { tasks: [] });
+acceptsTasks("no feature key", { tasks: [validTask()] });
+
+rejectsTasks("bare {} for tasks.json", {}, `"tasks" must be an array`);
+rejectsTasks("bare [] for tasks.json", [], "must be a JSON object");
+rejectsTasks("a string for tasks.json", "hello", "must be a JSON object");
+rejectsTasks("tasks as a string", { tasks: "nope" }, `"tasks" must be an array`);
+rejectsTasks("tasks as an object", { tasks: {} }, `"tasks" must be an array`);
+rejectsTasks("a task entry is not an object", { tasks: ["x"] }, "tasks[0] must be an object");
+
+rejectsTasks(
+  "feature key does not match the slug asked about",
+  { feature: "other-feature", tasks: [] },
+  '"feature" is "other-feature", not "task-coordination"',
+  "task-coordination"
+);
+acceptsTasks(
+  "feature key matching the slug is fine",
+  { feature: "task-coordination", tasks: [] },
+  "task-coordination"
+);
+
+for (const field of ["id", "title", "status", "acceptance"]) {
+  const t = validTask();
+  delete t[field];
+  rejectsTasks(`task missing ${field}`, { tasks: [t] }, `tasks[0].${field}`);
+  rejectsTasks(
+    `task with blank ${field}`,
+    { tasks: [validTask({ [field]: "  " })] },
+    `tasks[0].${field}`
+  );
+}
+
+rejectsTasks(
+  "unknown task status",
+  { tasks: [validTask({ status: "done", evidence: "x" }), validTask({ id: "t2", status: "wontfix" })] },
+  `is not one of ${TASK_STATUSES.join("|")}`
+);
+for (const status of TASK_STATUSES) {
+  const over = { status };
+  if (status === "done") over.evidence = "proof";
+  if (status === "claimed") {
+    over.owner = "worker-a";
+    over.claimed_at = "2026-08-06T22:00:00.000Z";
+  }
+  acceptsTasks(`task status ${status} accepted`, { tasks: [validTask(over)] });
+}
+
+rejectsTasks(
+  "duplicate task id",
+  { tasks: [validTask(), validTask({ title: "Another" })] },
+  "is not unique"
+);
+
+rejectsTasks(
+  "depends_on not an array",
+  { tasks: [validTask({ depends_on: "t0" })] },
+  "depends_on must be an array"
+);
+rejectsTasks(
+  "depends_on entry not a string",
+  { tasks: [validTask({ depends_on: [1] })] },
+  "depends_on[0]"
+);
+rejectsTasks(
+  "files entry empty",
+  { tasks: [validTask({ files: [""] })] },
+  "files[0]"
+);
+rejectsTasks(
+  "depends_on names an id that does not exist in this file",
+  { tasks: [validTask({ depends_on: ["ghost"] })] },
+  'depends_on[0] "ghost" does not name a task in this file'
+);
+acceptsTasks(
+  "depends_on may reference a task declared LATER in the array",
+  {
+    tasks: [
+      validTask({ id: "t1", depends_on: ["t2"] }),
+      validTask({ id: "t2", title: "Later", depends_on: [] }),
+    ],
+  }
+);
+
+rejectsTasks(
+  "evidence missing when status is done",
+  { tasks: [validTask({ status: "done" })] },
+  'evidence is required when status is "done"'
+);
+rejectsTasks(
+  "evidence blank when status is done",
+  { tasks: [validTask({ status: "done", evidence: "  " })] },
+  'evidence is required when status is "done"'
+);
+
+rejectsTasks(
+  "owner missing when status is claimed",
+  { tasks: [validTask({ status: "claimed", claimed_at: "2026-08-06T22:00:00.000Z" })] },
+  'owner is required when status is "claimed"'
+);
+rejectsTasks(
+  "claimed_at missing when status is claimed",
+  { tasks: [validTask({ status: "claimed", owner: "worker-a" })] },
+  'claimed_at is required when status is "claimed"'
+);
+
+rejectsTasks(
+  "receipt.commit that is not a hex object id",
+  { tasks: [validTask({ receipt: { commit: "HEAD" } })] },
+  "is not a hex object id"
+);
+rejectsTasks(
+  "receipt is not an object",
+  { tasks: [validTask({ receipt: "abc1234" })] },
+  "receipt must be an object"
+);
+acceptsTasks("receipt with a real hex commit is fine", {
+  tasks: [validTask({ receipt: { commit: "6b900dd", verified_by: "worker-a" } })],
+});
+
+// --- depends_on cycles: one message naming both ends ------------------------
+rejectsTasks(
+  "a direct two-node cycle",
+  {
+    tasks: [
+      validTask({ id: "t1", depends_on: ["t2"] }),
+      validTask({ id: "t2", title: "Two", depends_on: ["t1"] }),
+    ],
+  },
+  "depends_on cycle:"
+);
+{
+  const msg = validateTasksShape({
+    tasks: [
+      validTask({ id: "t1", depends_on: ["t2"] }),
+      validTask({ id: "t2", title: "Two", depends_on: ["t1"] }),
+    ],
+  });
+  assertions++;
+  if (!/^tasks depends_on cycle: t1 -> t2 -> t1$/.test(msg))
+    failures.push(`two-node cycle message does not name both ends verbatim — got "${msg}"`);
+}
+rejectsTasks(
+  "a self-cycle (a task depending on itself)",
+  { tasks: [validTask({ id: "t1", depends_on: ["t1"] })] },
+  "depends_on cycle: t1 -> t1"
+);
+rejectsTasks(
+  "a three-node cycle",
+  {
+    tasks: [
+      validTask({ id: "t1", depends_on: ["t2"] }),
+      validTask({ id: "t2", title: "Two", depends_on: ["t3"] }),
+      validTask({ id: "t3", title: "Three", depends_on: ["t1"] }),
+    ],
+  },
+  "depends_on cycle:"
+);
+acceptsTasks("a DAG (no cycle) is accepted", {
+  tasks: [
+    validTask({ id: "t1", depends_on: ["t2", "t3"] }),
+    validTask({ id: "t2", title: "Two", depends_on: ["t3"] }),
+    validTask({ id: "t3", title: "Three", depends_on: [] }),
+  ],
+});
+
+// --- unblockedTasks: respects dependencies, empty on a cycle ----------------
+{
+  const data = {
+    tasks: [
+      validTask({ id: "t1", title: "Ready", depends_on: [] }),
+      validTask({ id: "t2", title: "Waiting", depends_on: ["t3"] }),
+      validTask({ id: "t3", title: "Not done yet", status: "open", depends_on: [] }),
+      validTask({ id: "t4", title: "Claimed", status: "claimed", owner: "w", claimed_at: "x" }),
+    ],
+  };
+  const unblocked = unblockedTasks(data).map((t) => t.id);
+  ok("unblockedTasks returns the open task with no unmet deps", unblocked.includes("t1"), unblocked.join(","));
+  ok(
+    "unblockedTasks EXCLUDES an open task waiting on an undone dependency",
+    !unblocked.includes("t2"),
+    unblocked.join(",")
+  );
+
+  // Same shape, but t3 is now done — t2 becomes unblocked.
+  const unblockedAfter = unblockedTasks({
+    tasks: [
+      validTask({ id: "t1", title: "Ready", depends_on: [] }),
+      validTask({ id: "t2", title: "Waiting", depends_on: ["t3"] }),
+      validTask({ id: "t3", title: "Done", status: "done", evidence: "shipped" }),
+    ],
+  }).map((t) => t.id);
+  ok(
+    "unblockedTasks includes an open task once its dependency is done",
+    unblockedAfter.includes("t2"),
+    unblockedAfter.join(",")
+  );
+}
+{
+  const cyclic = {
+    tasks: [
+      validTask({ id: "t1", depends_on: ["t2"] }),
+      validTask({ id: "t2", title: "Two", depends_on: ["t1"] }),
+    ],
+  };
+  ok(
+    "unblockedTasks returns [] on a cyclic list, never a partial guess",
+    Array.isArray(unblockedTasks(cyclic)) && unblockedTasks(cyclic).length === 0,
+    JSON.stringify(unblockedTasks(cyclic))
+  );
+}
+ok("unblockedTasks handles a missing tasks.json (null data)", unblockedTasks({ data: null }) instanceof Array);
+ok("unblockedTasks on null is []", unblockedTasks(null).length === 0);
+
+// ---------------------------------------------------------------------------
+// 12. Compare-and-swap read/write for tasks.json
+// ---------------------------------------------------------------------------
+
+{
+  const brain = path.join(tmpRoot, "cas", ".brain");
+  fs.mkdirSync(path.join(brain, "features", "widget"), { recursive: true });
+
+  // An absent tasks.json is legal — read-compat, not an error.
+  const absent = readTasks(brain, "widget");
+  ok("readTasks on an absent file returns data:null", absent.data === null);
+  ok("readTasks on an absent file returns hash:null", absent.hash === null);
+
+  // Creating a brand-new file: expectedHash === null must succeed when none
+  // exists yet.
+  const created = writeTasksCas(brain, "widget", validTasks, null);
+  ok("CAS write creates a new file when expectedHash is null and none exists", created.ok === true, JSON.stringify(created));
+  ok("tasksPath points at the file CAS actually wrote", fs.existsSync(tasksPath(brain, "widget")));
+
+  // A second create attempt with expectedHash still null must now refuse — a
+  // file has since appeared, which is exactly the race CAS exists to catch.
+  const raced = writeTasksCas(brain, "widget", validTasks, null);
+  ok("a second create with expectedHash:null is refused once a file exists", raced.ok === false, JSON.stringify(raced));
+
+  // Read it back, get the real hash, and write with a matching hash: succeeds.
+  const read1 = readTasks(brain, "widget");
+  ok("readTasks reads back the just-written file", read1.data && read1.data.feature === "task-coordination");
+  ok("readTasks hash is a sha256 hex digest", /^[0-9a-f]{64}$/.test(read1.hash), read1.hash);
+
+  const updated = { ...read1.data, tasks: [validTask({ status: "claimed", owner: "w", claimed_at: "now" })] };
+  const casOk = writeTasksCas(brain, "widget", updated, read1.hash);
+  ok("CAS write succeeds when the hash matches", casOk.ok === true, JSON.stringify(casOk));
+  ok(
+    "the write actually landed the new content",
+    JSON.parse(fs.readFileSync(tasksPath(brain, "widget"), "utf8")).tasks[0].status === "claimed"
+  );
+
+  // Simulate the race the CAS exists to prevent: read, then have ANOTHER
+  // writer mutate the file, then attempt to write against the now-stale hash.
+  const read2 = readTasks(brain, "widget");
+  const raceBytes = fs.readFileSync(tasksPath(brain, "widget"), "utf8");
+  // A concurrent worker lands its own change in between.
+  fs.writeFileSync(
+    tasksPath(brain, "widget"),
+    JSON.stringify({ ...read2.data, tasks: [validTask({ id: "intruder" })] }, null, 2) + "\n"
+  );
+  const intrudedBytes = fs.readFileSync(tasksPath(brain, "widget"), "utf8");
+  ok(
+    "fixture sanity: the simulated concurrent write actually changed the bytes",
+    intrudedBytes !== raceBytes
+  );
+
+  const refused = writeTasksCas(
+    brain,
+    "widget",
+    { ...read2.data, tasks: [validTask({ id: "loser" })] },
+    read2.hash
+  );
+  ok("a CAS write against a stale hash is refused", refused.ok === false, JSON.stringify(refused));
+  ok("a refused CAS write never throws — it reports", typeof refused === "object" && refused !== null);
+  ok(
+    "a refused CAS write leaves the file BYTE-IDENTICAL to the intruder's write",
+    fs.readFileSync(tasksPath(brain, "widget"), "utf8") === intrudedBytes,
+    "the file was modified by a refused CAS write"
+  );
+
+  // ---------------------------------------------------------------------------
+  // The assertions above simulate the race SEQUENTIALLY — the intruder's write
+  // fully lands before writeTasksCas is even called. That is not the race. It
+  // never opens the window between the hash comparison and the rename, so it
+  // passed against an implementation where two REAL concurrent processes both
+  // won and one claim was silently discarded (reproduced 5/5 before the lock
+  // was added). A sequential simulation of a concurrency bug proves nothing
+  // about concurrency; this spawns actual OS processes instead.
+  // ---------------------------------------------------------------------------
+  {
+    const raceBrain = path.join(tmpRoot, "race", ".brain");
+    fs.mkdirSync(path.join(raceBrain, "features", "demo"), { recursive: true });
+    const claimer = path.join(tmpRoot, "race", "claim.mjs");
+    const stateUrl = new URL("../lib/state.js", import.meta.url).href;
+    fs.writeFileSync(
+      claimer,
+      `import { readTasks, writeTasksCas } from ${JSON.stringify(stateUrl)};\n` +
+        `const [brain, owner, delay] = process.argv.slice(2);\n` +
+        `const { data, hash } = readTasks(brain, "demo");\n` +
+        // Widen the window the way real work does: a CLI parses, validates and
+        // builds output between its read and its write.
+        `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(delay));\n` +
+        `data.tasks[0].status = "claimed";\n` +
+        `data.tasks[0].owner = owner;\n` +
+        `data.tasks[0].claimed_at = new Date().toISOString();\n` +
+        `const r = writeTasksCas(brain, "demo", data, hash);\n` +
+        `console.log(r.ok ? "WON" : "refused");\n`
+    );
+
+    const contested = {
+      updated: "2026-08-06",
+      feature: "demo",
+      tasks: [{ id: "t1", title: "contested", status: "open", acceptance: "one winner only" }],
+    };
+
+    let winners = 0;
+    let refusals = 0;
+    let lockLeaks = 0;
+    const TRIALS = 5;
+    for (let i = 0; i < TRIALS; i++) {
+      fs.writeFileSync(tasksPath(raceBrain, "demo"), JSON.stringify(contested, null, 2) + "\n");
+      const run = spawnSync(
+        "sh",
+        [
+          "-c",
+          `node ${JSON.stringify(claimer)} ${JSON.stringify(raceBrain)} worker-a 40 & ` +
+            `node ${JSON.stringify(claimer)} ${JSON.stringify(raceBrain)} worker-b 40 & wait`,
+        ],
+        { encoding: "utf8" }
+      );
+      const out = run.stdout || "";
+      winners += (out.match(/WON/g) || []).length;
+      refusals += (out.match(/refused/g) || []).length;
+      if (fs.existsSync(`${tasksPath(raceBrain, "demo")}.lock`)) lockLeaks++;
+    }
+
+    ok(
+      `exactly one of two concurrent claimers wins, every trial (${TRIALS} trials)`,
+      winners === TRIALS,
+      `expected ${TRIALS} winners across ${TRIALS} trials, got ${winners} — a second winner means a lost claim`
+    );
+    ok(
+      "the loser is refused rather than silently overwriting the winner",
+      refusals === TRIALS,
+      `expected ${TRIALS} refusals, got ${refusals}`
+    );
+    ok(
+      "the lock file is always released, never leaked",
+      lockLeaks === 0,
+      `${lockLeaks} trial(s) left a .lock behind`
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 13. `brain tasks` — the CLI surface over lib/state.js's task layer. Section
+// 11 above proves the shape validator and section 12 proves the CAS primitive
+// in isolation; this section proves the CLI WIRES them together correctly:
+// required flags refuse at exit 2, mutations preflight-then-commit, no-ops
+// are idempotent at exit 0, and a CAS refusal reaching THIS code path still
+// leaves the file untouched.
+// ---------------------------------------------------------------------------
+
+{
+  const brain = makeBrain("tasks-cli", { features: [featureFor("widget")] });
+  const run = (...args) => spawnSync(process.execPath, [CLI, ...args, "--brain", brain], { encoding: "utf8" });
+
+  // --- definitive empty state (§5) -----------------------------------------
+  const emptyList = run("tasks", "widget");
+  ok("tasks list on a feature with no tasks.json exits 0", emptyList.status === 0, emptyList.stdout);
+  ok(
+    "tasks list gives the exact definitive empty-state line",
+    /^tasks: no tasks for widget yet$/m.test(emptyList.stdout || ""),
+    emptyList.stdout
+  );
+
+  // --- required-flag refusals (exit 2) -------------------------------------
+  const noTitle = run("tasks", "add", "widget", "--acceptance", "x");
+  ok("tasks add without --title refuses at exit 2", noTitle.status === 2, noTitle.stdout);
+  ok("the message names --title", /--title/.test(noTitle.stdout || ""), noTitle.stdout);
+
+  const noAcceptance = run("tasks", "add", "widget", "--title", "Thing");
+  ok("tasks add without --acceptance refuses at exit 2", noAcceptance.status === 2, noAcceptance.stdout);
+  ok("the message names --acceptance", /--acceptance/.test(noAcceptance.stdout || ""), noAcceptance.stdout);
+
+  const unknownFlag = run("tasks", "add", "widget", "--title", "x", "--acceptance", "y", "--bogus", "z");
+  ok("tasks add rejects an unknown flag at exit 2", unknownFlag.status === 2, unknownFlag.stdout);
+  ok(
+    "the unknown-flag error lists this subcommand's valid flags inline",
+    /valid flags for `tasks add`/.test(unknownFlag.stdout || ""),
+    unknownFlag.stdout
+  );
+
+  // Now actually build a small task graph via the CLI (never the live .brain/).
+  const addT1 = run("tasks", "add", "widget", "--title", "The record", "--acceptance", "schema exists");
+  ok("tasks add (first task) exits 0", addT1.status === 0, addT1.stdout);
+  ok("first task auto-generates id t1", /\bid: t1\b/.test(addT1.stdout || ""), addT1.stdout);
+
+  const addT2 = run(
+    "tasks", "add", "widget",
+    "--title", "The gate",
+    "--acceptance", "check rows exist",
+    "--depends-on", "t1"
+  );
+  ok("tasks add (second task, depends on t1) exits 0", addT2.status === 0, addT2.stdout);
+  ok("second task auto-generates id t2", /\bid: t2\b/.test(addT2.stdout || ""), addT2.stdout);
+
+  const listing = run("tasks", "widget");
+  ok(
+    "count line includes the pre-computed unblocked aggregate (§4)",
+    /count: "2 tasks — 2 open \(1 unblocked\)"/.test(listing.stdout || ""),
+    listing.stdout
+  );
+
+  const noOwner = run("tasks", "claim", "widget", "t1");
+  ok("tasks claim without --owner refuses at exit 2", noOwner.status === 2, noOwner.stdout);
+
+  const noEvidence = run("tasks", "done", "widget", "t1");
+  ok("tasks done without --evidence refuses at exit 2", noEvidence.status === 2, noEvidence.stdout);
+  const blankEvidence = run("tasks", "done", "widget", "t1", "--evidence", "   ");
+  ok("tasks done with blank --evidence refuses at exit 2", blankEvidence.status === 2, blankEvidence.stdout);
+
+  // --- dependency-gated claim refusal ---------------------------------------
+  const claimBlocked = run("tasks", "claim", "widget", "t2", "--owner", "worker-a");
+  ok("claiming a task whose dependency is not done refuses at exit 1", claimBlocked.status === 1, claimBlocked.stdout);
+  ok("the refusal names the unmet dependency", /blocked on t1/.test(claimBlocked.stdout || ""), claimBlocked.stdout);
+
+  // --- claim, idempotent re-claim, claim-conflict ---------------------------
+  const claim1 = run("tasks", "claim", "widget", "t1", "--owner", "worker-a");
+  ok("claiming an open, unblocked task exits 0", claim1.status === 0, claim1.stdout);
+
+  const reClaimSame = run("tasks", "claim", "widget", "t1", "--owner", "worker-a");
+  ok("re-claiming your own claim is an idempotent no-op at exit 0 (§6)", reClaimSame.status === 0, reClaimSame.stdout);
+  ok("the no-op says so explicitly", /no-op/.test(reClaimSame.stdout || ""), reClaimSame.stdout);
+
+  const claimConflict = run("tasks", "claim", "widget", "t1", "--owner", "worker-b");
+  ok("claiming a task held by someone else refuses at exit 1", claimConflict.status === 1, claimConflict.stdout);
+  ok(
+    "the conflict names the CURRENT owner, not the caller",
+    /already claimed by "worker-a"/.test(claimConflict.stdout || ""),
+    claimConflict.stdout
+  );
+
+  // --- done: idempotent no-op, then unblocks the dependent task -------------
+  const done1 = run("tasks", "done", "widget", "t1", "--evidence", "check-state-invariants green");
+  ok("tasks done with real evidence exits 0", done1.status === 0, done1.stdout);
+
+  const bytesAfterDone = fs.readFileSync(tasksPath(brain, "widget"), "utf8");
+  const done1Again = run("tasks", "done", "widget", "t1", "--evidence", "a different string, ignored");
+  ok("closing an already-done task is an idempotent no-op at exit 0 (§6)", done1Again.status === 0, done1Again.stdout);
+  ok("the no-op says so explicitly", /already done \(no-op\)/.test(done1Again.stdout || ""), done1Again.stdout);
+  ok(
+    "a no-op `done` does NOT overwrite the original evidence",
+    fs.readFileSync(tasksPath(brain, "widget"), "utf8") === bytesAfterDone,
+    "the file changed even though the operation was reported as a no-op"
+  );
+
+  const claimT2 = run("tasks", "claim", "widget", "t2", "--owner", "worker-a");
+  ok("t2 becomes claimable once its dependency (t1) is done", claimT2.status === 0, claimT2.stdout);
+
+  // A DONE task cannot be released — release is the stale-CLAIM escape hatch,
+  // not a generic status un-doer.
+  const releaseDone = run("tasks", "release", "widget", "t1");
+  ok("releasing a done task refuses (only a claimed task is releasable)", releaseDone.status === 1, releaseDone.stdout);
+
+  // Add a fresh unclaimed task to exercise the "already open" no-op path.
+  const addT3 = run("tasks", "add", "widget", "--title", "The handoff", "--acceptance", "brief composes");
+  ok("tasks add (third task) exits 0", addT3.status === 0, addT3.stdout);
+  const releaseAlreadyOpen = run("tasks", "release", "widget", "t3");
+  ok("releasing an already-open task is an idempotent no-op at exit 0 (§6)", releaseAlreadyOpen.status === 0, releaseAlreadyOpen.stdout);
+  ok("the no-op says so explicitly", /already open \(no-op\)/.test(releaseAlreadyOpen.stdout || ""), releaseAlreadyOpen.stdout);
+
+  // Real release: t2 is claimed by worker-a — clear it back to open.
+  const release2 = run("tasks", "release", "widget", "t2");
+  ok("releasing a claimed task exits 0", release2.status === 0, release2.stdout);
+  const afterRelease = JSON.parse(fs.readFileSync(tasksPath(brain, "widget"), "utf8"));
+  const t2AfterRelease = afterRelease.tasks.find((t) => t.id === "t2");
+  ok("release clears status back to open", t2AfterRelease.status === "open", JSON.stringify(t2AfterRelease));
+  ok("release clears owner", t2AfterRelease.owner === undefined, JSON.stringify(t2AfterRelease));
+  ok("release clears claimed_at", t2AfterRelease.claimed_at === undefined, JSON.stringify(t2AfterRelease));
+  const reClaimT2 = run("tasks", "claim", "widget", "t2", "--owner", "worker-b");
+  ok("a released task is claimable by a DIFFERENT owner", reClaimT2.status === 0, reClaimT2.stdout);
+
+  // --- the CAS refusal path reaching the CLI's own error plumbing, leaving
+  // the file byte-identical. Sections 11/12 above prove the primitive in
+  // isolation; this proves it on a file this CLI's OWN write path produced,
+  // and that cmdTasksClaim's own opError wiring (not just writeTasksCas
+  // itself) reports it and touches nothing.
+  const beforeForge = readTasks(brain, "widget");
+  const intruderWrite = writeTasksCas(
+    brain,
+    "widget",
+    { ...beforeForge.data, updated: "2026-08-06", tasks: beforeForge.data.tasks.map((t) => (t.id === "t3" ? { ...t, status: "claimed", owner: "intruder", claimed_at: new Date().toISOString() } : t)) },
+    beforeForge.hash
+  );
+  ok("fixture: the simulated concurrent writer's own CAS write succeeds", intruderWrite.ok === true, JSON.stringify(intruderWrite));
+  const intrudedBytes2 = fs.readFileSync(tasksPath(brain, "widget"), "utf8");
+
+  // A worker still holding the PRE-intrusion hash attempts its own CAS write
+  // directly (the exact call cmdTasksClaim makes) with the now-stale hash.
+  const staleAttempt = writeTasksCas(
+    brain,
+    "widget",
+    { ...beforeForge.data, updated: "2026-08-06", tasks: beforeForge.data.tasks.map((t) => (t.id === "t3" ? { ...t, status: "claimed", owner: "loser", claimed_at: new Date().toISOString() } : t)) },
+    beforeForge.hash
+  );
+  ok("a stale writer against a CLI-produced file is refused", staleAttempt.ok === false, JSON.stringify(staleAttempt));
+  ok(
+    "the refused write leaves the CLI-produced file BYTE-IDENTICAL to the intruder's write",
+    fs.readFileSync(tasksPath(brain, "widget"), "utf8") === intrudedBytes2,
+    "the file changed even though the write was refused"
+  );
+
+  // And the CLI itself, asked to claim the now-intruded t3 as yet another
+  // owner, refuses too — via the ordinary "already claimed" business check,
+  // since the CLI always re-reads fresh (a second call, not a stale hash).
+  const claimAfterIntrusion = run("tasks", "claim", "widget", "t3", "--owner", "worker-c");
+  ok("the CLI sees the intruder's write on its next read and refuses too", claimAfterIntrusion.status === 1, claimAfterIntrusion.stdout);
+  ok(
+    "naming the intruder as the current owner",
+    /already claimed by "intruder"/.test(claimAfterIntrusion.stdout || ""),
+    claimAfterIntrusion.stdout
   );
 }
 
