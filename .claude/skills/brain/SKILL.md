@@ -56,7 +56,7 @@ Run `brain playbook` for the live id/use_when index; `brain playbook <id>` for t
 
 - `brain progress add --summary "..." --next "..."` — append a session checkpoint
 - `brain features set-status <slug> --status <planned|in-progress|shipped|blocked|cut>` — flip feature state (enforces one-in-progress policy; `--status shipped` requires `--evidence` **and passes the same preflight as `brain ship` — it refuses and writes nothing if any check would fail**. Transitions *out* of a state are never gated, so a broken record stays repairable)
-- `brain check` — deterministic harness invariants (feature-list **schema** validity — duplicate ids/slugs, unknown status, shipped-without-evidence all fail — one-in-progress per declared policy, doc paths, dependency refs, `features/index.md` agreeing with the tracker, plan/review file integrity, verification docs having a **readable** verdict with resolvable image links, verify.json shape when present); exit 1 on any failure, CI-usable
+- `brain check` — deterministic harness invariants (feature-list **schema** validity — duplicate ids/slugs, unknown status, shipped-without-evidence all fail — one-in-progress per declared policy, doc paths, dependency refs, `features/index.md` agreeing with the tracker, plan/review file integrity, verification docs having a **readable** verdict with resolvable image links, `tasks.json` schema validity, no `shipped` feature with an open task, verify.json shape when present); exit 1 on any failure, CI-usable
 - `brain features index [--write]` — GENERATE the `features/index.md` status table from `feature_list.json` (bounded by `<!-- brain:features-table -->` markers so surrounding prose survives). Hand-maintaining that mirror is how a tracker and its human-facing index end up disagreeing
 - `brain receipt <feature> [--date <d>] [--verified-by <who>] [--allow-dirty]` — stamp a commit-bound provenance receipt into a verification doc, written BY THE TOOL: HEAD at stamp time plus the actual gate results for that feature from `runs/gates.jsonl`. Refuses on a dirty tree (a receipt naming HEAD while the tree differs describes code in no commit) and refuses to stamp a doc whose verdict is unreadable — a hand-written receipt is a claim about provenance, not provenance
 - `brain check --strict` — adds two: every `shipped` feature must have a verification doc whose verdict parses to PASS, **and** that doc must carry a `brain:verification` receipt naming a commit that is an ancestor of HEAD. Opt-in here so brains predating the invariants do not go red on upgrade; `brain ship` and `set-status --status shipped` **always** enforce both, since shipping is the moment the claim is made
@@ -180,10 +180,17 @@ retry, never a corrupted file.
   the current owner) if held by someone else; refuses (naming the unmet
   dependency) if any `depends_on` is not `done`; re-claiming your OWN
   claim is an idempotent no-op at exit 0.
-- `brain tasks done <slug> <id> --evidence "..."` — `--evidence` is
-  required (mirrors `brain ship`'s gate) and refuses on missing/blank (exit
-  2). Already-done is an idempotent no-op at exit 0 and never overwrites the
-  recorded evidence.
+- `brain tasks done <slug> <id> --evidence "..." [--no-autoship]` —
+  `--evidence` is required (mirrors `brain ship`'s gate) and refuses on
+  missing/blank (exit 2). Already-done is an idempotent no-op at exit 0 and
+  never overwrites the recorded evidence. **Closing the LAST open/claimed task
+  on a feature runs `brain ship`'s identical strict preflight automatically**
+  (gated autoship) — on a verified feature it ships; on an unverified one it
+  refuses, but the task stays closed and the feature stays untouched (nothing
+  is written by the refused ship), reported together in one result, still exit
+  0 — the task close is the primary operation here and it succeeded; the ship
+  refusal is the gate working as designed, not a failure of this command.
+  `--no-autoship` skips the automatic ship attempt entirely.
 - `brain tasks release <slug> <id>` — the stale-claim escape hatch: clears
   owner/`claimed_at` back to `open`. No TTL by design — any fixed timeout is
   wrong for some task, so release is always an explicit act.
@@ -191,7 +198,11 @@ retry, never a corrupted file.
 Every mutation preflights: read → project the change → validate the
 projection → only then write with the hash from the read (the same
 preflight-then-commit order `brain ship` already uses) — a bad write never
-lands partially.
+lands partially. Two more `brain check` rows exist just for this layer:
+`tasks.json files parse` and `no shipped feature has an open task` — both
+scoped exactly like every other per-feature row (an unrelated feature's open
+task never blocks THIS feature's ship), and both PASS vacuously when a feature
+has no `tasks.json` at all (read-compat).
 
 ## Execution loop — implementing an approved plan / working a feature to shipped
 

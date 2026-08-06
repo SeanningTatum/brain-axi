@@ -766,6 +766,148 @@ const SCHEMA_CHECK = "feature_list.json is valid";
 }
 
 // ---------------------------------------------------------------------------
+// 4b. tasks.json check rows — "tasks.json files parse" and "no shipped
+// feature has an open task" (feat-009 task-coordination, phase 2 — the gate).
+// Read-compat is non-negotiable: a feature (or a whole brain) that never
+// adopted tasks.json must keep passing every row, vacuously, not by skipping
+// the row or reporting something unverifiable.
+// ---------------------------------------------------------------------------
+
+{
+  // No tasks.json anywhere — both rows PASS vacuously (not skip, not error —
+  // this is the literal read-compat contract in the feature's design table).
+  const brain = makeBrain("tasks-check-absent", { features: [featureFor("alpha")] });
+  const parseRow = brainCheck(brain).find((r) => r.check === "tasks.json files parse");
+  const gateRow = brainCheck(brain).find((r) => r.check === "no shipped feature has an open task");
+  ok(
+    "tasks.json files parse PASSES with no tasks.json anywhere",
+    parseRow?.status === "pass",
+    parseRow && `${parseRow.status}: ${parseRow.detail}`
+  );
+  ok(
+    "no shipped feature has an open task PASSES with no tasks.json anywhere",
+    gateRow?.status === "pass",
+    gateRow && `${gateRow.status}: ${gateRow.detail}`
+  );
+  ok(
+    "...and reports 0 files checked rather than silently skipping",
+    /^0 tasks\.json file\(s\) checked$/.test(parseRow?.detail || ""),
+    parseRow?.detail
+  );
+}
+
+{
+  // Malformed JSON in one feature's tasks.json fails the parse row and names it.
+  const brain = makeBrain("tasks-check-badjson", { features: [featureFor("alpha")] });
+  fs.writeFileSync(tasksPath(brain, "alpha"), "{ not json");
+  const row = brainCheck(brain).find((r) => r.check === "tasks.json files parse");
+  ok("malformed tasks.json FAILS the parse row", row?.status === "fail", row && `${row.status}: ${row.detail}`);
+  ok("...and names the file", /alpha\/tasks\.json/.test(row?.detail || ""), row?.detail);
+}
+
+{
+  // Schema-invalid tasks.json fails with validateTasksShape's OWN message —
+  // one definition, reused, not a second one drifting from it.
+  const brain = makeBrain("tasks-check-badshape", { features: [featureFor("alpha")] });
+  fs.writeFileSync(
+    tasksPath(brain, "alpha"),
+    JSON.stringify({ tasks: [{ id: "t1", title: "x", status: "not-a-status", acceptance: "y" }] }, null, 2)
+  );
+  const row = brainCheck(brain).find((r) => r.check === "tasks.json files parse");
+  ok("schema-invalid tasks.json FAILS the parse row", row?.status === "fail", row && `${row.status}: ${row.detail}`);
+  ok("...naming the exact bad field", /tasks\[0\]\.status/.test(row?.detail || ""), row?.detail);
+}
+
+{
+  // The headline invariant: a SHIPPED feature with an open task fails, naming
+  // both the feature and the open task id — done/cut tasks do not count as open.
+  const brain = makeBrain("tasks-check-shipped-open", {
+    features: [featureFor("alpha", { status: "shipped", evidence: "proof" })],
+  });
+  fs.writeFileSync(
+    tasksPath(brain, "alpha"),
+    JSON.stringify(
+      {
+        feature: "alpha",
+        tasks: [
+          { id: "t1", title: "done one", status: "done", acceptance: "x", evidence: "y" },
+          { id: "t2", title: "open one", status: "open", acceptance: "x" },
+          { id: "t3", title: "cut one", status: "cut", acceptance: "x" },
+        ],
+      },
+      null,
+      2
+    )
+  );
+  const row = brainCheck(brain).find((r) => r.check === "no shipped feature has an open task");
+  ok("shipped feature with an open task FAILS", row?.status === "fail", row && `${row.status}: ${row.detail}`);
+  ok("...naming the feature", /alpha/.test(row?.detail || ""), row?.detail);
+  ok("...naming the open task id", /\bt2\b/.test(row?.detail || ""), row?.detail);
+  ok(
+    "...and NOT the done/cut tasks (they are not open)",
+    !/\bt1\b/.test(row?.detail || "") && !/\bt3\b/.test(row?.detail || ""),
+    row?.detail
+  );
+}
+
+{
+  // A shipped feature whose tasks are ALL done/cut passes — the row is not
+  // simply always-red once a feature has a tasks.json at all.
+  const brain = makeBrain("tasks-check-shipped-closed", {
+    features: [featureFor("alpha", { status: "shipped", evidence: "proof" })],
+  });
+  fs.writeFileSync(
+    tasksPath(brain, "alpha"),
+    JSON.stringify(
+      { feature: "alpha", tasks: [{ id: "t1", title: "x", status: "done", acceptance: "y", evidence: "z" }] },
+      null,
+      2
+    )
+  );
+  const row = brainCheck(brain).find((r) => r.check === "no shipped feature has an open task");
+  ok("shipped feature with only closed tasks PASSES", row?.status === "pass", row && `${row.status}: ${row.detail}`);
+}
+
+{
+  // `scope` narrows this exactly like every other per-feature row above: an
+  // UNRELATED feature's open task (or malformed tasks.json) must never refuse
+  // a ship scoped to a DIFFERENT feature — the same deadlock `scope` already
+  // fixed once for the other nine rows.
+  const brain = makeBrain("tasks-check-scope", {
+    features: [
+      featureFor("legacy", { status: "shipped", evidence: "proof" }),
+      featureFor("fresh", { status: "shipped", evidence: "proof" }),
+    ],
+  });
+  fs.writeFileSync(
+    tasksPath(brain, "legacy"),
+    JSON.stringify({ feature: "legacy", tasks: [{ id: "t1", title: "x", status: "open", acceptance: "y" }] }, null, 2)
+  );
+  fs.writeFileSync(
+    tasksPath(brain, "fresh"),
+    JSON.stringify(
+      { feature: "fresh", tasks: [{ id: "t1", title: "x", status: "done", acceptance: "y", evidence: "z" }] },
+      null,
+      2
+    )
+  );
+  const wholeFail = brainCheck(brain).find((r) => r.check === "no shipped feature has an open task");
+  ok(
+    "unscoped audit reports the legacy gap",
+    wholeFail?.status === "fail",
+    wholeFail && `${wholeFail.status}: ${wholeFail.detail}`
+  );
+  const scoped = brainCheck(brain, { scope: "fresh" }).find(
+    (r) => r.check === "no shipped feature has an open task"
+  );
+  ok(
+    "scoped to the OTHER feature ignores the legacy gap",
+    scoped?.status === "pass",
+    scoped && `${scoped.status}: ${scoped.detail}`
+  );
+}
+
+// ---------------------------------------------------------------------------
 // 5. ship is preflight-then-commit — the CLI, invoked as a subprocess
 //
 // The regression: ship used to write feature_list.json AND append a progress
@@ -2075,6 +2217,164 @@ ok("unblockedTasks on null is []", unblockedTasks(null).length === 0);
     "naming the intruder as the current owner",
     /already claimed by "intruder"/.test(claimAfterIntrusion.stdout || ""),
     claimAfterIntrusion.stdout
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 14. The gate wired end to end: `brain ship` / `set-status shipped` refuse on
+// an open task (through the SAME scoped brainCheck preflight, no special
+// case), and gated autoship (`tasks done` closing the LAST open task) runs
+// that identical preflight automatically. `--no-autoship` opts out.
+//
+// Per the warning learned this session: a refusal is only proven by asserting
+// the OBSERVABLE STATE AFTER it (bytes unchanged, status unchanged) — not
+// merely that a message containing "refused" appeared.
+// ---------------------------------------------------------------------------
+
+function runIn(brain, ...args) {
+  return spawnSync(process.execPath, [CLI, ...args, "--brain", brain], { encoding: "utf8" });
+}
+
+function writeOneOpenTask(brain, slug, id = "t1") {
+  fs.writeFileSync(
+    tasksPath(brain, slug),
+    JSON.stringify(
+      { feature: slug, tasks: [{ id, title: "the only task", status: "open", acceptance: "it works" }] },
+      null,
+      2
+    )
+  );
+}
+
+{
+  // `brain ship` refuses when the feature has an open task — through the
+  // ordinary scoped brainCheck preflight, no code change to cmdShip needed.
+  const brain = makeBrain(
+    "ship-open-task",
+    { features: [featureFor("gated", { status: "in-progress" })] },
+    { verdictDoc: PASS_DOC }
+  );
+  writeOneOpenTask(brain, "gated");
+  const flPath = path.join(brain, "features", "feature_list.json");
+  const before = fs.readFileSync(flPath, "utf8");
+
+  const refused = runIn(brain, "ship", "gated", "--evidence", "should be refused");
+  ok("ship refuses when the feature has an open task", refused.status === 1, refused.stdout);
+  ok(
+    "...naming the gate that refused it",
+    /no shipped feature has an open task/.test(refused.stdout || ""),
+    refused.stdout
+  );
+  ok(
+    "...and naming the open task id",
+    /gated: t1/.test(refused.stdout || ""),
+    refused.stdout
+  );
+  ok(
+    "a refused ship leaves feature_list.json byte-identical",
+    fs.readFileSync(flPath, "utf8") === before,
+    "feature_list.json changed even though the ship was refused"
+  );
+
+  // `features set-status --status shipped` runs the identical preflight.
+  const refusedSetStatus = runIn(brain, "features", "set-status", "gated", "--status", "shipped", "--evidence", "nope");
+  ok("set-status shipped refuses on the same open task", refusedSetStatus.status === 1, refusedSetStatus.stdout);
+  ok(
+    "set-status's refusal ALSO leaves feature_list.json byte-identical",
+    fs.readFileSync(flPath, "utf8") === before,
+    "feature_list.json changed even though set-status was refused"
+  );
+
+  // Close the task (opting OUT of autoship here — that path is proven on its
+  // own fixtures below) and confirm the SAME feature now ships cleanly, so the
+  // gate is proven to open, not merely to always refuse.
+  const closed = runIn(brain, "tasks", "done", "gated", "t1", "--evidence", "closed", "--no-autoship");
+  ok("closing the task exits 0", closed.status === 0, closed.stdout);
+  const shipsNow = runIn(brain, "ship", "gated", "--evidence", "now unblocked");
+  ok("the SAME feature ships once its task is closed", shipsNow.status === 0, shipsNow.stdout);
+}
+
+{
+  // Gated autoship — the happy path: closing the LAST open task on an already
+  // verified feature ships it automatically, through the identical strict
+  // preflight (a PASS verdict doc is present, so it clears).
+  const brain = makeBrain(
+    "autoship-ok",
+    { features: [featureFor("autoship-ok", { status: "in-progress" })] },
+    { verdictDoc: PASS_DOC }
+  );
+  writeOneOpenTask(brain, "autoship-ok");
+  const flPath = path.join(brain, "features", "feature_list.json");
+
+  const res = runIn(brain, "tasks", "done", "autoship-ok", "t1", "--evidence", "verified and done");
+  ok("autoship on a verified feature exits 0", res.status === 0, res.stdout);
+  ok("the task-close is reported", /status: done/.test(res.stdout || ""), res.stdout);
+  ok("the ship is reported in the SAME output", /^ship:$/m.test(res.stdout || ""), res.stdout);
+  ok("...and reports shipped", /status: shipped/.test(res.stdout || ""), res.stdout);
+
+  const after = JSON.parse(fs.readFileSync(flPath, "utf8")).features[0];
+  ok("autoship actually flipped the feature to shipped on disk", after.status === "shipped", after.status);
+  const tasksAfter = JSON.parse(fs.readFileSync(tasksPath(brain, "autoship-ok"), "utf8"));
+  ok("the task is done on disk", tasksAfter.tasks[0].status === "done", JSON.stringify(tasksAfter.tasks[0]));
+}
+
+{
+  // Gated autoship — the refusal: no PASS verification bound to a commit, so
+  // the strict preflight refuses. The task close ALREADY SUCCEEDED (it is not
+  // rolled back), and the feature is left untouched — asserted by BYTES, not
+  // merely by re-reading a status field a broken implementation could also
+  // get right by accident.
+  const brain = makeBrain("autoship-refused", {
+    features: [featureFor("autoship-refused", { status: "in-progress" })],
+  }); // no verdictDoc — nothing to prove strict with
+  writeOneOpenTask(brain, "autoship-refused");
+  const flPath = path.join(brain, "features", "feature_list.json");
+  const beforeFl = fs.readFileSync(flPath, "utf8");
+
+  const res = runIn(brain, "tasks", "done", "autoship-refused", "t1", "--evidence", "done but unverified");
+  ok(
+    "a refused autoship still exits 0 — the task close (the primary, already-committed operation) succeeded",
+    res.status === 0,
+    `exit ${res.status}: ${res.stdout}`
+  );
+  ok("the output says the task closed", /status: done/.test(res.stdout || ""), res.stdout);
+  ok("...AND that the ship was refused", /ship: refused/.test(res.stdout || ""), res.stdout);
+
+  ok(
+    "the feature_list.json is BYTE-IDENTICAL after a refused autoship",
+    fs.readFileSync(flPath, "utf8") === beforeFl,
+    "feature_list.json changed even though the autoship was refused"
+  );
+  const after = JSON.parse(fs.readFileSync(flPath, "utf8")).features[0];
+  ok("the feature status is unchanged (still in-progress)", after.status === "in-progress", after.status);
+  const tasksAfter = JSON.parse(fs.readFileSync(tasksPath(brain, "autoship-refused"), "utf8"));
+  ok(
+    "the task is STILL closed despite the ship refusal (the close is not rolled back)",
+    tasksAfter.tasks[0].status === "done",
+    JSON.stringify(tasksAfter.tasks[0])
+  );
+}
+
+{
+  // `--no-autoship` opts out entirely: closing the last task on a feature that
+  // WOULD otherwise ship cleanly must not trigger a ship attempt at all.
+  const brain = makeBrain(
+    "autoship-optout",
+    { features: [featureFor("autoship-optout", { status: "in-progress" })] },
+    { verdictDoc: PASS_DOC }
+  );
+  writeOneOpenTask(brain, "autoship-optout");
+  const flPath = path.join(brain, "features", "feature_list.json");
+  const beforeFl = fs.readFileSync(flPath, "utf8");
+
+  const res = runIn(brain, "tasks", "done", "autoship-optout", "t1", "--evidence", "done", "--no-autoship");
+  ok("--no-autoship exits 0", res.status === 0, res.stdout);
+  ok("--no-autoship never attempts a ship", !/^ship:$/m.test(res.stdout || ""), res.stdout);
+  ok("--no-autoship says autoship was skipped", /autoship skipped/.test(res.stdout || ""), res.stdout);
+  ok(
+    "--no-autoship leaves feature_list.json byte-identical",
+    fs.readFileSync(flPath, "utf8") === beforeFl,
+    "feature_list.json changed even though autoship was opted out"
   );
 }
 

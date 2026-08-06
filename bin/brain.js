@@ -1574,6 +1574,180 @@ function cmdVerify(argv) {
 // Ship — strict, honest flip to shipped (Addendum v6, v6.4/D4)
 // ---------------------------------------------------------------------------
 
+// The full preflight-then-commit ship operation, shared by `brain ship` and
+// gated autoship (`brain tasks done` closing the last open task). NEVER
+// prints and NEVER calls process.exit — it only reports what happened, so a
+// caller composing a bigger result (task closed, THEN a ship attempt) can
+// decide output/exit-code itself instead of two unrelated writes racing each
+// other's stdout. `brain ship` and the autoship path therefore run the
+// IDENTICAL strict preflight by construction, not by convention.
+function shipFeature(brain, slug, evidence) {
+  const list = loadFeatureList(brain);
+  const feat = list.features.find((f) => f.slug === slug || f.id === slug);
+  if (!feat) return { kind: "not-found", requestedSlug: slug, list };
+
+  if (feat.status === "shipped") return { kind: "already-shipped", feat };
+
+  const previous = feat.status;
+  const preShipChecks = brainCheck(brain).filter((c) => c.status === "fail");
+
+  // PREFLIGHT, then commit. Project the next state in memory and validate it
+  // BEFORE any write, so a failing check leaves the brain exactly as it was.
+  // This replaces the previous order (write feature_list.json, append the
+  // checkpoint, then run brainCheck and exit 1 with the flip already on disk) —
+  // that behavior was specified, not accidental, and reporting the failure
+  // honestly did not undo the fact that later reads saw a feature marked
+  // shipped on a brain that never passed its checks.
+  const projected = {
+    ...list,
+    features: list.features.map((f) =>
+      f === feat ? { ...f, status: "shipped", evidence } : f
+    ),
+  };
+
+  // strict: a ship without a PASS verification is exactly the premature "done"
+  // this harness exists to prevent.
+  // `scope` makes this a GATE, not an audit: every per-feature row (doc paths,
+  // dependency refs, verdicts, raw HTML, image links, plans, tasks) narrows to
+  // the feature being shipped. Unscoped, one stray <div> in some OTHER
+  // feature's legacy verification doc, or one moved screenshot, refused EVERY
+  // future ship — with a message naming a file the shipper never touched.
+  // That is the deadlock `strictScope` already fixed for the two strict rows,
+  // left half-fixed for the other seven — and now the tasks rows inherit the
+  // same fix for free by scoping the same way.
+  //
+  // Deliberately NOT a before/after diff: a dangling dependency on the feature
+  // being shipped is pre-existing AND disqualifying, so "did this write make it
+  // worse?" is the wrong question here. "Is this feature fit to ship?" is.
+  const checks = brainCheck(brain, { list: projected, strict: true, scope: feat.slug });
+  const failed = checks.filter((c) => c.status === "fail");
+  if (failed.length) return { kind: "refused", feat, previous, checks: failed };
+
+  feat.status = "shipped";
+  feat.evidence = evidence;
+
+  // Shipping touches TWO files (feature_list.json + runs/progress.md). Each
+  // write is atomic on its own, but the pair was not: a failure on the second
+  // left a feature marked shipped with no checkpoint recording it. Snapshot the
+  // first file's bytes and restore them if the second throws, so the pair is
+  // all-or-nothing.
+  const flPath = featureListPath(brain);
+  const flBefore = fs.existsSync(flPath) ? fs.readFileSync(flPath) : null;
+  saveFeatureList(brain, list);
+
+  const warnings = [];
+  const shots = listShots(brain, feat.slug);
+  if (shots.length === 0) warnings.push(`${feat.slug} has zero screenshots — evidence is unverified visually`);
+
+  const evidenceCapped = evidence.length > 120 ? evidence.slice(0, 120) : evidence;
+  let checkpointResult;
+  try {
+    checkpointResult = appendProgressEntry(brain, { summary: `shipped ${feat.slug}: ${evidenceCapped}` });
+  } catch (e) {
+    if (flBefore !== null) writeFileAtomic(flPath, flBefore);
+    return { kind: "checkpoint-failed", feat, previous, error: e.message };
+  }
+  // A MISSING progress.md is not a write failure — appendProgressEntry returns
+  // null by design so a brain without a cursor still ships. Warn, don't roll back.
+
+  // Regenerate the derived index so the tracker and its human-facing mirror are
+  // never out of step even for a moment. The drift check is skipped during
+  // preflight (the index describes disk, not a projection), so this is where the
+  // two are reconciled.
+  const regen = regenerateFeaturesIndex(brain);
+
+  // Re-verify AFTER the write. Preflight validated a projection; only this can
+  // assert the invariant the ship actually left behind, and it is what makes
+  // "no drift left behind" a checked claim rather than a comment.
+  const post = newFailuresAfter(preShipChecks, brainCheck(brain).filter((c) => c.status === "fail"));
+
+  return {
+    kind: post.length ? "post-check-failed" : "shipped",
+    feat,
+    previous,
+    warnings,
+    checkpointResult,
+    evidenceCapped,
+    regen,
+    post,
+  };
+}
+
+// Renders a shipFeature() result into { lines, help, exit } — everything
+// `brain ship` prints, MINUS the trailing `help:` block (returned separately)
+// so a composite caller (gated autoship) can merge it with its own help lines
+// into ONE `help:` list rather than emitting two. `exit` is 0 (caller need not
+// call process.exit) or 1 (caller should exit 1) — never called here, so the
+// same renderer works whether this is the whole command's output or half of it.
+function shipResultLines(result) {
+  if (result.kind === "not-found") {
+    return {
+      lines: [`error: no feature "${result.requestedSlug}"`],
+      help: [`known slugs: ${result.list.features.map((f) => f.slug).join(", ")}`],
+      exit: 1,
+    };
+  }
+  if (result.kind === "already-shipped") {
+    return {
+      lines: [`feature: ${result.feat.slug} already shipped (no-op)`],
+      help: [`Run \`brain features view ${result.feat.slug}\` to see the recorded evidence`],
+      exit: 0,
+    };
+  }
+  if (result.kind === "refused") {
+    return {
+      lines: [
+        `ship: refused — ${result.checks.length} harness check(s) would fail`,
+        kv("slug", result.feat.slug, 2),
+        kv("status", `${result.previous} (unchanged — nothing was written)`, 2),
+        ...toonTable("checks", result.checks, ["check", "status", "detail"]),
+      ],
+      help: [
+        `Every row above concerns ${result.feat.slug} — unrelated brain debt does not block a ship`,
+        `Fix the failing detail(s) above, then re-run \`brain ship ${result.feat.slug} --evidence "..."\``,
+        "Run `brain check` to re-verify without attempting the ship",
+      ],
+      exit: 1,
+    };
+  }
+  if (result.kind === "checkpoint-failed") {
+    return {
+      lines: [`error: checkpoint failed, ship rolled back: ${result.error}`],
+      help: [
+        `${result.feat.slug} is still "${result.previous}" — feature_list.json was restored`,
+        `Fix runs/progress.md, then re-run \`brain ship ${result.feat.slug} --evidence "..."\``,
+      ],
+      exit: 1,
+    };
+  }
+
+  // "shipped" or "post-check-failed" — the write happened.
+  const lines = ["ship:", kv("slug", result.feat.slug, 2), kv("previous", result.previous, 2), kv("status", "shipped", 2)];
+  for (const w of result.warnings) lines.push(`warning: ${w}`);
+  if (result.checkpointResult) lines.push(kv("checkpoint", `shipped ${result.feat.slug}: ${result.evidenceCapped}`, 2));
+  else lines.push("warning: runs/progress.md not found — checkpoint not recorded");
+  if (result.regen === "written") lines.push(kv("index", "features/index.md regenerated", 2));
+  else if (result.regen === "no-markers")
+    lines.push("warning: features/index.md has no brain:features-table markers — update it by hand or `brain check` will report drift");
+  else if (result.regen === "missing")
+    lines.push("warning: features/index.md absent — run `brain features index --write --create`");
+
+  if (result.kind === "post-check-failed") {
+    lines.push(...toonTable("post_ship_checks", result.post, ["check", "status", "detail"]));
+    return {
+      lines,
+      help: [`${result.feat.slug} shipped, but ${result.post.length} check(s) fail AFTER the write — fix the detail(s) above`],
+      exit: 1,
+    };
+  }
+
+  return {
+    lines,
+    help: [`Run \`brain features view ${result.feat.slug}\` to confirm`, "Run `brain check` anytime to re-verify harness invariants"],
+    exit: 0,
+  };
+}
+
 function cmdShip(argv) {
   const spec = {
     "--evidence": { value: true, desc: "evidence string proving the feature works (required)" },
@@ -1593,133 +1767,10 @@ function cmdShip(argv) {
     usageError("--evidence is required", [`brain ship ${slug} --evidence "..."`]);
 
   const brain = findBrain(flags.brain);
-  const list = loadFeatureList(brain);
-  const feat = list.features.find((f) => f.slug === slug || f.id === slug);
-  if (!feat) opError(`no feature "${slug}"`, [`known slugs: ${list.features.map((f) => f.slug).join(", ")}`]);
-
-  if (feat.status === "shipped") {
-    print([
-      `feature: ${feat.slug} already shipped (no-op)`,
-      ...toonList("help", [`Run \`brain features view ${feat.slug}\` to see the recorded evidence`]),
-    ]);
-    return;
-  }
-
-  const previous = feat.status;
-  const preShipChecks = brainCheck(brain).filter((c) => c.status === "fail");
-
-  // PREFLIGHT, then commit. Project the next state in memory and validate it
-  // BEFORE any write, so a failing check leaves the brain exactly as it was.
-  // This replaces the previous order (write feature_list.json, append the
-  // checkpoint, then run brainCheck and exit 1 with the flip already on disk) —
-  // that behavior was specified, not accidental, and reporting the failure
-  // honestly did not undo the fact that later reads saw a feature marked
-  // shipped on a brain that never passed its checks.
-  const projected = {
-    ...list,
-    features: list.features.map((f) =>
-      f === feat ? { ...f, status: "shipped", evidence: flags.evidence } : f
-    ),
-  };
-
-  // strict: a ship without a PASS verification is exactly the premature "done"
-  // this harness exists to prevent.
-  // `scope` makes this a GATE, not an audit: every per-feature row (doc paths,
-  // dependency refs, verdicts, raw HTML, image links, plans) narrows to the
-  // feature being shipped. Unscoped, one stray <div> in some OTHER feature's
-  // legacy verification doc, or one moved screenshot, refused EVERY future ship
-  // — with a message naming a file the shipper never touched. That is the
-  // deadlock `strictScope` already fixed for the two strict rows, left
-  // half-fixed for the other seven.
-  //
-  // Deliberately NOT a before/after diff: a dangling dependency on the feature
-  // being shipped is pre-existing AND disqualifying, so "did this write make it
-  // worse?" is the wrong question here. "Is this feature fit to ship?" is.
-  const checks = brainCheck(brain, { list: projected, strict: true, scope: feat.slug });
-  const failed = checks.filter((c) => c.status === "fail");
-  if (failed.length) {
-    print([
-      `ship: refused — ${failed.length} harness check(s) would fail`,
-      kv("slug", feat.slug, 2),
-      kv("status", `${previous} (unchanged — nothing was written)`, 2),
-      ...toonTable("checks", failed, ["check", "status", "detail"]),
-      ...toonList("help", [
-        `Every row above concerns ${feat.slug} — unrelated brain debt does not block a ship`,
-        `Fix the failing detail(s) above, then re-run \`brain ship ${feat.slug} --evidence "..."\``,
-        "Run `brain check` to re-verify without attempting the ship",
-      ]),
-    ]);
-    process.exit(1);
-    return;
-  }
-
-  feat.status = "shipped";
-  feat.evidence = flags.evidence;
-
-  // Shipping touches TWO files (feature_list.json + runs/progress.md). Each
-  // write is atomic on its own, but the pair was not: a failure on the second
-  // left a feature marked shipped with no checkpoint recording it. Snapshot the
-  // first file's bytes and restore them if the second throws, so the pair is
-  // all-or-nothing.
-  const flPath = featureListPath(brain);
-  const flBefore = fs.existsSync(flPath) ? fs.readFileSync(flPath) : null;
-  saveFeatureList(brain, list);
-
-  const lines = ["ship:", kv("slug", feat.slug, 2), kv("previous", previous, 2), kv("status", "shipped", 2)];
-
-  const shots = listShots(brain, feat.slug);
-  if (shots.length === 0) lines.push(`warning: ${feat.slug} has zero screenshots — evidence is unverified visually`);
-
-  const evidenceCapped = flags.evidence.length > 120 ? flags.evidence.slice(0, 120) : flags.evidence;
-  let checkpointResult;
-  try {
-    checkpointResult = appendProgressEntry(brain, { summary: `shipped ${feat.slug}: ${evidenceCapped}` });
-  } catch (e) {
-    if (flBefore !== null) writeFileAtomic(flPath, flBefore);
-    opError(`checkpoint failed, ship rolled back: ${e.message}`, [
-      `${feat.slug} is still "${previous}" — feature_list.json was restored`,
-      `Fix runs/progress.md, then re-run \`brain ship ${feat.slug} --evidence "..."\``,
-    ]);
-  }
-  // A MISSING progress.md is not a write failure — appendProgressEntry returns
-  // null by design so a brain without a cursor still ships. Warn, don't roll back.
-  if (checkpointResult) lines.push(kv("checkpoint", `shipped ${feat.slug}: ${evidenceCapped}`, 2));
-  else lines.push("warning: runs/progress.md not found — checkpoint not recorded");
-
-  // Regenerate the derived index so the tracker and its human-facing mirror are
-  // never out of step even for a moment. The drift check is skipped during
-  // preflight (the index describes disk, not a projection), so this is where the
-  // two are reconciled.
-  const regen = regenerateFeaturesIndex(brain);
-  if (regen === "written") lines.push(kv("index", "features/index.md regenerated", 2));
-  else if (regen === "no-markers")
-    lines.push("warning: features/index.md has no brain:features-table markers — update it by hand or `brain check` will report drift");
-  else if (regen === "missing")
-    lines.push("warning: features/index.md absent — run `brain features index --write --create`");
-
-  // Re-verify AFTER the write. Preflight validated a projection; only this can
-  // assert the invariant the ship actually left behind, and it is what makes
-  // "no drift left behind" a checked claim rather than a comment.
-  const post = newFailuresAfter(preShipChecks, brainCheck(brain).filter((c) => c.status === "fail"));
-  if (post.length) {
-    lines.push(...toonTable("post_ship_checks", post, ["check", "status", "detail"]));
-    lines.push(
-      ...toonList("help", [
-        `${feat.slug} shipped, but ${post.length} check(s) fail AFTER the write — fix the detail(s) above`,
-      ])
-    );
-    print(lines);
-    process.exit(1);
-    return;
-  }
-
-  lines.push(
-    ...toonList("help", [
-      `Run \`brain features view ${feat.slug}\` to confirm`,
-      "Run `brain check` anytime to re-verify harness invariants",
-    ])
-  );
-  print(lines);
+  const result = shipFeature(brain, slug, flags.evidence);
+  const { lines, help, exit } = shipResultLines(result);
+  print([...lines, ...toonList("help", help)]);
+  if (exit) process.exit(exit);
 }
 
 // ---------------------------------------------------------------------------
@@ -2105,14 +2156,24 @@ function cmdTasksClaim(argv) {
 }
 
 function cmdTasksDone(argv) {
-  const spec = { "--evidence": { value: true, desc: "evidence this task is actually done (required)" } };
+  const spec = {
+    "--evidence": { value: true, desc: "evidence this task is actually done (required)" },
+    "--no-autoship": {
+      value: false,
+      desc: "skip the automatic `brain ship` this would otherwise trigger by closing the last open task",
+    },
+  };
   const { flags, positionals } = parseArgs(argv, spec, "tasks done");
   if (flags.help)
     helpBlock(
       "tasks done",
-      "Close a task: evidence required — mirrors `brain ship`'s evidence gate",
+      "Close a task: evidence required — mirrors `brain ship`'s evidence gate. Closing the LAST open task " +
+        "runs the ship path automatically through the identical strict preflight (--no-autoship opts out)",
       spec,
-      ['brain tasks done task-coordination t2 --evidence "check-state-invariants green, 306 assertions"'],
+      [
+        'brain tasks done task-coordination t2 --evidence "check-state-invariants green, 306 assertions"',
+        'brain tasks done task-coordination t3 --evidence "..." --no-autoship',
+      ],
       ["<slug> — feature slug", "<id> — task id from `brain tasks <slug>`"]
     );
   const [slug, id] = positionals;
@@ -2149,24 +2210,56 @@ function cmdTasksDone(argv) {
   const shapeError = validateTasksShape(projected, slug);
   if (shapeError) opError(`refused — ${shapeError}`, ["Nothing was written"]);
 
-  const result = writeTasksCas(brain, slug, projected, hash);
-  if (!result.ok)
-    opError(result.message, [`Run \`brain tasks ${slug}\` to re-read the current state, then retry`]);
+  const casResult = writeTasksCas(brain, slug, projected, hash);
+  if (!casResult.ok)
+    opError(casResult.message, [`Run \`brain tasks ${slug}\` to re-read the current state, then retry`]);
 
+  // The task-close write is already durable at this point — everything below
+  // only decides what to REPORT (and, for autoship, whether to ALSO attempt a
+  // second, independent operation). Nothing here can undo the task closing.
   const remaining = projected.tasks.filter((t) => !["done", "cut"].includes(t.status)).length;
-  print([
+  const lines = [
     "task:",
     kv("slug", slug, 2),
     kv("id", id, 2),
     kv("status", "done", 2),
     kv("evidence", flags.evidence.length > 120 ? flags.evidence.slice(0, 120) + "…" : flags.evidence, 2),
-    ...toonList("help", [
-      remaining
-        ? `Run \`brain tasks ${slug}\` — ${remaining} task(s) still open/claimed`
-        : `Run \`brain tasks ${slug}\` — every task is done or cut; consider \`brain ship ${slug} --evidence "..."\``,
-      'Run `brain progress add --summary "..."` to checkpoint this change',
-    ]),
-  ]);
+  ];
+  const help = [];
+  let exitCode = 0;
+
+  if (remaining === 0 && !flags["no-autoship"]) {
+    // Gated autoship: the LAST open task just closed, so attempt the same
+    // strict preflight-then-commit ship `brain ship` would run — never a
+    // parallel or looser gate. A refusal here is the gate working as
+    // designed, not a failure of the task close that already succeeded above.
+    const autoEvidence = `autoship: last open task ${id} closed — ${flags.evidence}`;
+    const shipRes = shipFeature(brain, slug, autoEvidence);
+    const rendered = shipResultLines(shipRes);
+    lines.push(...rendered.lines);
+    help.push(...rendered.help);
+    // The task close is the primary, already-committed operation of THIS
+    // command; autoship is a bonus attempt this command makes on top of it.
+    // A "refused" ship is the gate correctly declining to ship unverified
+    // work — that is success for `tasks done`, so it must not turn an
+    // already-successful task close into a nonzero exit (a coordinator
+    // script checking `$?` would otherwise have to special-case "refused"
+    // out of every other real failure). A "checkpoint-failed" or
+    // "post-check-failed" ship result IS a genuine problem with the autoship
+    // attempt itself (an I/O error, or new harness debt introduced by a
+    // write that did land) and stays non-zero so it is not missed.
+    if (shipRes.kind === "checkpoint-failed" || shipRes.kind === "post-check-failed") exitCode = rendered.exit;
+    help.push(`Run \`brain tasks view ${slug} ${id}\` to see the recorded evidence`);
+  } else if (remaining === 0) {
+    help.push(`Run \`brain tasks ${slug}\` — every task is done or cut; autoship skipped (--no-autoship)`);
+    help.push(`Run \`brain ship ${slug} --evidence "..."\` to ship manually`);
+  } else {
+    help.push(`Run \`brain tasks ${slug}\` — ${remaining} task(s) still open/claimed`);
+  }
+  help.push('Run `brain progress add --summary "..."` to checkpoint this change');
+
+  print([...lines, ...toonList("help", help)]);
+  if (exitCode) process.exit(exitCode);
 }
 
 function cmdTasksRelease(argv) {
@@ -4785,7 +4878,7 @@ Run \`brain playbook\` for the live id/use_when index; \`brain playbook <id>\` f
 
 - \`brain progress add --summary "..." --next "..."\` — append a session checkpoint
 - \`brain features set-status <slug> --status <planned|in-progress|shipped|blocked|cut>\` — flip feature state (enforces one-in-progress policy; \`--status shipped\` requires \`--evidence\` **and passes the same preflight as \`brain ship\` — it refuses and writes nothing if any check would fail**. Transitions *out* of a state are never gated, so a broken record stays repairable)
-- \`brain check\` — deterministic harness invariants (feature-list **schema** validity — duplicate ids/slugs, unknown status, shipped-without-evidence all fail — one-in-progress per declared policy, doc paths, dependency refs, \`features/index.md\` agreeing with the tracker, plan/review file integrity, verification docs having a **readable** verdict with resolvable image links, verify.json shape when present); exit 1 on any failure, CI-usable
+- \`brain check\` — deterministic harness invariants (feature-list **schema** validity — duplicate ids/slugs, unknown status, shipped-without-evidence all fail — one-in-progress per declared policy, doc paths, dependency refs, \`features/index.md\` agreeing with the tracker, plan/review file integrity, verification docs having a **readable** verdict with resolvable image links, \`tasks.json\` schema validity, no \`shipped\` feature with an open task, verify.json shape when present); exit 1 on any failure, CI-usable
 - \`brain features index [--write]\` — GENERATE the \`features/index.md\` status table from \`feature_list.json\` (bounded by \`<!-- brain:features-table -->\` markers so surrounding prose survives). Hand-maintaining that mirror is how a tracker and its human-facing index end up disagreeing
 - \`brain receipt <feature> [--date <d>] [--verified-by <who>] [--allow-dirty]\` — stamp a commit-bound provenance receipt into a verification doc, written BY THE TOOL: HEAD at stamp time plus the actual gate results for that feature from \`runs/gates.jsonl\`. Refuses on a dirty tree (a receipt naming HEAD while the tree differs describes code in no commit) and refuses to stamp a doc whose verdict is unreadable — a hand-written receipt is a claim about provenance, not provenance
 - \`brain check --strict\` — adds two: every \`shipped\` feature must have a verification doc whose verdict parses to PASS, **and** that doc must carry a \`brain:verification\` receipt naming a commit that is an ancestor of HEAD. Opt-in here so brains predating the invariants do not go red on upgrade; \`brain ship\` and \`set-status --status shipped\` **always** enforce both, since shipping is the moment the claim is made
@@ -4909,10 +5002,17 @@ retry, never a corrupted file.
   the current owner) if held by someone else; refuses (naming the unmet
   dependency) if any \`depends_on\` is not \`done\`; re-claiming your OWN
   claim is an idempotent no-op at exit 0.
-- \`brain tasks done <slug> <id> --evidence "..."\` — \`--evidence\` is
-  required (mirrors \`brain ship\`'s gate) and refuses on missing/blank (exit
-  2). Already-done is an idempotent no-op at exit 0 and never overwrites the
-  recorded evidence.
+- \`brain tasks done <slug> <id> --evidence "..." [--no-autoship]\` —
+  \`--evidence\` is required (mirrors \`brain ship\`'s gate) and refuses on
+  missing/blank (exit 2). Already-done is an idempotent no-op at exit 0 and
+  never overwrites the recorded evidence. **Closing the LAST open/claimed task
+  on a feature runs \`brain ship\`'s identical strict preflight automatically**
+  (gated autoship) — on a verified feature it ships; on an unverified one it
+  refuses, but the task stays closed and the feature stays untouched (nothing
+  is written by the refused ship), reported together in one result, still exit
+  0 — the task close is the primary operation here and it succeeded; the ship
+  refusal is the gate working as designed, not a failure of this command.
+  \`--no-autoship\` skips the automatic ship attempt entirely.
 - \`brain tasks release <slug> <id>\` — the stale-claim escape hatch: clears
   owner/\`claimed_at\` back to \`open\`. No TTL by design — any fixed timeout is
   wrong for some task, so release is always an explicit act.
@@ -4920,7 +5020,11 @@ retry, never a corrupted file.
 Every mutation preflights: read → project the change → validate the
 projection → only then write with the hash from the read (the same
 preflight-then-commit order \`brain ship\` already uses) — a bad write never
-lands partially.
+lands partially. Two more \`brain check\` rows exist just for this layer:
+\`tasks.json files parse\` and \`no shipped feature has an open task\` — both
+scoped exactly like every other per-feature row (an unrelated feature's open
+task never blocks THIS feature's ship), and both PASS vacuously when a feature
+has no \`tasks.json\` at all (read-compat).
 
 ## Execution loop — implementing an approved plan / working a feature to shipped
 

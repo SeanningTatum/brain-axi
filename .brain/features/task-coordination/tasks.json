@@ -1,0 +1,60 @@
+{
+  "feature": "task-coordination",
+  "updated": "2026-08-06",
+  "tasks": [
+    {
+      "id": "t1",
+      "title": "Phase 2 — the gate",
+      "status": "done",
+      "acceptance": "Two brain check rows (task schema parses; no shipped feature has an open task). Ship + set-status shipped preflight refuses on an open task, writing nothing (feature_list.json byte-identical). Closing the LAST open task auto-runs the ship path through the identical strict preflight; --no-autoship opts out; a refused autoship leaves the task closed and the feature untouched. Absent tasks.json passes everywhere (read-compat).",
+      "files": [
+        "bin/brain.js",
+        "lib/review/brain-data.js",
+        "scripts/check-state-invariants.mjs"
+      ],
+      "owner": "worker-gate",
+      "claimed_at": "2026-08-06T23:39:30.601Z",
+      "evidence": "Two brain check rows added (lib/review/brain-data.js:1291-1345 approx): \"tasks.json files parse\" and \"no shipped feature has an open task\", both scope-respecting and passing vacuously with 0 tasks.json files. brain ship / features set-status --status shipped refuse through the existing scoped brainCheck preflight with no special-case code (bin/brain.js: shipFeature/cmdFeaturesSetStatus). Gated autoship added to `tasks done` (bin/brain.js cmdTasksDone): closing the last open/claimed task runs shipFeature() through the identical strict preflight; --no-autoship opts out. Verified via node scripts/check-state-invariants.mjs (368 assertions, up from 330, all green), node bin/brain.js check/--strict/verify/skill --check all exit 0 against .brain, and an end-to-end throwaway-brain walk: ship refuses on an open task naming \"demo: t1\"; refused autoship leaves feature_list.json byte-identical (md5 unchanged) with the feature still in-progress while the task itself stays closed (status done); successful autoship flips feature_list.json to shipped on disk; --no-autoship suppresses the ship attempt entirely (no \"ship:\" line, feature_list.json unchanged)."
+    },
+    {
+      "id": "t2",
+      "title": "Phase 3 — the handoff",
+      "status": "open",
+      "acceptance": "brain brief <slug> <task-id> composes task + acceptance + the approved decision prompts read from plans/<slug>/reviews.jsonl + the rules docs owning the task's declared files. Output fits one screen and cites at least one decision verbatim. runs append gains --task and --author, both surfaced by runs view.",
+      "depends_on": [
+        "t1"
+      ],
+      "files": [
+        "bin/brain.js",
+        "scripts/check-state-invariants.mjs"
+      ]
+    },
+    {
+      "id": "t3",
+      "title": "Phase 4 — teach it",
+      "status": "open",
+      "acceptance": "execute playbook rewritten as a coordinator/worker loop naming which role runs each command, with the topology table. tasks + brief added to skillContent(). rules/state.md and rules/cli-commands.md updated. brain skill --check exits 0 and brain verify 4/4 including skill-sync and playbook-refs.",
+      "depends_on": [
+        "t1",
+        "t2"
+      ],
+      "files": [
+        "lib/review/playbooks.js",
+        "bin/brain.js",
+        ".brain/rules/state.md",
+        ".brain/rules/cli-commands.md"
+      ]
+    },
+    {
+      "id": "t4",
+      "title": "Harden the lock + close audit findings",
+      "status": "open",
+      "acceptance": "Regression tests for the stale-lock steal path: a backdated lock stolen from a LIVE holder must leave the victim refusing with reason lock-lost, tasks.json byte-identical, and the thief's lock intact after the victim's cleanup (the ownership-checked release). Plus: brain tasks dispatch must not break when a feature slug shadows a verb (view|add|claim|done|release) — currently 'brain tasks release' on a feature slugged release exits 2; document the list verb. Plus: decide receipt-without-commit — either require commit when receipt is present, or state it is reserved for a later phase.",
+      "files": [
+        "lib/state.js",
+        "bin/brain.js",
+        "scripts/check-state-invariants.mjs"
+      ]
+    }
+  ]
+}
