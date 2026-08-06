@@ -21,6 +21,13 @@
 
 ---
 
+## 2026-08-06 — shipped state-integrity: 2026-08-06 verification PASS (features/state-integrity/verifications/2026-08-06.md, receipt bound to e2df4da): brain che
+- branch: `chore/ship-state-integrity`
+- in-progress feature: none
+- run note: none
+
+---
+
 ## 2026-07-31 — Harness hardening complete, loop closed. Closing independent score: CLI 8.0 / template 7.5 (from 4.0 baseline). Then fixed the three bypasses that audit found (bogus HTML comments hiding verdicts, nested dead branch inside the mapper, text-regex test-parity) — each proven closed with a live plant. 13 commits across brain-axi (feat/state-integrity) and cf-saas-starter (feat/harness-gates).
 - branch: `feat/state-integrity`
 - in-progress feature: none
