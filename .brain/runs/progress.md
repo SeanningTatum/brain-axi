@@ -21,6 +21,14 @@
 
 ---
 
+## 2026-08-06 — Closed state-integrity (feat-008): verification PASS + commit-bound receipt (e2df4da) + shipped. Then planned task-coordination (feat-009) — plan reviewed round 1, all 9 decisions at recommended, tier complete (phases 1-4). Also fixed a FEATURE_FIELDS re-declaration in bin/brain.js violating rules/state.md's one-definition rule.
+- branch: `chore/ship-state-integrity`
+- in-progress feature: none
+- run note: none
+- next: Start feat-009 phase 1 (the record): TASK_STATUSES + validateTasksShape + depends_on cycle detection + CAS write in lib/state.js, then cmdTasks. Set feat-009 in-progress first — the slot is free. Separate from this plan: CI runs brain check WITHOUT --strict (.brain/verify.json:5), and npm view brain-axi is still 404 so every npx -y brain-axi path is aspirational.
+
+---
+
 ## 2026-08-06 — shipped state-integrity: 2026-08-06 verification PASS (features/state-integrity/verifications/2026-08-06.md, receipt bound to e2df4da): brain che
 - branch: `chore/ship-state-integrity`
 - in-progress feature: none
