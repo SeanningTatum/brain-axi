@@ -2470,6 +2470,232 @@ function writeOneOpenTask(brain, slug, id = "t1") {
   );
 }
 
+// ---------------------------------------------------------------------------
+// 15. `brain brief <slug> <task-id>` — the handoff payload: task + acceptance
+// + approved decisions from plans/<slug>/reviews.jsonl + the rules docs
+// owning the task's declared files. Covers: decisions + owning rules present,
+// neither present (still definitive, never silently empty), unknown
+// task/slug (clean exit 1), truncation + --full, and the files->rules
+// derivation from rules/index.md's Touches column.
+// ---------------------------------------------------------------------------
+
+function writeRulesIndex(brain, tableBody) {
+  fs.mkdirSync(path.join(brain, "rules"), { recursive: true });
+  fs.writeFileSync(
+    path.join(brain, "rules", "index.md"),
+    ["# Rules — Index", "", "| # | Rule | Touches | Read when |", "|---|------|---------|-----------|", ...tableBody, ""].join(
+      "\n"
+    )
+  );
+}
+
+// A legacy (unbound) plan whose OWN slug equals the feature slug — the same
+// shape this repo's own task-coordination plan is in, and the shape brief
+// must recognize as "this feature's plan" without an explicit --feature bind.
+function writePlanWithDecision(brain, slug, { decisionPrompt, tag = "decision", endedBy = "user" } = {}) {
+  const dir = path.join(brain, "plans", slug);
+  fs.mkdirSync(dir, { recursive: true });
+  const now = new Date().toISOString();
+  fs.writeFileSync(
+    path.join(dir, "meta.json"),
+    JSON.stringify(
+      { slug, title: slug, file: path.join(dir, "v1.html"), feature: null, status: "reviewed", created: now, updated: now, rounds: 1 },
+      null,
+      2
+    )
+  );
+  fs.writeFileSync(
+    path.join(dir, "reviews.jsonl"),
+    JSON.stringify({ at: now, round: 1, prompts: [{ tag, selector: "", text: "", prompt: decisionPrompt }], ended_by: endedBy }) + "\n"
+  );
+  fs.writeFileSync(path.join(dir, "v1.html"), `<title>${slug}</title>`);
+}
+
+function writeTasksFile(brain, slug, tasks) {
+  fs.mkdirSync(path.dirname(tasksPath(brain, slug)), { recursive: true });
+  fs.writeFileSync(tasksPath(brain, slug), JSON.stringify({ feature: slug, tasks }, null, 2));
+}
+
+{
+  // The full case: decisions AND an owning rule both present, on the SAME
+  // task, so a single fixture proves the whole composition rather than one
+  // property at a time.
+  const brain = makeBrain("brief-full", { features: [featureFor("briefme", { description: "does the thing" })] });
+  writeTasksFile(brain, "briefme", [
+    {
+      id: "t1",
+      title: "The task",
+      status: "open",
+      acceptance: "short acceptance text",
+      files: ["bin/brain.js", "scripts/check-state-invariants.mjs"],
+    },
+  ]);
+  writeRulesIndex(brain, ["| 2 | [`cli-commands.md`](cli-commands.md) | `bin/brain.js` commands, flags | Adding a command |"]);
+  writePlanWithDecision(brain, "briefme", { decisionPrompt: "Should X happen?: Yes, verbatim decision text" });
+
+  const res = runIn(brain, "brief", "briefme", "t1");
+  ok("brief on a fully-populated task exits 0", res.status === 0, res.stdout);
+  ok(
+    "brief resolves bin/brain.js to cli-commands.md via rules/index.md's Touches column",
+    /bin\/brain\.js,cli-commands\.md/.test(res.stdout || ""),
+    res.stdout
+  );
+  ok(
+    "brief says (none) for a declared file no rule's Touches column names",
+    /scripts\/check-state-invariants\.mjs,\(none\)/.test(res.stdout || ""),
+    res.stdout
+  );
+  ok(
+    "brief cites the approved decision prompt VERBATIM",
+    (res.stdout || "").includes("Should X happen?: Yes, verbatim decision text"),
+    res.stdout
+  );
+  const helpBlockMatch = /help\[\d+\]:\n((?:.*\n?)*)/.exec(res.stdout || "");
+  const firstHelpLine = helpBlockMatch ? helpBlockMatch[1].split("\n").find((l) => l.trim()) : "";
+  ok(
+    "...specifically: `tasks claim briefme t1 --owner <name>` is the first help line",
+    /^\s*Run `brain tasks claim briefme t1 --owner <name>`/.test(firstHelpLine || ""),
+    firstHelpLine
+  );
+}
+
+{
+  // Neither decisions nor an owning rule: still definitive, never a silently
+  // empty section (AXI §5).
+  const brain = makeBrain("brief-bare", { features: [featureFor("bare")] });
+  writeTasksFile(brain, "bare", [{ id: "t1", title: "The task", status: "open", acceptance: "x", files: ["some/random/file.js"] }]);
+  // Deliberately no rules/ dir and no plans/ dir at all.
+
+  const res = runIn(brain, "brief", "bare", "t1");
+  ok("brief on a task with neither decisions nor owning rules still exits 0", res.status === 0, res.stdout);
+  ok(
+    "decisions section says definitively there are none, not silently empty",
+    /decisions: no plans bound to feature "bare"/.test(res.stdout || ""),
+    res.stdout
+  );
+  ok(
+    "rules_source says definitively that ownership cannot be derived",
+    /rules_source: rules\/index\.md not found/.test(res.stdout || ""),
+    res.stdout
+  );
+  ok(
+    "the declared file with no owning rule reads (none), not blank",
+    /some\/random\/file\.js,\(none\)/.test(res.stdout || ""),
+    res.stdout
+  );
+}
+
+{
+  // Unknown task id and unknown slug — clean refusal, exit 1, not a crash.
+  const brain = makeBrain("brief-bare-2", { features: [featureFor("bare2")] });
+  writeTasksFile(brain, "bare2", [{ id: "t1", title: "The task", status: "open", acceptance: "x" }]);
+
+  const badTask = runIn(brain, "brief", "bare2", "t99");
+  ok("brief on an unknown task id exits 1", badTask.status === 1, badTask.stdout);
+  ok("...naming the known ids", /known ids: t1/.test(badTask.stdout || ""), badTask.stdout);
+
+  const badSlug = runIn(brain, "brief", "ghost-feature", "t1");
+  ok("brief on an unknown feature slug (no tasks.json at all) exits 1", badSlug.status === 1, badSlug.stdout);
+}
+
+{
+  // Truncation + --full: a long acceptance and a long decision prompt are
+  // both truncated by default, both readable in full with --full — and the
+  // assertion proves it by checking the FULL text is ABSENT by default and
+  // PRESENT with --full, not merely that the word "truncated" appears.
+  const longAcceptance = "A".repeat(1500);
+  const longDecision = "Q".repeat(50) + ": " + "D".repeat(300);
+  const brain = makeBrain("brief-truncate", { features: [featureFor("longone")] });
+  writeTasksFile(brain, "longone", [{ id: "t1", title: "The task", status: "open", acceptance: longAcceptance, files: [] }]);
+  writePlanWithDecision(brain, "longone", { decisionPrompt: longDecision });
+
+  const short = runIn(brain, "brief", "longone", "t1");
+  ok("brief without --full exits 0", short.status === 0, short.stdout);
+  ok("...the full 1500-char acceptance is NOT present verbatim", !(short.stdout || "").includes(longAcceptance), "full acceptance leaked untruncated");
+  ok("...the full long decision is NOT present verbatim", !(short.stdout || "").includes(longDecision), "full decision leaked untruncated");
+  ok("...and it says so, pointing at --full", /Run `brain brief longone t1 --full`/.test(short.stdout || ""), short.stdout);
+
+  const full = runIn(brain, "brief", "longone", "t1", "--full");
+  ok("brief --full exits 0", full.status === 0, full.stdout);
+  ok("...the full acceptance text IS present verbatim", (full.stdout || "").includes(longAcceptance), "full acceptance missing with --full");
+  ok("...the full decision text IS present verbatim", (full.stdout || "").includes(longDecision), "full decision missing with --full");
+}
+
+// ---------------------------------------------------------------------------
+// 16. `runs append --task/--author` — additive, optional, round-trip through
+// `runs view`, and read-compat with a run note written before these existed.
+// ---------------------------------------------------------------------------
+
+{
+  const brain = makeBrain("runs-task-author", { features: [featureFor("runsfeat")] });
+  writeTasksFile(brain, "runsfeat", [{ id: "t1", title: "The task", status: "open", acceptance: "x" }]);
+
+  const appended = runIn(
+    brain,
+    "runs",
+    "append",
+    "runsfeat",
+    "--task",
+    "t1",
+    "--author",
+    "worker-brief",
+    "--step",
+    "did a thing",
+    "--observed",
+    "VERBATIM_OBSERVED_OUTPUT_42"
+  );
+  ok("runs append --task --author exits 0", appended.status === 0, appended.stdout);
+  ok("...reports the task in its own output", /task: t1/.test(appended.stdout || ""), appended.stdout);
+  ok("...reports the author in its own output", /author: worker-brief/.test(appended.stdout || ""), appended.stdout);
+
+  // Assert the OBSERVABLE STATE ON DISK, not just the confirmation message.
+  const notesDir = path.join(brain, "features", "runsfeat", "runs");
+  const noteFile = fs.readdirSync(notesDir).find((f) => f.endsWith(".md"));
+  const onDisk = fs.readFileSync(path.join(notesDir, noteFile), "utf8");
+  ok("the written note file contains the task metadata line", /^- task: t1$/m.test(onDisk), onDisk);
+  ok("the written note file contains the author metadata line", /^- author: worker-brief$/m.test(onDisk), onDisk);
+  ok("the written note file still contains the verbatim observed output", onDisk.includes("VERBATIM_OBSERVED_OUTPUT_42"), onDisk);
+
+  const noteName = noteFile.replace(/\.md$/, "");
+  const viewed = runIn(brain, "runs", "view", noteName, "--feature", "runsfeat");
+  ok("runs view --feature exits 0", viewed.status === 0, viewed.stdout);
+  ok("...surfaces the task id", /- task: t1/.test(viewed.stdout || ""), viewed.stdout);
+  ok("...surfaces the author", /- author: worker-brief/.test(viewed.stdout || ""), viewed.stdout);
+  ok("...surfaces the observed output", (viewed.stdout || "").includes("VERBATIM_OBSERVED_OUTPUT_42"), viewed.stdout);
+
+  // runs append rejects an unknown --task id when tasks.json exists — and
+  // WRITES NOTHING (checked by re-reading the note file, not just the exit
+  // code — a refusal that still appended a step would be a real bug).
+  const beforeRefusal = fs.readFileSync(path.join(notesDir, noteFile), "utf8");
+  const badTask = runIn(brain, "runs", "append", "runsfeat", "--task", "t99", "--step", "x", "--observed", "y");
+  ok("runs append with an unknown --task id refuses (exit 1)", badTask.status === 1, badTask.stdout);
+  ok(
+    "...and the run note file is byte-identical after the refusal",
+    fs.readFileSync(path.join(notesDir, noteFile), "utf8") === beforeRefusal,
+    "the note file changed even though runs append was refused"
+  );
+
+  // A run note written the OLD way (no task/author, hand-authored, predating
+  // this feature entirely) must still parse and render through `runs view`.
+  const legacyNote = "# runsfeat run — 2026-01-01\n\n## Step 1 — an old step\n\n```\nold observed output\n```\n";
+  fs.writeFileSync(path.join(notesDir, "2026-01-01-progress.md"), legacyNote);
+  const legacyView = runIn(brain, "runs", "view", "2026-01-01-progress", "--feature", "runsfeat");
+  ok("a pre-existing run note with no task/author metadata still parses", legacyView.status === 0, legacyView.stdout);
+  ok(
+    "...and renders its body, including the old step, unaffected",
+    (legacyView.stdout || "").includes("old observed output"),
+    legacyView.stdout
+  );
+
+  // `runs` (list, no args) must surface the feature-scoped note at all — this
+  // is the read-compat gap `runs append`/`runs view` used to have (append
+  // wrote to features/<slug>/runs/, list/view only ever read the legacy
+  // .brain/runs/ pool, so a note `runs append` wrote was invisible to `runs
+  // view` from day one).
+  const listed = runIn(brain, "runs");
+  ok("brain runs (list) surfaces a feature-scoped run note", (listed.stdout || "").includes(noteName), listed.stdout);
+}
+
 fs.rmSync(tmpRoot, { recursive: true, force: true });
 
 // ---------------------------------------------------------------------------

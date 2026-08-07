@@ -47,7 +47,7 @@ Run `brain playbook` for the live id/use_when index; `brain playbook <id>` for t
 - `brain docs` — doc sections; `brain docs rules` — list; `brain docs view rules/errors` — read
 - `brain search "<query>"` — find text anywhere in the brain (`--section rules` to narrow)
 - `brain features view <slug>` — tracker fields + feature doc
-- `brain runs view <name>` — deep per-task state (baselines, dead ends, decisions)
+- `brain runs view <name>` — deep per-task state (baselines, dead ends, decisions); merges the legacy flat pool with every feature's own `runs/` (pass `--feature <slug>` if the name exists in more than one place)
 - `npx -y brain-axi playbook plan` — the plan artifact standard (structure, decision cards, diagrams)
 - `npx -y brain-axi playbook product` — the product case: problem + evidence, user + job, success metric, non-goals, scope tiers, prior art, product decision cards (plan sections 3 and 7)
 - `npx -y brain-axi playbook ux` — wireframes, screen-state matrix, user-journey flow, layout variant cards (plan section 6)
@@ -194,6 +194,18 @@ retry, never a corrupted file.
 - `brain tasks release <slug> <id>` — the stale-claim escape hatch: clears
   owner/`claimed_at` back to `open`. No TTL by design — any fixed timeout is
   wrong for some task, so release is always an explicit act.
+- `brain brief <slug> <task-id> [--full]` — the handoff: one payload a COLD
+  worker can act on without reading the plan artifact or being told anything
+  else. Composes the task (acceptance, `depends_on` with their current
+  statuses, declared `files`), the **approved** decision prompts read verbatim
+  from that feature's bound plan(s) (`plans/<slug>/reviews.jsonl` — the round
+  that concluded review, filtered to `tag: decision`; names which plan they
+  came from when more than one is bound), the rules docs that own each
+  declared file (derived from `rules/index.md`'s own Touches column — see
+  `rules_source` in the output for exactly how), and the feature's one-line
+  `description` for orientation. A task with no decisions or no owning rules
+  still gets a definitive line saying so, never a silently empty section. Run
+  this FIRST on a claimed task, before reading anything else.
 
 Every mutation preflights: read → project the change → validate the
 projection → only then write with the hash from the read (the same
@@ -208,15 +220,18 @@ has no `tasks.json` at all (read-compat).
 
 Run `npx -y brain-axi playbook execute` and follow it. Short version: `features
 set-status <slug> --status in-progress` → per step `runs append <slug> --step
-"..." --observed "..."` (verbatim command output, not a paraphrase) → `shots add
---feature <slug> --step NN-name` on every visual test, pass AND fail → a
-verification doc per `playbook verify` → `brain ship <slug> --evidence "..."`
-(requires evidence; no-ops if already shipped; **preflights `brain check`
-against the projected state and refuses the ship if anything would fail —
-nothing is written, the feature keeps its previous status, exit 1**; on pass it
-writes atomically, warns — does not block — on zero screenshots, and
-checkpoints). `runs/progress.md` stays a rolling cursor;
-`features/<slug>/runs/*.md` is the deep, verbatim record.
+"..." --observed "..." [--task <id>] [--author <name>]` (verbatim command
+output, not a paraphrase — `--task`/`--author` are both optional and additive,
+so a step on a coordinated task no longer has to be folded into `--step` text
+by hand; both are visible via `runs view`) → `shots add --feature <slug>
+--step NN-name` on every visual test, pass AND fail → a verification doc per
+`playbook verify` → `brain ship <slug> --evidence "..."` (requires evidence;
+no-ops if already shipped; **preflights `brain check` against the projected
+state and refuses the ship if anything would fail — nothing is written, the
+feature keeps its previous status, exit 1**; on pass it writes atomically,
+warns — does not block — on zero screenshots, and checkpoints).
+`runs/progress.md` stays a rolling cursor; `features/<slug>/runs/*.md` is the
+deep, verbatim record.
 
 - `npx -y brain-axi watch <feature>` — opens the live execution dashboard in
   the browser (feature status, harness health, checkpoints, run-step logs,

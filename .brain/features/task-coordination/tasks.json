@@ -1,6 +1,6 @@
 {
   "feature": "task-coordination",
-  "updated": "2026-08-06",
+  "updated": "2026-08-07",
   "tasks": [
     {
       "id": "t1",
@@ -19,7 +19,7 @@
     {
       "id": "t2",
       "title": "Phase 3 — the handoff",
-      "status": "open",
+      "status": "done",
       "acceptance": "brain brief <slug> <task-id> composes task + acceptance + the approved decision prompts read from plans/<slug>/reviews.jsonl + the rules docs owning the task's declared files. Output fits one screen and cites at least one decision verbatim. runs append gains --task and --author, both surfaced by runs view.",
       "depends_on": [
         "t1"
@@ -27,7 +27,10 @@
       "files": [
         "bin/brain.js",
         "scripts/check-state-invariants.mjs"
-      ]
+      ],
+      "owner": "worker-brief",
+      "claimed_at": "2026-08-06T23:59:24.224Z",
+      "evidence": "brain brief <slug> <task-id> (bin/brain.js) composes task+depends_on-with-statuses+files-with-owning-rules+acceptance+feature-purpose+approved-decisions from plans/<slug>/reviews.jsonl (matches a feature-bound plan OR a legacy plan whose own slug equals the feature slug), with a rules_source line documenting the rules/index.md Touches-column derivation and a definitive line when decisions/owning-rules are absent. runs append gained --task/--author (validated against tasks.json when present), written as '- task:'/'- author:' lines before the fenced observed block (backward-compatible: omitted, output is byte-identical to before); runs view/list extended to merge the legacy .brain/runs/ pool with every feature's own runs/ (a pre-existing read-compat gap: runs append has always written per-feature, runs view only ever read the legacy pool) with --feature to disambiguate. Verified: node scripts/check-state-invariants.mjs -> 409 assertions (up from 375), all green; node bin/brain.js check --brain .brain -> 18/18 pass; check --strict -> 21/21 pass; verify -> 4/4 pass; skill --check -> up to date; brain brief task-coordination t3 --brain .brain produced a real, correct, one-screen brief citing all 9 approved decisions verbatim and resolving 2 of 4 declared files to owning rules."
     },
     {
       "id": "t3",
