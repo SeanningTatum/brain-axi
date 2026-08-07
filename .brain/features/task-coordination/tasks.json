@@ -35,7 +35,7 @@
     {
       "id": "t3",
       "title": "Phase 4 — teach it",
-      "status": "open",
+      "status": "done",
       "acceptance": "execute playbook rewritten as a coordinator/worker loop naming which role runs each command, with the topology table. tasks + brief added to skillContent(). rules/state.md and rules/cli-commands.md updated. brain skill --check exits 0 and brain verify 4/4 including skill-sync and playbook-refs.",
       "depends_on": [
         "t1",
@@ -46,7 +46,10 @@
         "bin/brain.js",
         ".brain/rules/state.md",
         ".brain/rules/cli-commands.md"
-      ]
+      ],
+      "owner": "worker-teach",
+      "claimed_at": "2026-08-07T00:19:43.845Z",
+      "evidence": "playbook execute rewritten as coordinator/worker loop with AGENT TOPOLOGY, THE CAS CONFLICT PATH, GATED AUTOSHIP, and EVIDENCE DISCIPLINE sections (node bin/brain.js playbook execute --brain .brain); skillContent() already documented tasks/brief/runs--task--author (brain skill --check: 'skill: .claude/skills/brain/SKILL.md is up to date', exit 0); rules/state.md + rules/cli-commands.md updated with TASK_STATUSES, validateTasksShape, cycle detection, the CAS lock (withTasksLock/writeTasksCas) and its two ownership rules, and the two new check rows; node scripts/check-state-invariants.mjs: 'state-invariants: ok — 409 assertions'; node bin/brain.js check --brain .brain: 18 checks, all pass, exit 0; node bin/brain.js check --strict --brain .brain: 21 checks, all pass, exit 0; node bin/brain.js verify --brain .brain: '4/4 pass', exit 0"
     },
     {
       "id": "t4",
