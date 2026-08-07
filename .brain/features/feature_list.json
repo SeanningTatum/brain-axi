@@ -1,6 +1,6 @@
 {
   "$schema": "Machine-readable feature state tracker. Source of truth for status; per-feature MD docs are source of truth for design/runtime.",
-  "updated": "2026-08-06",
+  "updated": "2026-08-07",
   "policy": {
     "one_in_progress_at_a_time": true,
     "definition_of_done": "implementation complete + verify-done passed (CLI invoked against .brain, exit codes + TOON eyeballed, stderr diagnostics-only) + feature MD updated + brain skill --check green + brain coherent",
@@ -140,13 +140,13 @@
       "id": "feat-009",
       "name": "task-coordination — a unit of work below the feature",
       "slug": "task-coordination",
-      "status": "in-progress",
+      "status": "shipped",
       "description": "Add tasks as first-class, gate-checked state under each feature so a coordinator can hand phases to sub-agents without holding the phase list in its own context. Per plan task-coordination (2026-08-06, reviewed round 1, tier: complete = phases 1-4): features/<slug>/tasks.json with a schema + optional depends_on (cycle-detected) in lib/state.js, compare-and-swap claiming so parallel workers cannot lose a write, evidence required to close a task and bound to a commit receipt under the same ancestor-of-HEAD rule as a verification verdict, two brain check rows (task schema; no shipped feature with an open task), gated autoship on the last task (refuses without a PASS verification; --no-autoship opts out), brain brief composing the task + acceptance + approved decision prompts from reviews.jsonl + the rules owning the touched files, runs append --task --author, and the execute playbook rewritten as a coordinator/worker loop. Non-goals: brain never spawns an agent; one_in_progress_at_a_time stays in force at the feature level; phases are never scraped out of plan HTML.",
       "dependencies": [
         "core-cli",
         "state-integrity"
       ],
-      "evidence": "",
+      "evidence": "2026-08-06 verification PASS (features/task-coordination/verifications/2026-08-06.md, receipt bound to 2017620): 409 assertions (from 222), check 18/18, check --strict 21/21, verify 4/4, skill --check clean. Dogfooded on itself — phases 2/3/4 seeded as real tasks and claimed+closed by independent worker agents through the CLI. Error paths proven: open task blocks ship with feature_list.json byte-identical, depends_on cycle named at both ends, no close without evidence (exit 2), two concurrent claims through the real CLI yield exactly one winner 3/3, gated autoship refused on the unverified feature leaving it in-progress. Seven defects found and closed during the build, three by adversarial review of work that had already reported success.",
       "owners": [
         "sean"
       ],

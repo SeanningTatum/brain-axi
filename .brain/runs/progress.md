@@ -21,6 +21,13 @@
 
 ---
 
+## 2026-08-07 — shipped task-coordination: 2026-08-06 verification PASS (features/task-coordination/verifications/2026-08-06.md, receipt bound to 2017620): 409 ass
+- branch: `chore/ship-state-integrity`
+- in-progress feature: none
+- run note: none
+
+---
+
 ## 2026-08-06 — Closed state-integrity (feat-008): verification PASS + commit-bound receipt (e2df4da) + shipped. Then planned task-coordination (feat-009) — plan reviewed round 1, all 9 decisions at recommended, tier complete (phases 1-4). Also fixed a FEATURE_FIELDS re-declaration in bin/brain.js violating rules/state.md's one-definition rule.
 - branch: `chore/ship-state-integrity`
 - in-progress feature: none
