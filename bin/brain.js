@@ -2816,9 +2816,16 @@ function cmdProgressAdd(argv) {
   // output. Internal callers (ship, pr) compose their own summaries and cap at
   // 120 before calling appendProgressEntry, so this gate is scoped to the flag
   // a human or agent actually types.
-  if (flags.summary.length > SUMMARY_MAX_CHARS)
+  // Count CODE POINTS, not UTF-16 code units: `"...".length` charges two units
+  // for every astral character, so a summary of 101 emoji reported as 202 and
+  // was refused at half the advertised cap. Spread-then-count is the honest
+  // reading of "chars" here. It still charges a ZWJ sequence per component
+  // code point — grapheme segmentation would need Intl.Segmenter, and the cap
+  // is a guardrail against paragraphs, not a typographic measurement.
+  const summaryChars = [...flags.summary].length;
+  if (summaryChars > SUMMARY_MAX_CHARS)
     usageError(
-      `--summary is ${flags.summary.length} chars; the cap is ${SUMMARY_MAX_CHARS}`,
+      `--summary is ${summaryChars} chars; the cap is ${SUMMARY_MAX_CHARS}`,
       [
         "progress.md is a rolling cursor — one line. Verbatim output belongs in the run note.",
         'Headline only: brain progress add --summary "<what changed, one line>" --next "<next concrete action>"',

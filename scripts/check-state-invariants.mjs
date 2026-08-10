@@ -2737,6 +2737,25 @@ function writeTasksFile(brain, slug, tasks) {
     "a rejected entry reached the file"
   );
 
+  // Astral characters must cost ONE each. `String.prototype.length` charges two
+  // UTF-16 code units per emoji, so a summary of SUMMARY_MAX_CHARS emoji was
+  // reported as double and refused at half the advertised cap — a gate that
+  // rejects valid input is worse than no gate, because the caller cannot tell
+  // whether the rule or their input is wrong. Found by pre-PR review.
+  const emojiAtCap = runIn(brain, "progress", "add", "--summary", "🧠".repeat(SUMMARY_MAX_CHARS));
+  ok(
+    "the cap counts code points, not UTF-16 units (emoji at the cap is accepted)",
+    emojiAtCap.status === 0,
+    `exit ${emojiAtCap.status}: ${emojiAtCap.stdout}`
+  );
+  const emojiOver = runIn(brain, "progress", "add", "--summary", "🧠".repeat(SUMMARY_MAX_CHARS + 1));
+  ok("the cap still refuses one code point over, in emoji", emojiOver.status === 2, `exit ${emojiOver.status}`);
+  ok(
+    "the emoji refusal reports the code-point count, not the UTF-16 length",
+    new RegExp(`is ${SUMMARY_MAX_CHARS + 1} chars`).test(emojiOver.stdout || ""),
+    emojiOver.stdout
+  );
+
   const normal = runIn(brain, "progress", "add", "--summary", "wired the length gate", "--next", "run the suite");
   ok("progress add still accepts an ordinary summary", normal.status === 0, `exit ${normal.status}: ${normal.stdout}`);
   ok(
