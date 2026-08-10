@@ -156,13 +156,13 @@
       "id": "feat-010",
       "name": "plan-phase — grill before the artifact, register for the record",
       "slug": "plan-phase",
-      "status": "in-progress",
+      "status": "shipped",
       "description": "Two standing playbooks plus the enforcement that makes them stick. Per plan 2026-08-10-2026-08-10-plan-phase (reviewed round 2, tier: complete = phases 1-3, phase 4 deferred): `brain playbook grill` runs a frontier-round interview BEFORE the plan artifact exists and checks every reviews.jsonl decision round for an already-settled answer first, citing rather than re-asking; `brain playbook write` gives the written record a reference register with a slot skeleton per artifact type; `playbook plan` gains a small/full tier ladder declared in the header strip; `brain progress add` refuses a summary over 200 characters with the skeleton in its help lines. Non-goals: no new state file, no replacement for brain review, no retroactive rewrite of existing checkpoints, and phase 4 (a brain check row parsing decision cards out of plan HTML) is deferred as fragile.",
       "dependencies": [
         "core-cli",
         "state-integrity"
       ],
-      "evidence": "",
+      "evidence": "2026-08-10 verification PASS (features/plan-phase/verifications/2026-08-10.md, receipt bound to 76356f6): playbook index at 10 ids with grill and write both printing, check-playbook-refs ok across all 10, state-invariants 419 assertions (from 409), verify 4/4, check 18/18, check --strict clean, skill --check clean. Length gate exercised at 200/201/600 with two refusals leaving progress.md byte-identical, and its four assertions proven to fail against a deliberately disabled gate. The grill's memory check was run for real against all 40 recorded decisions: it removed 3 of 7 decision cards as already-answered and surfaced 1 the plan was missing.",
       "owners": [
         "sean"
       ],

@@ -21,6 +21,13 @@
 
 ---
 
+## 2026-08-10 — shipped plan-phase: 2026-08-10 verification PASS (features/plan-phase/verifications/2026-08-10.md, receipt bound to 76356f6): playbook index
+- branch: `feat/plan-phase`
+- in-progress feature: none
+- run note: none
+
+---
+
 ## 2026-08-10 — plan-phase phases 1-3 built: playbook grill + playbook write, plan tiering, progress add 200-char gate
 - branch: `chore/ship-state-integrity`
 - in-progress feature: plan-phase
