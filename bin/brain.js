@@ -26,6 +26,7 @@ import {
 } from "../lib/review/brain-data.js";
 import {
   STATUSES,
+  SUMMARY_MAX_CHARS,
   FEATURE_FIELDS,
   featureListPath,
   saveFeatureList,
@@ -2791,7 +2792,7 @@ function appendProgressEntry(brain, { summary, branch, feature, runNote, next, e
 
 function cmdProgressAdd(argv) {
   const spec = {
-    "--summary": { value: true, desc: "one-line checkpoint summary (required)" },
+    "--summary": { value: true, desc: `one-line checkpoint summary, max ${SUMMARY_MAX_CHARS} chars (required)` },
     "--branch": { value: true, desc: "current branch (default: from git)" },
     "--feature": { value: true, desc: "in-progress feature id/slug (default: none)" },
     "--run-note": { value: true, desc: "path to the run note (default: none)" },
@@ -2806,6 +2807,25 @@ function cmdProgressAdd(argv) {
     ]);
   if (!flags.summary)
     usageError("--summary is required", ['brain progress add --summary "..." [--branch ...] [--next ...]']);
+
+  // progress.md is a rolling CURSOR, and its own documented format has always
+  // been a one-line summary — but nothing enforced it, so entries grew into
+  // five-sentence paragraphs sitting inside a heading. Refuse at the write
+  // boundary (the same shape `brain ship` uses for missing evidence) rather
+  // than warning: a warning nothing acts on is the status quo with extra
+  // output. Internal callers (ship, pr) compose their own summaries and cap at
+  // 120 before calling appendProgressEntry, so this gate is scoped to the flag
+  // a human or agent actually types.
+  if (flags.summary.length > SUMMARY_MAX_CHARS)
+    usageError(
+      `--summary is ${flags.summary.length} chars; the cap is ${SUMMARY_MAX_CHARS}`,
+      [
+        "progress.md is a rolling cursor — one line. Verbatim output belongs in the run note.",
+        'Headline only: brain progress add --summary "<what changed, one line>" --next "<next concrete action>"',
+        'Detail goes to: brain runs append <slug> --step "..." --observed "<verbatim output>"',
+        "Run `brain playbook write` section 4 for the slots per artifact",
+      ]
+    );
 
   const brain = findBrain(flags.brain);
 
@@ -5196,9 +5216,10 @@ All commands print TOON-structured output. Run from anywhere inside the repo; th
 
 ## Playbooks (\`brain playbook <id>\`)
 
-Eight standing playbooks — each a full text standard printed by \`brain playbook <id>\`, meant to be followed step by step while doing the thing it names:
+Ten standing playbooks — each a full text standard printed by \`brain playbook <id>\`, meant to be followed step by step while doing the thing it names:
 
 - \`start\` — starting any non-trivial task — frame it, read the brain, baseline, open state
+- \`grill\` — before writing a plan that will carry any decision — interview the human, memory-checked
 - \`plan\` — writing any plan/proposal/design artifact for human review
 - \`product\` — any plan for user-facing work — the product case before the technical one
 - \`ux\` — any plan that adds or changes a screen — wireframes, screen states, user flows
@@ -5206,6 +5227,7 @@ Eight standing playbooks — each a full text standard printed by \`brain playbo
 - \`verify\` — verifying a user-visible feature works — browser walk with screenshot evidence
 - \`execute\` — implementing an approved plan / working a feature to shipped
 - \`done\` — before declaring any task complete — full verify, harness invariants, coherence
+- \`write\` — writing anything into the brain — checkpoints, run notes, feature docs, verdicts, commit bodies
 
 Run \`brain playbook\` for the live id/use_when index; \`brain playbook <id>\` for the full text. Referenced inline below at the point each one applies.
 
@@ -5241,7 +5263,8 @@ Run \`brain playbook\` for the live id/use_when index; \`brain playbook <id>\` f
 
 ## Record state (end of task / checkpoint)
 
-- \`brain progress add --summary "..." --next "..."\` — append a session checkpoint
+- \`npx -y brain-axi playbook write\` — HOW to write any of it: the record is reference, not release notes. Slots per artifact (checkpoint, run-note step, feature doc, verification doc, commit body), the register rules, and three prune tests. Read it before writing a checkpoint or a feature doc, not after
+- \`brain progress add --summary "..." --next "..."\` — append a session checkpoint. The summary is the rolling CURSOR and is capped at 200 chars (exit 2 over it, nothing written) — a headline, not the story; verbatim output goes to \`runs append --observed\`
 - \`brain features set-status <slug> --status <planned|in-progress|shipped|blocked|cut>\` — flip feature state (enforces one-in-progress policy; \`--status shipped\` requires \`--evidence\` **and passes the same preflight as \`brain ship\` — it refuses and writes nothing if any check would fail**. Transitions *out* of a state are never gated, so a broken record stays repairable)
 - \`brain check\` — deterministic harness invariants (feature-list **schema** validity — duplicate ids/slugs, unknown status, shipped-without-evidence all fail — one-in-progress per declared policy, doc paths, dependency refs, \`features/index.md\` agreeing with the tracker, plan/review file integrity, verification docs having a **readable** verdict with resolvable image links, \`tasks.json\` schema validity, no \`shipped\` feature with an open task, verify.json shape when present); exit 1 on any failure, CI-usable
 - \`brain features index [--write]\` — GENERATE the \`features/index.md\` status table from \`feature_list.json\` (bounded by \`<!-- brain:features-table -->\` markers so surrounding prose survives). Hand-maintaining that mirror is how a tracker and its human-facing index end up disagreeing
@@ -5499,9 +5522,18 @@ in order, in the current turn:
 1. **Read the brain first** — \`brain progress\`, \`brain features\`, \`brain plans\`,
    \`brain timeline\`. Weave what you find into the plan (cite prior plans, decisions,
    in-progress feature, relevant rules).
+1b. **Grill before you write, if the plan will carry any decision.** Run
+   \`npx -y brain-axi playbook grill\` and follow it: check every past plan's recorded
+   decision rounds for an already-settled answer FIRST (cite those, never re-ask them),
+   then put the remaining open questions to the user in one numbered round, each with a
+   recommendation, and wait. Settled answers become pre-answered decision cards in step 2;
+   a question asked after the artifact exists cannot change the design it is asking about.
 2. **Run \`npx -y brain-axi playbook plan\` and follow it** to write the plan as ONE
    standalone HTML file (inline CSS, system fonts, no build step — it must render
-   opened directly). The playbook covers the 17-section structure (0-16), decision cards,
+   opened directly). Pick a TIER first — \`small\` (header, TL;DR, context, decisions,
+   plan of record, files) or \`full\` (every applicable section) — and state it in the
+   header strip; decisions are never cut, and a conditional section still fires in small.
+   The playbook covers the 17-section structure (0-16), decision cards,
    and diagram options (a CDN-based Mermaid snippet that degrades to readable text
    offline, or hand-rolled inline SVG for zero network dependency). Any path works;
    \`<repo>/plans/<topic>.html\` is a good default.

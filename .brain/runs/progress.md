@@ -21,6 +21,14 @@
 
 ---
 
+## 2026-08-10 — plan-phase phases 1-3 built: playbook grill + playbook write, plan tiering, progress add 200-char gate
+- branch: `chore/ship-state-integrity`
+- in-progress feature: plan-phase
+- run note: none
+- next: Commit, then verification doc + brain receipt + ship. Phase 4 (decision-card check row) deferred by the plan.
+
+---
+
 ## 2026-08-07 — shipped task-coordination: 2026-08-06 verification PASS (features/task-coordination/verifications/2026-08-06.md, receipt bound to 2017620): 409 ass
 - branch: `chore/ship-state-integrity`
 - in-progress feature: none

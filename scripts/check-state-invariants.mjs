@@ -28,6 +28,7 @@ import {
   parseReceipt,
   writeFileAtomic,
   STATUSES,
+  SUMMARY_MAX_CHARS,
   TASK_STATUSES,
   validateTasksShape,
   unblockedTasks,
@@ -2694,6 +2695,74 @@ function writeTasksFile(brain, slug, tasks) {
   // view` from day one).
   const listed = runIn(brain, "runs");
   ok("brain runs (list) surfaces a feature-scoped run note", (listed.stdout || "").includes(noteName), listed.stdout);
+}
+
+// ---------------------------------------------------------------------------
+// `progress add --summary` length gate
+//
+// progress.md has always documented a one-line summary; nothing enforced it, so
+// entries grew into five-sentence paragraphs inside a heading. The gate refuses
+// at the write boundary. Both sides of the boundary are exercised because a cap
+// tested only from the failing side can be off by one in the direction that
+// silently rejects legitimate input — and the refusal is checked to write
+// NOTHING, since a partial write here corrupts the cursor every session reads.
+// ---------------------------------------------------------------------------
+{
+  const brain = makeBrain("summary-gate", { features: [featureFor("alpha")] });
+  const progress = path.join(brain, "runs", "progress.md");
+
+  const atCap = runIn(brain, "progress", "add", "--summary", "y".repeat(SUMMARY_MAX_CHARS));
+  ok("progress add accepts a summary exactly at the cap", atCap.status === 0, `exit ${atCap.status}: ${atCap.stdout}`);
+
+  // Snapshot AFTER the accepted write, so the comparison below isolates the
+  // refusals rather than folding in a legitimate change.
+  const settled = fs.readFileSync(progress, "utf8");
+
+  const overBy1 = runIn(brain, "progress", "add", "--summary", "z".repeat(SUMMARY_MAX_CHARS + 1));
+  ok("progress add refuses one char over the cap", overBy1.status === 2, `exit ${overBy1.status}`);
+
+  const wayOver = runIn(brain, "progress", "add", "--summary", "x".repeat(SUMMARY_MAX_CHARS * 3));
+  ok("progress add refuses a paragraph-length summary", wayOver.status === 2, `exit ${wayOver.status}`);
+  // The refusal has to teach the fix, not just deny: an agent that cannot see
+  // where the detail belongs will retry with a slightly shorter paragraph.
+  ok(
+    "the refusal names the cap and points at runs append",
+    /cap is \d+/.test(wayOver.stdout || "") && (wayOver.stdout || "").includes("runs append"),
+    wayOver.stdout
+  );
+
+  ok(
+    "two refused summaries leave progress.md byte-identical",
+    fs.readFileSync(progress, "utf8") === settled,
+    "a rejected entry reached the file"
+  );
+
+  const normal = runIn(brain, "progress", "add", "--summary", "wired the length gate", "--next", "run the suite");
+  ok("progress add still accepts an ordinary summary", normal.status === 0, `exit ${normal.status}: ${normal.stdout}`);
+  ok(
+    "the accepted entry actually landed",
+    fs.readFileSync(progress, "utf8").includes("wired the length gate"),
+    "entry missing from progress.md"
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Playbook registry — the two standards this feature adds must be reachable by
+// id. A playbook that exists in the module but is not printable is a standard
+// nobody can follow.
+// ---------------------------------------------------------------------------
+{
+  const brain = makeBrain("playbook-ids", { features: [featureFor("alpha")] });
+  for (const id of ["grill", "write"]) {
+    const res = runIn(brain, "playbook", id);
+    ok(`brain playbook ${id} prints`, res.status === 0 && (res.stdout || "").length > 500, `exit ${res.status}`);
+  }
+  const index = runIn(brain, "playbook");
+  ok(
+    "the playbook index lists grill and write",
+    (index.stdout || "").includes("grill,") && (index.stdout || "").includes("write,"),
+    index.stdout
+  );
 }
 
 fs.rmSync(tmpRoot, { recursive: true, force: true });
