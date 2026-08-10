@@ -1,6 +1,6 @@
 {
   "$schema": "Machine-readable feature state tracker. Source of truth for status; per-feature MD docs are source of truth for design/runtime.",
-  "updated": "2026-08-07",
+  "updated": "2026-08-10",
   "policy": {
     "one_in_progress_at_a_time": true,
     "definition_of_done": "implementation complete + verify-done passed (CLI invoked against .brain, exit codes + TOON eyeballed, stderr diagnostics-only) + feature MD updated + brain skill --check green + brain coherent",
@@ -151,6 +151,22 @@
         "sean"
       ],
       "doc": ".brain/features/task-coordination/task-coordination.md"
+    },
+    {
+      "id": "feat-010",
+      "name": "plan-phase — grill before the artifact, register for the record",
+      "slug": "plan-phase",
+      "status": "in-progress",
+      "description": "Two standing playbooks plus the enforcement that makes them stick. Per plan 2026-08-10-2026-08-10-plan-phase (reviewed round 2, tier: complete = phases 1-3, phase 4 deferred): `brain playbook grill` runs a frontier-round interview BEFORE the plan artifact exists and checks every reviews.jsonl decision round for an already-settled answer first, citing rather than re-asking; `brain playbook write` gives the written record a reference register with a slot skeleton per artifact type; `playbook plan` gains a small/full tier ladder declared in the header strip; `brain progress add` refuses a summary over 200 characters with the skeleton in its help lines. Non-goals: no new state file, no replacement for brain review, no retroactive rewrite of existing checkpoints, and phase 4 (a brain check row parsing decision cards out of plan HTML) is deferred as fragile.",
+      "dependencies": [
+        "core-cli",
+        "state-integrity"
+      ],
+      "evidence": "",
+      "owners": [
+        "sean"
+      ],
+      "doc": ".brain/features/plan-phase/plan-phase.md"
     }
   ]
 }
