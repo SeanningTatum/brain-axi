@@ -794,6 +794,15 @@ const SCHEMA_CHECK = "feature_list.json is valid";
   );
   ok("distinct implemented_by/verified_by passes independence", indOf(indep)?.status === "pass", indOf(indep)?.detail);
 
+  // A receipt with implemented_by but no verified_by names no verifier — a
+  // blank must not read as "different from the implementer" and pass.
+  const unnamedVerifier = receiptBrain(
+    "unnamed-verifier",
+    `<!-- brain:verification\ncommit: ${realSha}\nimplemented_by: builder-agent\n-->`
+  );
+  ok("implemented_by without verified_by WARNs, not passes", indOf(unnamedVerifier)?.status === "warn", indOf(unnamedVerifier)?.detail);
+  ok("...and says the receipt names no verifier", /names no verifier: alpha/.test(indOf(unnamedVerifier)?.detail || ""), indOf(unnamedVerifier)?.detail);
+
   const selfSilent = receiptBrain(
     "self-silent",
     `<!-- brain:verification\ncommit: ${realSha}\nverified_by: Sean\nimplemented_by: sean\n-->`

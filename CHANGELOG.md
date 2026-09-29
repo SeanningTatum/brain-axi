@@ -50,6 +50,7 @@ against hard floors, and re-walks in capped fix rounds.
   receipt beside `verified_by`. The default is the git author of HEAD.
 - **CLI — `brain check --strict`**: a new row, `every shipped feature was verified independently`.
   - `pass` when the identities differ.
+  - `warn` when the receipt has `implemented_by` but no `verified_by` (no named verifier).
   - `warn` when `implemented_by` equals `verified_by` (trimmed, case-insensitive). The detail
     says "acknowledged" when the doc declares `- **Independence**: self-verified — <reason>`
     outside fenced or commented blocks.
