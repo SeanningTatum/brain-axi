@@ -66,7 +66,7 @@ There is **no test framework, no build step, no lint config** in this repo. Veri
 
 **Verification rule**: exit 0 + clean TOON is *necessary, not sufficient* for UI. `brain review` changes need a real browser walk — the iframe sandbox, postMessage, and SSE only break at runtime. Write commands (`set-status`, `progress add`, `ship`, `runs append`) mutate files, and **`.brain/` is live state, not a fixture**: revert only the throwaway writes you made to test a command (`git checkout -- <that file>`), never a blanket `git checkout .brain/` that would discard real checkpoints, run notes, or verdicts.
 
-**The implementer does not grade its own work.** A feature's verification doc is written by an **independent, fresh-context verifier** — an agent that did not write the code, declared in the doc's `- **Independence**:` header (self-verification only with a stated reason). It walks **every** row of the plan's `## Acceptance criteria` table, scores `## Quality scores` against floors (below a floor, or a stub / display-only surface, = FAIL), and the receipt records `implemented_by` beside `verified_by`. Implementation runs as a **generator → verifier loop**: a contract first (each task proposes its `--verify` check; the verifier reviews testability before code), then fix rounds with a fresh verifier each round, capped at 3 before escalating to the human. The procedure lives in `brain playbook execute` (contract, loop, rounds) and `brain playbook verify` (what a verdict must contain) — do not restate it here. Rigor scales with the plan tier; see §6.
+**The implementer does not grade its own work.** A feature's verification doc is written by an **independent, fresh-context verifier** — an agent that did not write the code, declared in the doc's `- **Independence**:` header (self-verification only when no second agent is possible, with the reason stated). It walks **every** acceptance criterion — the approved plan of record's phases plus each task's `acceptance` / `--verify` line — as a row of the doc's `## Acceptance criteria` table, scores `## Quality scores` against floors (below a floor, or a stub / display-only surface, = FAIL), and the receipt records `implemented_by` beside `verified_by`. Same identity is advisory, never a refusal: `brain receipt` adds a `warning:` and `brain check --strict` marks the row `every shipped feature was verified independently` as `warn` (exit stays 0; `skip` for receipts predating `implemented_by`). Implementation runs as a **generator → verifier loop**: a contract first (each task proposes its `--verify` check; the verifier reviews testability before code), then fix rounds with a fresh verifier each round, capped at 3 before escalating to the human. The procedure lives in `brain playbook execute` (contract, loop, rounds) and `brain playbook verify` (what a verdict must contain) — do not restate it here. Rigor scales with the plan tier; see §6.
 
 ---
 
@@ -122,8 +122,10 @@ Not a sixth subsystem, but an audit that sits over the five. Every component abo
 
 An evaluator is worth its cost only when the task sits beyond what the current model does reliably on its own. Tie rigor to the plan tier (`brain playbook plan`):
 
-- **small-tier**: the declared `verify.json` checks and one independent verifier pass over the acceptance rows. Skip the contract review and the multi-round loop.
-- **full-tier**, cross-layer, or user-facing: the whole contract → verify → fix loop, plus quality floors.
+- **small** tier: the declared `verify.json` checks, the contract review (one `--verify` line per phase/task), and a single fresh sub-agent as verifier over every acceptance row. On FAIL the fix loop still runs (fresh verifier per round, cap 3).
+- **full** tier (cross-layer, user-facing, or expensive to reverse): the same, with an independent verifier on the whole contract → verify → fix loop, and a second adversarial pass on the riskiest tasks recommended.
+
+Quality floors apply in both tiers (design is N/A for non-UI work). The tier changes how many verifier passes you buy, never whether the author grades its own work. The procedure is `brain playbook execute` (AGENT TOPOLOGY).
 
 The tier line moves when a model improves. Something that needed the full loop last model may be small-tier work now, and the ablation results above are what justify moving it.
 

@@ -76,12 +76,12 @@ node bin/brain.js check --brain .brain   # exit 1 if any harness invariant fails
 The implementer does not write the verdict. Hand the verification to a **fresh-context verifier**, an agent that did not implement the change, and have it follow `brain playbook verify`. The doc it writes under `features/<slug>/verifications/` must have:
 
 - `- **Independence**:` in the header, naming who verified and confirming they did not implement. Self-verification is allowed only with a stated reason.
-- **Every** row of the plan's `## Acceptance criteria` table walked, each with its own observed result. A row with no result is a failed row.
+- An `## Acceptance criteria` table with **every** criterion as a row — the approved plan of record's phases plus each task's `acceptance` (and its `verify` contract line) — each walked, each with its own observed result. A row with no result is a failed row.
 - `## Quality scores` for product-depth / functionality / design / code-quality, each 0–3, with floors of **2 / 2 / 2 / 1**. Below any floor = FAIL. A stub or display-only surface = FAIL.
 - `- **Round**: N`. A FAIL goes back to the implementer, and each round gets a *fresh* verifier. After 3 rounds, escalate to the human (`brain playbook execute` covers refine vs pivot).
 - A receipt (`brain receipt`) carrying `implemented_by` beside `verified_by`. If the two are equal, the CLI warns, and the Independence line must explain why.
 
-**Scale it to the plan tier.** For a **small**-tier plan or a docs-only change, one independent pass over the acceptance rows is enough, with no multi-round loop. For **full** tier, run the whole loop with quality floors. Harness rigor costs something, so spend it where the task is beyond what the model does reliably solo (`HARNESS.md` §6).
+**Scale it to the plan tier.** For a **small**-tier plan, the contract review plus a single fresh sub-agent verifier pass over every acceptance row is enough; a FAIL still loops (fresh verifier per round, cap 3). For **full** tier, add a second adversarial pass on the riskiest tasks. Quality floors apply in both (`brain playbook execute`, AGENT TOPOLOGY). Harness rigor costs something, so spend it where the task is beyond what the model does reliably solo (`HARNESS.md` §6).
 
 ## 8. Close the run note
 

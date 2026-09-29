@@ -17,7 +17,7 @@ Ten standing playbooks — each a full text standard printed by `brain playbook 
 - `product` — any plan for user-facing work — the product case before the technical one
 - `ux` — any plan that adds or changes a screen — wireframes, screen states, user flows
 - `ai` — any work involving prompts, models, or agents — evals, golden sets, regression gates, topology
-- `verify` — verifying a user-visible feature works — browser walk with screenshot evidence
+- `verify` — verifying a user-visible feature works — independent, skeptical browser walk of every acceptance criterion: golden + error paths, quality floors, screenshot evidence
 - `execute` — implementing an approved plan / working a feature to shipped
 - `done` — before declaring any task complete — full verify, harness invariants, coherence
 - `write` — writing anything into the brain — checkpoints, run notes, feature docs, verdicts, commit bodies
@@ -145,16 +145,25 @@ this layout with the legacy flat one, so older brains keep working:
 
 ## Verifications — proof a feature actually works
 
-- `npx -y brain-axi playbook verify` — the verification-doc standard: browser
-  walk (golden path + one error path), screenshot naming, the jsErrors/
-  networkErrors console policy, and how to persist the evidence.
+- `npx -y brain-axi playbook verify` — the verification-doc standard: an
+  INDEPENDENT verifier (fresh context, did not write the code; declared in an
+  `- **Independence**:` header line) walks EVERY acceptance criterion (plan
+  of record + task acceptance) in an `## Acceptance criteria` table, plus a
+  golden path, at least one error path, and edge probes; `## Quality scores`
+  with hard floors (product-depth 2, functionality 2, design 2 UI-only,
+  code-quality 1 — a stub or display-only control is a FAIL); screenshot
+  naming, the jsErrors/networkErrors console policy, and how to persist the
+  evidence. On FAIL a fresh verifier re-walks (`- **Round**: N`, cap 3,
+  then escalate — `playbook execute` step 4b).
 - `brain verifications [<feature>]` — list verdict docs (feature, date, verdict).
 - `brain verifications view <feature> <date>` — read one in full.
 
-After implementing and testing a user-visible feature, produce a verification
-doc at `.brain/features/<slug>/verifications/<date>.md` following
-`brain playbook verify` — this is how "it works" becomes checkable evidence
-instead of a claim.
+After implementing a user-visible feature, hand it to a fresh-context verifier
+(a sub-agent or new session — never the implementer) that writes the
+verification doc at `.brain/features/<slug>/verifications/<date>.md`
+following `brain playbook verify` — this is how "it works" becomes checkable
+evidence instead of a claim. Solo self-verification only when no second agent
+is possible, declared as `- **Independence**: self-verified — <reason>`.
 
 ## Tasks — coordination BELOW a feature (`brain tasks`)
 
@@ -364,7 +373,7 @@ Rules:
 - A poll's DOM snapshot is a compact outline, not the raw page — it prints as `snapshot_chars: N` by default; pass `--snapshot` to see the full outline block only when you actually need it.
 - `npx -y brain-axi review end <plan.html>` — end the session yourself once the plan is fully approved
 - `npx -y brain-axi shots add <img> --feature <slug> --step <NN-name>` — attach a screenshot to a feature (`--scope <plan-or-feature>` is the legacy form)
-- `npx -y brain-axi plans` / `plans view <slug>` — see past plan artifacts and their review rounds. Each round prints a `snapshot:` path (`plans/<slug>/vN.html`) — the FROZEN copy of the artifact as it stood at that round. A snapshot is written for every round, so the newest one is NOT automatically the approved one: the approved snapshot is the one for the round that ended the review (`ended by` in the round header). `plans view` names it for you in its `help:` line, and says so explicitly when no round has ended yet. When verifying a feature whose plan carried wireframes, compare the shipped UI against that approved snapshot, never against the live artifact path (the agent has been editing it); record each difference in the verification doc's mockup-reconciliation table per `playbook verify` 5b.
+- `npx -y brain-axi plans` / `plans view <slug>` — see past plan artifacts and their review rounds. Each round prints a `snapshot:` path (`plans/<slug>/vN.html`) — the FROZEN copy of the artifact as it stood at that round. A snapshot is written for every round, so the newest one is NOT automatically the approved one: the approved snapshot — the FROZEN copy the human approved — is the one for the round that ended the review (`ended by` in the round header). `plans view` names it for you in its `help:` line, and says so explicitly when no round has ended yet. When verifying a feature whose plan carried wireframes, compare the shipped UI against that approved snapshot, never against the live artifact path (the agent has been editing it); record each difference in the verification doc's mockup-reconciliation table per `playbook verify` 5b.
 - `npx -y brain-axi timeline` — merged history across checkpoints, run notes, plan reviews, and verifications
 
 ## Install & session hooks (run once per repo)

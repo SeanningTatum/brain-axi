@@ -163,8 +163,11 @@ template's `harness-check.sh` as `✓ brain check --strict passed`.
 
 They now report **`skip`** with the outstanding debt in the detail. `skip` keeps
 the exit code 0 — the debt is acknowledged, not failing — while making the
-zero-coverage impossible to mistake for proof. Consumers must treat `skip` as
-neither pass nor fail (`chrome.js`, `dashboard.js`).
+zero-coverage impossible to mistake for proof. The same holds for **`warn`** —
+an advisory row (today only the strict verifier-independence row, for a
+self-verified receipt) that also keeps exit 0. Consumers must treat `skip` and
+`warn` as neither pass nor fail (`chrome.js`, `dashboard.js`, `brain check`'s
+exit code).
 
 The ship path shipped once with whole-brain scope, and it made the gate unusable
 in both repos that own it: a single legacy feature predating the invariant refused
@@ -237,17 +240,26 @@ field below is agent-written.
 
 - **Verifier independence.** The verdict is written by a fresh-context agent that did not
   implement the change. It is declared as `- **Independence**:` in the doc header. Self-verification
-  is allowed only with a stated reason (e.g. a one-line doc fix). An undeclared or unexplained
+  is allowed only when no second agent is possible (no sub-agent support, single-session harness),
+with that reason stated; "it was faster to check it myself" is not one. An undeclared or unexplained
   self-verify is a FAIL, not a style nit. Every state-integrity review round that found a P0 or P1
   was run by a separate agent (CHANGELOG 2026-07-31 → 08-01).
-- **Every acceptance row is walked.** Each row of the plan's `## Acceptance criteria` table gets
-  its own observed result. A row with no result counts as a failed row, even if nothing contradicts
+- **Every acceptance row is walked.** Every acceptance criterion (the approved plan of record's
+  phases plus each task's `acceptance`, with its `verify` contract line when set) is a row in the
+  verification doc's `## Acceptance criteria` table, and each row gets its own observed result. A row with no result counts as a failed row, even if nothing contradicts
   it. "Spot-checked the main flow" is not a verdict on the rest.
 - **Quality floors bind.** `## Quality scores` rates product-depth / functionality / design /
   code-quality from 0 to 3, with floors of 2 / 2 / 2 / 1. Any score below its floor makes the verdict
-  FAIL, whatever the other rows say. A stub or display-only surface is FAIL on functionality.
+  FAIL, whatever the other rows say (design is N/A for non-UI work). A stub or display-only surface
+is FAIL on product-depth.
 - **The receipt names both sides.** `implemented_by` (default: the HEAD commit's git author) sits
-  beside `verified_by`. The two being equal is a **warning**, not a refusal. It is the visible trace
+  beside `verified_by` (default: `$USER`). The two being equal (compared trimmed, case-insensitive)
+  is a **warning**, not a refusal: `brain receipt` still stamps and adds it to its `warning:` key,
+  and `brain check --strict` reports the row `every shipped feature was verified independently` as
+  `warn` — never `fail`, even when the doc declares `self-verified`. Receipts stamped before
+  `implemented_by` existed make that row `skip` (when nothing else is judgeable), never `fail`.
+  Note the defaults are different sources (git author name vs. `$USER`), so one human stamping
+  with defaults will not trip the warning — pass `--verified-by` / `--implemented-by` explicitly. It is the visible trace
   of self-grading, and it has to be matched by the Independence reason above.
 
 Read-compat still holds. Verification docs written before 2026-09-29 have no Independence header or
