@@ -812,6 +812,16 @@ const SCHEMA_CHECK = "feature_list.json is valid";
   ok("declared self-verification is acknowledged (still warn)", indOf(selfAck)?.status === "warn", indOf(selfAck)?.detail);
   ok("...and carries the reason", /acknowledged: alpha \(sean: self-verified — solo maintainer/.test(indOf(selfAck)?.detail || ""), indOf(selfAck)?.detail);
 
+  // A declaration outranks the receipt names: distinct defaults (bot-authored
+  // HEAD vs git user.name) must not turn a declared self-verify into a pass.
+  const selfAckDistinct = receiptBrain(
+    "self-ack-distinct",
+    `- **Independence**: self-verified — HEAD authored by a bot\n\n<!-- brain:verification\ncommit: ${realSha}\nverified_by: sean\nimplemented_by: dependabot\n-->`
+  );
+  ok("declared self-verification with distinct receipt names still WARNs",
+    indOf(selfAckDistinct)?.status === "warn" && /acknowledged: alpha/.test(indOf(selfAckDistinct)?.detail || ""),
+    indOf(selfAckDistinct)?.detail);
+
   // A fenced example of the declaration is documentation, not a declaration.
   const fencedAck = receiptBrain(
     "self-fenced",
