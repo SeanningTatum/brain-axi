@@ -164,8 +164,8 @@ template's `harness-check.sh` as `✓ brain check --strict passed`.
 They now report **`skip`** with the outstanding debt in the detail. `skip` keeps
 the exit code 0 — the debt is acknowledged, not failing — while making the
 zero-coverage impossible to mistake for proof. The same holds for **`warn`** —
-an advisory row (today only the strict verifier-independence row, for a
-self-verified receipt) that also keeps exit 0. Consumers must treat `skip` and
+an advisory row (today only the strict verifier-independence row — decision
+table under "What a PASS verification must contain") that also keeps exit 0. Consumers must treat `skip` and
 `warn` as neither pass nor fail (`chrome.js`, `dashboard.js`, `brain check`'s
 exit code).
 
@@ -256,16 +256,27 @@ is FAIL on product-depth.
   beside `verified_by` (default: `git config user.name`, then `$USER`). The two being equal (compared trimmed, case-insensitive)
   is a **warning**, not a refusal: `brain receipt` still stamps and adds it to its `warning:` key,
   and `brain check --strict` reports the row `every shipped feature was verified independently` as
-  `warn` — never `fail`, even when the doc declares `self-verified`. Receipts stamped before
-  `implemented_by` existed make that row `skip` (when nothing else is judgeable), never `fail`.
-  A receipt with `implemented_by` but a blank `verified_by` is `warn` too: an unnamed verifier
-  is not evidence of independence. The row also reads each feature's **newest** verification doc
-  (stem order, so a same-day `<date>-rN.md` round is newer): when its verdict is not PASS, the
-  feature is `warn` as `latest verification not PASS: <slug> (<stem>: <verdict>)`, even if an older
-  PASS was independent — re-verify with a fresh verifier or explain the failure. A PASS newest
-  doc is judged on its own receipt and Independence line, never an older doc's: an unstamped newest
-  PASS behind an older stamped one is `warn` as `latest PASS has no receipt`. Only this row
-  looks at the latest verdict; the other strict rows accept any PASS.
+  `warn` — never `fail`, even when the doc declares `self-verified`. That row judges each shipped
+  feature on its **newest** verification doc D only (stem order; a same-day `<date>-rN.md` round is
+  newer, rounds compared numerically so `-r10` > `-r2`) — D's own verdict, Independence line and
+  receipt, never an older doc's. First matching row wins:
+
+  | # | D verdict | D Independence | D receipt | Bucket → row |
+  |---|---|---|---|---|
+  | 1 | (no doc) | — | — | not judged (the PASS row fails) |
+  | 2 | not PASS | any | any | `latest verification not PASS` → warn |
+  | 3 | PASS | self-verified | any, even none | `self-verified, acknowledged` → warn |
+  | 4 | PASS | other / absent | none; an older PASS has one | `latest PASS has no receipt` → warn |
+  | 5 | PASS | other / absent | none; no older PASS has one | not judged (the "bound to a commit" row fails) |
+  | 6 | PASS | other / absent | no `implemented_by` | legacy: named in the detail, not judged |
+  | 7 | PASS | other / absent | `implemented_by`, blank `verified_by` | `receipt names no verifier` → warn |
+  | 8 | PASS | other / absent | names differ | independent → pass |
+  | 9 | PASS | other / absent | names equal (trimmed, case-insensitive) | `self-verified, unacknowledged` → warn |
+
+  Across features: any warn bucket → `warn`; else any independent → `pass`; else `skip` (all
+  legacy, or nothing judgeable). An Independence line other than `self-verified` is prose: the
+  receipt names decide rows 6–9. Only this row looks at the latest verdict; the other strict rows
+  accept any PASS. `scripts/check-state-invariants.mjs` pins every row.
   Both defaults come from git identity, so one human stamping with defaults trips the warning; a
   sub-agent verifier shares the caller's git identity, so it must pass its own `--verified-by`. It is the visible trace
   of self-grading, and it has to be matched by the Independence reason above.

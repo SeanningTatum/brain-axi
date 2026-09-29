@@ -869,6 +869,179 @@ const SCHEMA_CHECK = "feature_list.json is valid";
   ok("FAIL then independent PASS round (-r2) passes independence", indOf(roundPass)?.status === "pass", indOf(roundPass)?.detail);
   ok("...and adds no failure", failsOf(roundPass).length === failsOf(indep).length,
     failsOf(roundPass).map((f) => f.check).join(", "));
+
+  // ---- Independence decision table, row for row (lib/review/brain-data.js
+  // independenceRow header; .brain/rules/state.md). Each row below is judged
+  // on the NEWEST doc only. Every case also asserts the row never fails.
+  const PASS_H = "# V\n\n**Verdict**: ✅ PASS\n\n";
+  const FAIL_H = "# V\n\n**Verdict**: ❌ FAIL\n\n";
+  const rcpt = (fields) =>
+    `<!-- brain:verification\ncommit: ${realSha}\n${Object.entries(fields).map(([k, v]) => `${k}: ${v}`).join("\n")}\n-->`;
+  const R_INDEP = rcpt({ verified_by: "verifier-agent", implemented_by: "builder-agent" });
+  const R_SELF = rcpt({ verified_by: "sean", implemented_by: "Sean" });
+  const R_LEGACY = rcpt({ verified_by: "fixture" });
+  const R_UNNAMED = rcpt({ implemented_by: "builder-agent" });
+  const DECL_SELF = "- **Independence**: self-verified — solo maintainer\n\n";
+  const DECL_INDEP = "- **Independence**: independent — verifier-agent\n\n";
+  const noIndFail = (label, brain) =>
+    ok(`${label} — the independence row is never a fail`, indOf(brain)?.status !== "fail", indOf(brain)?.detail);
+  const expectRow = (label, brain, status, re) => {
+    const row = indOf(brain);
+    ok(`table: ${label} → ${status}`, row?.status === status, row && `${row.status}: ${row.detail}`);
+    if (re) ok(`table: ${label} → detail ${re}`, re.test(row?.detail || ""), row?.detail);
+    noIndFail(`table: ${label}`, brain);
+  };
+
+  // Row 1 — no verification doc at all: not judged (the PASS row reports it).
+  const t1 = verDocs("tbl-1-nodocs", {});
+  expectRow("1 no docs", t1, "skip", /no receipt to judge/);
+  ok("table: 1 no docs → the PASS row fails instead",
+    brainCheck(t1, { strict: true }).find((r) => r.check === "every shipped feature has a PASS verification")?.status === "fail");
+
+  // Row 2 — newest not PASS (FAIL, or an unreadable verdict), whatever the older docs say.
+  expectRow("2 newest FAIL over independent PASS", verDocs("tbl-2-fail", {
+    "2026-01-01.md": PASS_H + R_INDEP, "2026-01-02.md": FAIL_H + R_INDEP,
+  }), "warn", /latest verification not PASS: alpha \(2026-01-02: FAIL\)/);
+  expectRow("2 newest unknown verdict", verDocs("tbl-2-unknown", {
+    "2026-01-01.md": PASS_H + R_INDEP, "2026-01-02.md": "# V\n\nno verdict here\n",
+  }), "warn", /latest verification not PASS: alpha \(2026-01-02: unknown\)/);
+  expectRow("2 -r2 FAIL round supersedes base PASS", verDocs("tbl-2-round", {
+    "2026-01-01.md": PASS_H + R_INDEP, "2026-01-01-r2.md": FAIL_H,
+  }), "warn", /latest verification not PASS: alpha \(2026-01-01-r2: FAIL\)/);
+
+  // Row 3 — declared self-verified on the newest PASS: acknowledged, with or without a receipt.
+  expectRow("3 declared self, receipt names differ", verDocs("tbl-3-distinct", {
+    "2026-01-01.md": PASS_H + DECL_SELF + R_INDEP,
+  }), "warn", /self-verified, acknowledged: alpha \(verifier-agent: self-verified — solo maintainer\)/);
+  expectRow("3 declared self, no receipt", verDocs("tbl-3-noreceipt", {
+    "2026-01-01.md": PASS_H + DECL_SELF,
+  }), "warn", /self-verified, acknowledged: alpha \(unknown: self-verified/);
+  expectRow("3 declared self, legacy receipt", verDocs("tbl-3-legacy", {
+    "2026-01-01.md": PASS_H + DECL_SELF + R_LEGACY,
+  }), "warn", /acknowledged: alpha/);
+  // The declaration on an OLDER doc does not carry over to the newest one.
+  expectRow("3 declaration on an older doc only", verDocs("tbl-3-older", {
+    "2026-01-01.md": PASS_H + DECL_SELF + R_SELF, "2026-01-02.md": PASS_H + R_INDEP,
+  }), "pass", /1 verified independently/);
+
+  // Row 4 — newest PASS unstamped behind an older STAMPED PASS: warn. This is
+  // the round-5 bug: before 64c7702 the older stamped receipt stood in for the
+  // newest round and the row passed (the newer self-verified round hid).
+  const t4 = verDocs("tbl-4-unstamped", {
+    "2026-01-01.md": PASS_H + R_INDEP, "2026-01-02.md": PASS_H,
+  });
+  expectRow("4 newest PASS unstamped behind stamped PASS", t4, "warn", /latest PASS has no receipt: alpha \(2026-01-02\)/);
+  ok("table: 4 → the bound row still passes (an older receipt binds), so only this row reports it",
+    brainCheck(t4, { strict: true }).find((r) => r.check === RECEIPT_ROW)?.status === "pass");
+  ok("table: 4 → not reported as independent", !/verified independently/.test(indOf(t4)?.detail || ""), indOf(t4)?.detail);
+  expectRow("4 via -rN: unstamped r2 behind stamped base", verDocs("tbl-4-round", {
+    "2026-01-01.md": PASS_H + R_INDEP, "2026-01-01-r2.md": PASS_H,
+  }), "warn", /latest PASS has no receipt: alpha \(2026-01-01-r2\)/);
+  // An Independence "independent" line is prose: it does not stand in for the receipt.
+  expectRow("4 declared independent but unstamped", verDocs("tbl-4-declindep", {
+    "2026-01-01.md": PASS_H + R_INDEP, "2026-01-02.md": PASS_H + DECL_INDEP,
+  }), "warn", /latest PASS has no receipt/);
+
+  // Row 5 — newest PASS unstamped and NO stamped PASS anywhere: not judged here;
+  // the "bound to a commit" row fails, so the state is still reported once.
+  const t5 = verDocs("tbl-5-nowhere", {
+    "2026-01-01.md": FAIL_H + R_INDEP, "2026-01-02.md": PASS_H,
+  });
+  expectRow("5 no stamped PASS anywhere", t5, "skip", /no receipt to judge/);
+  ok("table: 5 → the bound row fails instead",
+    brainCheck(t5, { strict: true }).find((r) => r.check === RECEIPT_ROW)?.status === "fail");
+
+  // Row 6 — legacy receipt (no implemented_by): not judged, named, skip when alone.
+  expectRow("6 legacy receipt", verDocs("tbl-6-legacy", { "2026-01-01.md": PASS_H + R_LEGACY }),
+    "skip", /1 receipt\(s\) predate implemented_by: alpha/);
+  // A legacy newest round does NOT inherit an older independent receipt's pass.
+  expectRow("6 legacy newest over independent older", verDocs("tbl-6-over", {
+    "2026-01-01.md": PASS_H + R_INDEP, "2026-01-02.md": PASS_H + R_LEGACY,
+  }), "skip", /predate implemented_by: alpha/);
+
+  // Row 7 — implemented_by with a blank verified_by.
+  expectRow("7 unnamed verifier", verDocs("tbl-7-unnamed", { "2026-01-01.md": PASS_H + R_UNNAMED }),
+    "warn", /receipt names no verifier: alpha/);
+  expectRow("7 whitespace verified_by", verDocs("tbl-7-blank", {
+    "2026-01-01.md": PASS_H + rcpt({ verified_by: "   ", implemented_by: "builder-agent" }),
+  }), "warn", /names no verifier: alpha/);
+
+  // Row 8 — distinct names on the newest PASS; an older self round does not taint it.
+  expectRow("8 distinct identities", verDocs("tbl-8-indep", { "2026-01-01.md": PASS_H + R_INDEP }),
+    "pass", /1 verified independently/);
+  expectRow("8 independent r2 over self-verified base", verDocs("tbl-8-round", {
+    "2026-01-01.md": PASS_H + R_SELF, "2026-01-01-r2.md": PASS_H + R_INDEP,
+  }), "pass", /1 verified independently/);
+
+  // Row 9 — equal names, no self declaration (an "independent" line does not help).
+  expectRow("9 equal identities, silent", verDocs("tbl-9-silent", { "2026-01-01.md": PASS_H + R_SELF }),
+    "warn", /self-verified, unacknowledged: alpha \(sean\)/);
+  expectRow("9 equal identities, declared independent", verDocs("tbl-9-declindep", {
+    "2026-01-01.md": PASS_H + DECL_INDEP + R_SELF,
+  }), "warn", /unacknowledged: alpha/);
+  expectRow("9 self r2 over independent base", verDocs("tbl-9-round", {
+    "2026-01-01.md": PASS_H + R_INDEP, "2026-01-01-r2.md": PASS_H + R_SELF,
+  }), "warn", /unacknowledged: alpha/);
+
+  // -rN ordering is numeric: r10 is newer than r2 (string order would invert it).
+  const t10 = verDocs("tbl-r10", {
+    "2026-01-01.md": FAIL_H, "2026-01-01-r2.md": PASS_H + R_SELF, "2026-01-01-r10.md": PASS_H + R_INDEP,
+  });
+  ok("table: -rN ordering is numeric (r10 > r2 > base)",
+    listVerifications(t10, "alpha").map((d) => d.date).join(",") === "2026-01-01-r10,2026-01-01-r2,2026-01-01",
+    listVerifications(t10, "alpha").map((d) => d.date).join(","));
+  expectRow("-r10 independent is the newest round", t10, "pass", /1 verified independently/);
+  ok("table: a later day outranks any same-day round",
+    listVerifications(verDocs("tbl-day", { "2026-01-01-r3.md": PASS_H, "2026-01-02.md": PASS_H }), "alpha")[0]?.date === "2026-01-02");
+
+  // Aggregation across features: any warn bucket → warn; else any independent → pass; else skip.
+  const multi = (name, perFeature) => {
+    const brain = path.join(repo, name, ".brain");
+    fs.mkdirSync(path.join(brain, "runs"), { recursive: true });
+    fs.writeFileSync(path.join(brain, "runs", "progress.md"), "# Progress\n\n---\n");
+    const slugs = Object.keys(perFeature);
+    fs.mkdirSync(path.join(brain, "features"), { recursive: true });
+    fs.writeFileSync(path.join(brain, "features", "feature_list.json"), JSON.stringify({
+      features: slugs.map((s) => featureFor(s, { status: "shipped", evidence: "proof" })),
+    }, null, 2) + "\n");
+    for (const s of slugs) {
+      const dir = path.join(brain, "features", s, "verifications");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(brain, "features", s, `${s}.md`), `# ${s}\n`);
+      for (const [file, body] of Object.entries(perFeature[s])) fs.writeFileSync(path.join(dir, file), body);
+    }
+    return brain;
+  };
+  const one = (body) => ({ "2026-01-01.md": body });
+  expectRow("mix: independent + legacy", multi("tbl-mix-pass", {
+    alpha: one(PASS_H + R_INDEP), beta: one(PASS_H + R_LEGACY),
+  }), "pass", /1 verified independently; 1 receipt\(s\) predate implemented_by: beta/);
+  expectRow("mix: legacy + legacy", multi("tbl-mix-skip", {
+    alpha: one(PASS_H + R_LEGACY), beta: one(PASS_H + R_LEGACY),
+  }), "skip", /2 receipt\(s\) predate implemented_by: alpha, beta/);
+  const mixAll = multi("tbl-mix-all", {
+    a1: one(PASS_H + R_INDEP),
+    a2: { "2026-01-01.md": PASS_H + R_INDEP, "2026-01-02.md": FAIL_H },
+    a3: { "2026-01-01.md": PASS_H + R_INDEP, "2026-01-02.md": PASS_H },
+    a4: one(PASS_H + R_SELF),
+    a5: one(PASS_H + R_UNNAMED),
+    a6: one(PASS_H + DECL_SELF + R_SELF),
+    a7: one(PASS_H + R_LEGACY),
+  });
+  expectRow("mix: one of every bucket", mixAll, "warn");
+  for (const [bucket, re] of [
+    ["stale", /latest verification not PASS: a2 \(2026-01-02: FAIL\)/],
+    ["unstamped", /latest PASS has no receipt: a3 \(2026-01-02\)/],
+    ["silent", /unacknowledged: a4 \(sean\)/],
+    ["unnamed", /names no verifier: a5/],
+    ["acknowledged", /acknowledged: a6 \(sean: self-verified/],
+    ["independent", /1 verified independently/],
+    ["legacy", /1 receipt\(s\) predate implemented_by: a7/],
+  ])
+    ok(`table: mix names the ${bucket} bucket`, re.test(indOf(mixAll)?.detail || ""), indOf(mixAll)?.detail);
+  expectRow("mix: a single warn among independents", multi("tbl-mix-onewarn", {
+    alpha: one(PASS_H + R_INDEP), beta: one(PASS_H + R_INDEP), gamma: one(PASS_H + R_SELF),
+  }), "warn", /unacknowledged: gamma.*2 verified independently/);
 }
 
 // ---------------------------------------------------------------------------

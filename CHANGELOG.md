@@ -59,7 +59,13 @@ against hard floors, and re-walks in capped fix rounds.
   - `warn` when the feature's newest verification doc (stem order, so `<date>-rN.md` rounds
     count as newer) is not PASS — an older independent PASS does not hide a newer FAIL. The
     other strict rows still accept any PASS.
+  - `warn` when the newest PASS has no receipt but an older PASS does — an older receipt
+    never stands in for a newer round.
   - `skip` when every receipt predates `implemented_by`. The row never fails.
+  - The full per-feature decision table (newest doc only; any warn → warn, else any pass →
+    pass, else skip) is in `.brain/rules/state.md` and pinned row-for-row by
+    `scripts/check-state-invariants.mjs`. Same-day `-rN` rounds now sort numerically, so
+    `-r10` is newer than `-r2`.
 - **CLI — `brain tasks add --verify "<how checked>"`**: stores the verification contract
   as `task.verify`. `brain tasks view` and `brain brief` print it verbatim, or
   `verify: none` when it is absent. `tasks add` without `--verify` adds a `help:` nudge.
