@@ -15,11 +15,14 @@ echo $?          # 0 success/no-op, 1 opError, 2 usageError — must match inten
 
 For every command you touched: run it against the local `.brain`, confirm the **exit code**, eyeball the **TOON on stdout**, and confirm **stderr is diagnostics-only** (no payload leaked to stderr, no free text on stdout). Every result must end with a `help:` list.
 
-Write commands mutate the fixture — after testing, reset:
+Write commands mutate `.brain/`, and **`.brain/` is this repo's live harness, not a fixture**. Revert only the throwaway writes you made to exercise a command, and do it file by file:
 
 ```bash
-git checkout .brain/
+git diff --stat .brain/                 # see exactly what your test writes touched
+git checkout -- .brain/<that-file>      # revert ONLY the throwaway test write
 ```
+
+Never run a blanket `git checkout .brain/`. It discards real checkpoints, run notes, and verdicts along with the test noise. A cleaner option is to test write commands against a scratch brain (`brain init` in a temp dir, then `--brain <tmp>/.brain`).
 
 ## 2. Skill drift gate
 
@@ -61,13 +64,26 @@ git diff | grep -E '^\+' | grep -E 'console\.log|require\(|from "[^.]' # stdout 
 
 Any hit → re-read `codebase/programming-model.md` and fix. (Legit stdout goes through `print()`; imports are Node stdlib or relative.)
 
-## 6. brain check (if `brain check` exists / review feature touched)
+## 6. Declared checks + brain check
 
 ```bash
+node bin/brain.js verify --brain .brain  # every verify.json check; results table prints even on failure
 node bin/brain.js check --brain .brain   # exit 1 if any harness invariant fails
 ```
 
-## 7. Close the run note
+## 7. Independent verification (any feature ship or user-visible change)
+
+The implementer does not write the verdict. Hand the verification to a **fresh-context verifier**, an agent that did not implement the change, and have it follow `brain playbook verify`. The doc it writes under `features/<slug>/verifications/` must have:
+
+- `- **Independence**:` in the header, naming who verified and confirming they did not implement. Self-verification is allowed only with a stated reason.
+- **Every** row of the plan's `## Acceptance criteria` table walked, each with its own observed result. A row with no result is a failed row.
+- `## Quality scores` for product-depth / functionality / design / code-quality, each 0–3, with floors of **2 / 2 / 2 / 1**. Below any floor = FAIL. A stub or display-only surface = FAIL.
+- `- **Round**: N`. A FAIL goes back to the implementer, and each round gets a *fresh* verifier. After 3 rounds, escalate to the human (`brain playbook execute` covers refine vs pivot).
+- A receipt (`brain receipt`) carrying `implemented_by` beside `verified_by`. If the two are equal, the CLI warns, and the Independence line must explain why.
+
+**Scale it to the plan tier.** For a **small**-tier plan or a docs-only change, one independent pass over the acceptance rows is enough, with no multi-round loop. For **full** tier, run the whole loop with quality floors. Harness rigor costs something, so spend it where the task is beyond what the model does reliably solo (`HARNESS.md` §6).
+
+## 8. Close the run note
 
 Append: what shipped, what's left, what surprised you.
 
@@ -78,9 +94,10 @@ Append: what shipped, what's left, what surprised you.
 - [ ] Browser walk done (if `brain review` touched) or skip justified
 - [ ] Every diffed path → owning brain doc updated
 - [ ] No non-negotiables grep hits
-- [ ] `brain check` green (if applicable)
+- [ ] `brain verify` + `brain check` green
+- [ ] Independent verification PASS (if shipping/user-visible): Independence declared, every acceptance row walked, quality floors met, receipt has `implemented_by`
 - [ ] Feature MD + `CHANGELOG.md` updated if applicable
-- [ ] `git checkout .brain/` ran after write-command tests
+- [ ] Throwaway test writes reverted file by file; real `.brain/` state left intact
 - [ ] Run note closed (if opened)
 
 Only after all boxes: report done.

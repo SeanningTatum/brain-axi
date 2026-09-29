@@ -226,6 +226,33 @@ well-formed lie.
 bound to a commit — but the same agent writes the verdict. A receipt proves *when*
 a claim was made about *which* code, never that anyone ran anything.
 
+The rules below narrow that hole. They do not close it (see the verification-content section
+that follows).
+
+### What a PASS verification must contain
+
+These are content rules, owned by `brain playbook verify` / `done`. The CLI surfaces them
+(receipt fields, a `brain check --strict` **warn** row), but it cannot prove them, because every
+field below is agent-written.
+
+- **Verifier independence.** The verdict is written by a fresh-context agent that did not
+  implement the change. It is declared as `- **Independence**:` in the doc header. Self-verification
+  is allowed only with a stated reason (e.g. a one-line doc fix). An undeclared or unexplained
+  self-verify is a FAIL, not a style nit. Every state-integrity review round that found a P0 or P1
+  was run by a separate agent (CHANGELOG 2026-07-31 → 08-01).
+- **Every acceptance row is walked.** Each row of the plan's `## Acceptance criteria` table gets
+  its own observed result. A row with no result counts as a failed row, even if nothing contradicts
+  it. "Spot-checked the main flow" is not a verdict on the rest.
+- **Quality floors bind.** `## Quality scores` rates product-depth / functionality / design /
+  code-quality from 0 to 3, with floors of 2 / 2 / 2 / 1. Any score below its floor makes the verdict
+  FAIL, whatever the other rows say. A stub or display-only surface is FAIL on functionality.
+- **The receipt names both sides.** `implemented_by` (default: the HEAD commit's git author) sits
+  beside `verified_by`. The two being equal is a **warning**, not a refusal. It is the visible trace
+  of self-grading, and it has to be matched by the Independence reason above.
+
+Read-compat still holds. Verification docs written before 2026-09-29 have no Independence header or
+`implemented_by`, and they are not retroactively failed. The rules apply to new verdicts.
+
 What the gates therefore actually buy:
 
 | They do stop | They do not stop |
