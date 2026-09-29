@@ -2910,6 +2910,13 @@ function writeTasksFile(brain, slug, tasks) {
   ok("receipt with distinct identities has no self-verified warning", indep.status === 0 && !/self-verified/.test(indep.stdout || ""), indep.stdout);
   const passRow = brainCheck(rb, { strict: true }).find((row) => row.check === "every shipped feature was verified independently");
   ok("...and the independence row passes", passRow?.status === "pass", passRow?.detail);
+
+  // Both defaults come from git identity: a solo human stamping with NO flags
+  // must trip the self-verified warning, not silently pass ($USER vs author).
+  const dflt = runIn(rb, "receipt", "alpha", "--allow-dirty");
+  const dout = dflt.stdout || "";
+  ok("receipt with no identity flags defaults verified_by to git user.name", /verified_by: Builder Bot/.test(dout), dout);
+  ok("...and warns as self-verified", /^warning: "?.*self-verified/m.test(dout), dout);
 }
 
 fs.rmSync(tmpRoot, { recursive: true, force: true });

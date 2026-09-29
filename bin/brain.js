@@ -36,6 +36,7 @@ import {
   oneInProgressEnforced,
   gitShortHead,
   gitHeadAuthor,
+  gitUserName,
   gitWorktreeDirty,
   sameIdentity,
   isGitRepo,
@@ -1155,7 +1156,7 @@ function quantile(sorted, q) {
 function cmdReceipt(argv) {
   const spec = {
     "--date": { value: true, desc: "verification doc date to stamp (default: the newest)" },
-    "--verified-by": { value: true, desc: "who/what ran the verification (default: the caller)" },
+    "--verified-by": { value: true, desc: "who/what ran the verification (default: git config user.name, then $USER)" },
     "--implemented-by": {
       value: true,
       desc: "who/what wrote the code being verified (default: git author of HEAD)",
@@ -1229,7 +1230,9 @@ function cmdReceipt(argv) {
     ? observed.map((r) => `${r.check} (exit ${r.exit === null ? "timeout" : r.exit})`).join("; ")
     : "";
 
-  const verifiedBy = flags["verified-by"] || process.env.USER || "unknown";
+  // Default from git config user.name — the same identity source as the
+  // implemented_by default — so self-stamping with defaults is detected.
+  const verifiedBy = flags["verified-by"] || gitUserName(repoRoot) || process.env.USER || "unknown";
   // Tool-derived like the commit: the author of HEAD wrote the code this
   // receipt binds to, unless the caller names the implementer explicitly.
   const implementedBy = flags["implemented-by"] || gitHeadAuthor(repoRoot) || "unknown";

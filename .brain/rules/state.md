@@ -253,13 +253,13 @@ with that reason stated; "it was faster to check it myself" is not one. An undec
   FAIL, whatever the other rows say (design is N/A for non-UI work). A stub or display-only surface
 is FAIL on product-depth.
 - **The receipt names both sides.** `implemented_by` (default: the HEAD commit's git author) sits
-  beside `verified_by` (default: `$USER`). The two being equal (compared trimmed, case-insensitive)
+  beside `verified_by` (default: `git config user.name`, then `$USER`). The two being equal (compared trimmed, case-insensitive)
   is a **warning**, not a refusal: `brain receipt` still stamps and adds it to its `warning:` key,
   and `brain check --strict` reports the row `every shipped feature was verified independently` as
   `warn` — never `fail`, even when the doc declares `self-verified`. Receipts stamped before
   `implemented_by` existed make that row `skip` (when nothing else is judgeable), never `fail`.
-  Note the defaults are different sources (git author name vs. `$USER`), so one human stamping
-  with defaults will not trip the warning — pass `--verified-by` / `--implemented-by` explicitly. It is the visible trace
+  Both defaults come from git identity, so one human stamping with defaults trips the warning; a
+  sub-agent verifier shares the caller's git identity, so it must pass its own `--verified-by`. It is the visible trace
   of self-grading, and it has to be matched by the Independence reason above.
 
 Read-compat still holds. Verification docs written before 2026-09-29 have no Independence header or

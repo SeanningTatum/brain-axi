@@ -70,6 +70,11 @@ against hard floors, and re-walks in capped fix rounds.
 
 ### Changed
 
+- **CLI — `brain receipt`**: `--verified-by` now defaults to `git config user.name` (then `$USER`),
+  the same identity source as `--implemented-by`'s HEAD-author default. A solo human stamping with
+  no flags now trips the self-verified warning instead of silently passing. Sub-agent verifiers
+  share the caller's git identity, so they must pass their own `--verified-by`.
+
 - **CLI — `brain check` statuses**: a new **`warn`** status is advisory, and exit stays 0.
   Consumers must treat `warn`, like `skip`, as neither pass nor fail. When only warnings
   are present, `help:` reads "No failing checks" followed by a warning-count line.
