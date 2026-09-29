@@ -19,7 +19,9 @@ against hard floors, and re-walks in capped fix rounds.
   `- **Independence**: independent — <who> | self-verified — <reason>`.
 - **Playbooks — `verify`**: an `## Acceptance criteria` table with one row per criterion.
   Rows come from the approved plan of record plus every task's `acceptance` and `verify`.
-  A criterion that was never walked blocks a PASS.
+  A criterion that was never walked blocks a PASS. A criterion with no browser surface
+  (CLI output, API response, file on disk) is checked by running its named command, with
+  the command, exit code, and observed output as the row's evidence.
 - **Playbooks — `verify`**: a three-layer walk: every acceptance criterion, then the
   golden path plus at least one error path, then edge probes.
 - **Playbooks — `verify`**: an `## Quality scores` table on a 0–3 scale, rationale first,
