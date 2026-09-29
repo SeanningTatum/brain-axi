@@ -1039,6 +1039,14 @@ const SCHEMA_CHECK = "feature_list.json is valid";
     ["legacy", /1 receipt\(s\) predate implemented_by: a7/],
   ])
     ok(`table: mix names the ${bucket} bucket`, re.test(indOf(mixAll)?.detail || ""), indOf(mixAll)?.detail);
+  // The browser health strips (/watch dashboard.js, review chrome.js) call
+  // NON-strict brainCheck and render only fail rows. That is safe only while
+  // no non-strict row can warn — pin it, so a future non-strict warn forces
+  // those surfaces to learn to show advisories (Greptile round 6).
+  const nonStrict = brainCheck(mixAll);
+  ok("non-strict brainCheck emits no warn row (health strips hide warns)",
+    !nonStrict.some((row) => row.status === "warn"), nonStrict.filter((row) => row.status === "warn").map((row) => row.check).join(", "));
+  ok("non-strict brainCheck omits the independence row", !nonStrict.some((row) => row.check === IND_ROW));
   expectRow("mix: a single warn among independents", multi("tbl-mix-onewarn", {
     alpha: one(PASS_H + R_INDEP), beta: one(PASS_H + R_INDEP), gamma: one(PASS_H + R_SELF),
   }), "warn", /unacknowledged: gamma.*2 verified independently/);
