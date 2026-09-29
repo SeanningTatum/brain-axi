@@ -61,13 +61,14 @@ Run `brain playbook` for the live id/use_when index; `brain playbook <id>` for t
 - `brain features set-status <slug> --status <planned|in-progress|shipped|blocked|cut>` — flip feature state (enforces one-in-progress policy; `--status shipped` requires `--evidence` **and passes the same preflight as `brain ship` — it refuses and writes nothing if any check would fail**. Transitions *out* of a state are never gated, so a broken record stays repairable)
 - `brain check` — deterministic harness invariants (feature-list **schema** validity — duplicate ids/slugs, unknown status, shipped-without-evidence all fail — one-in-progress per declared policy, doc paths, dependency refs, `features/index.md` agreeing with the tracker, plan/review file integrity, verification docs having a **readable** verdict with resolvable image links, `tasks.json` schema validity, no `shipped` feature with an open task, verify.json shape when present); exit 1 on any failure, CI-usable
 - `brain features index [--write]` — GENERATE the `features/index.md` status table from `feature_list.json` (bounded by `<!-- brain:features-table -->` markers so surrounding prose survives). Hand-maintaining that mirror is how a tracker and its human-facing index end up disagreeing
-- `brain receipt <feature> [--date <d>] [--verified-by <who>] [--allow-dirty]` — stamp a commit-bound provenance receipt into a verification doc, written BY THE TOOL: HEAD at stamp time plus the actual gate results for that feature from `runs/gates.jsonl`. Refuses on a dirty tree (a receipt naming HEAD while the tree differs describes code in no commit) and refuses to stamp a doc whose verdict is unreadable — a hand-written receipt is a claim about provenance, not provenance
-- `brain check --strict` — adds two: every `shipped` feature must have a verification doc whose verdict parses to PASS, **and** that doc must carry a `brain:verification` receipt naming a commit that is an ancestor of HEAD. Opt-in here so brains predating the invariants do not go red on upgrade; `brain ship` and `set-status --status shipped` **always** enforce both, since shipping is the moment the claim is made
+- `brain receipt <feature> [--date <d>] [--verified-by <who>] [--implemented-by <who>] [--allow-dirty]` — stamp a commit-bound provenance receipt into a verification doc, written BY THE TOOL: HEAD at stamp time plus the actual gate results for that feature from `runs/gates.jsonl`. Refuses on a dirty tree (a receipt naming HEAD while the tree differs describes code in no commit) and refuses to stamp a doc whose verdict is unreadable — a hand-written receipt is a claim about provenance, not provenance. Records `implemented_by` (default: git author of HEAD) next to `verified_by`; when the two are the same identity it still stamps but prints a `warning:` — **the evaluator must not be the generator** (self-grading is lenient), so have a separate agent run `npx -y brain-axi playbook verify` and stamp with its own `--verified-by`
+- `brain check --strict` — adds three: every `shipped` feature must have a verification doc whose verdict parses to PASS, **and** that doc must carry a `brain:verification` receipt naming a commit that is an ancestor of HEAD; plus a verifier-independence row that is `warn` (exit stays 0) when the latest receipt's `implemented_by` equals its `verified_by` — declaring `- **Independence**: self-verified — <reason>` in the doc marks it acknowledged, still `warn`; receipts predating `implemented_by` are reported, never failed. Opt-in here so brains predating the invariants do not go red on upgrade; `brain ship` and `set-status --status shipped` **always** enforce the first two, since shipping is the moment the claim is made
 - **Verification receipts** — a verdict with no commit is unfalsifiable (the doc is mutable and date-named, so "it passed" could describe any tree that ever existed). Put this block in every verification doc; it renders as nothing:
   ```
   <!-- brain:verification
   commit: <short sha, e.g. `git rev-parse --short HEAD`>
   verified_by: feature-verifier
+  implemented_by: builder-agent
   commands: bun run test (exit 0); bun run typecheck (exit 0)
   -->
   ```
@@ -169,16 +170,19 @@ retry, never a corrupted file.
   that already includes how many are unblocked (open, every `depends_on`
   done) — no second call needed. A claimed row shows how long it has been
   held (`held 41m`) right there, so a stale claim is visible without `view`.
-- `brain tasks view <slug> <id>` — full detail: acceptance, `depends_on`,
-  files, owner, `claimed_at`, evidence, receipt, and what it is **blocked
-  by** right now (computed from the other tasks' current status, not just
-  the declared list).
-- `brain tasks add <slug> --title "..." --acceptance "..." [--depends-on
-  t1,t2] [--files a,b] [--id <id>]` — creates `tasks.json` on the first
-  task; `--id` auto-generates (`t1`, `t2`, ...) from the current max when
-  omitted. `--title`/`--acceptance` are required — a task with no checkable
-  acceptance is the same premature-"done" shape the feature-level evidence
-  rule exists to prevent, one level further down.
+- `brain tasks view <slug> <id>` — full detail: acceptance, `verify`,
+  `depends_on`, files, owner, `claimed_at`, evidence, receipt, and what it
+  is **blocked by** right now (computed from the other tasks' current status,
+  not just the declared list).
+- `brain tasks add <slug> --title "..." --acceptance "..." [--verify "..."]
+  [--depends-on t1,t2] [--files a,b] [--id <id>]` — creates `tasks.json` on
+  the first task; `--id` auto-generates (`t1`, `t2`, ...) from the current
+  max when omitted. `--title`/`--acceptance` are required — a task with no
+  checkable acceptance is the same premature-"done" shape the feature-level
+  evidence rule exists to prevent, one level further down. `--verify` is the
+  optional **verification contract**: how the separate verifier will check the
+  acceptance, agreed by generator and verifier BEFORE coding (stored as the
+  task's `verify` field; shown by `tasks view` and `brief`).
 - `brain tasks claim <slug> <id> --owner <name>` — refuses (exit 1, naming
   the current owner) if held by someone else; refuses (naming the unmet
   dependency) if any `depends_on` is not `done`; re-claiming your OWN
@@ -199,7 +203,7 @@ retry, never a corrupted file.
   wrong for some task, so release is always an explicit act.
 - `brain brief <slug> <task-id> [--full]` — the handoff: one payload a COLD
   worker can act on without reading the plan artifact or being told anything
-  else. Composes the task (acceptance, `depends_on` with their current
+  else. Composes the task (acceptance, its `verify` contract or `none`, `depends_on` with their current
   statuses, declared `files`), the **approved** decision prompts read verbatim
   from that feature's bound plan(s) (`plans/<slug>/reviews.jsonl` — the round
   that concluded review, filtered to `tag: decision`; names which plan they

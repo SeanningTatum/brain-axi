@@ -26,6 +26,8 @@ import {
   parseVerdict,
   parseVerdictDetail,
   parseReceipt,
+  parseIndependence,
+  sameIdentity,
   writeFileAtomic,
   STATUSES,
   SUMMARY_MAX_CHARS,
@@ -764,6 +766,63 @@ const SCHEMA_CHECK = "feature_list.json is valid";
   ok("receipt verified_by parsed", r.verified_by === "x", r.verified_by);
   ok("receipt commands parsed", r.commands === "a; b", r.commands);
   ok("absent receipt is not an error", parseReceipt("nothing here").present === false);
+
+  // Verifier independence — the evaluator must not be the generator. Never a
+  // fail (solo work is real; legacy receipts predate the field), so every case
+  // below must also leave the run's fail set empty.
+  const IND_ROW = "every shipped feature was verified independently";
+  const indOf = (brain) => brainCheck(brain, { strict: true }).find((row) => row.check === IND_ROW);
+  const failsOf = (brain) => brainCheck(brain, { strict: true }).filter((row) => row.status === "fail");
+
+  ok("receipt implemented_by parsed",
+    parseReceipt("<!-- brain:verification\ncommit: abc1234\nverified_by: v\nimplemented_by: builder\n-->")
+      .implemented_by === "builder");
+  ok("legacy receipt parses with implemented_by null", r.present && r.implemented_by === null, String(r.implemented_by));
+  ok("sameIdentity is case-insensitive and trimmed", sameIdentity(" Sean ", "sean"));
+  ok("sameIdentity: two blanks are NOT the same identity", !sameIdentity("", null));
+  ok("sameIdentity: different names differ", !sameIdentity("builder", "verifier"));
+
+  // Legacy (no implemented_by) — judged nothing, so skip, never fail.
+  const legacyRow = indOf(good);
+  ok("legacy receipt (no implemented_by) does not fail independence",
+    legacyRow && legacyRow.status !== "fail" && legacyRow.status !== "warn", legacyRow && `${legacyRow.status}: ${legacyRow.detail}`);
+  ok("...and names it as predating implemented_by", /predate implemented_by: alpha/.test(legacyRow?.detail || ""), legacyRow?.detail);
+
+  const indep = receiptBrain(
+    "independent",
+    `<!-- brain:verification\ncommit: ${realSha}\nverified_by: verifier-agent\nimplemented_by: builder-agent\n-->`
+  );
+  ok("distinct implemented_by/verified_by passes independence", indOf(indep)?.status === "pass", indOf(indep)?.detail);
+
+  const selfSilent = receiptBrain(
+    "self-silent",
+    `<!-- brain:verification\ncommit: ${realSha}\nverified_by: Sean\nimplemented_by: sean\n-->`
+  );
+  ok("equal identities (case-insensitive) WARN", indOf(selfSilent)?.status === "warn", indOf(selfSilent)?.detail);
+  ok("...flagged as unacknowledged", /unacknowledged: alpha/.test(indOf(selfSilent)?.detail || ""), indOf(selfSilent)?.detail);
+  // (these fixtures have no features/index.md, so that row fails independently —
+  // the claim here is only that the independence row adds no failure)
+  ok("...and a warn is not a failure",
+    failsOf(selfSilent).length === failsOf(indep).length, failsOf(selfSilent).map((f) => f.check).join(", "));
+
+  const selfAck = receiptBrain(
+    "self-ack",
+    `- **Independence**: self-verified — solo maintainer, no second agent\n\n<!-- brain:verification\ncommit: ${realSha}\nverified_by: sean\nimplemented_by: sean\n-->`
+  );
+  ok("declared self-verification is acknowledged (still warn)", indOf(selfAck)?.status === "warn", indOf(selfAck)?.detail);
+  ok("...and carries the reason", /acknowledged: alpha \(sean: self-verified — solo maintainer/.test(indOf(selfAck)?.detail || ""), indOf(selfAck)?.detail);
+
+  // A fenced example of the declaration is documentation, not a declaration.
+  const fencedAck = receiptBrain(
+    "self-fenced",
+    "```\n- **Independence**: self-verified — example\n```\n\n" +
+      `<!-- brain:verification\ncommit: ${realSha}\nverified_by: sean\nimplemented_by: sean\n-->`
+  );
+  ok("a fenced Independence example does not count as acknowledgement",
+    /unacknowledged: alpha/.test(indOf(fencedAck)?.detail || ""), indOf(fencedAck)?.detail);
+  ok("parseIndependence reads the declaration",
+    parseIndependence("- **Independence**: self-verified — why").self === true);
+  ok("parseIndependence: absent is not declared", parseIndependence("# nothing").declared === false);
 }
 
 // ---------------------------------------------------------------------------
@@ -2782,6 +2841,75 @@ function writeTasksFile(brain, slug, tasks) {
     (index.stdout || "").includes("grill,") && (index.stdout || "").includes("write,"),
     index.stdout
   );
+}
+
+// ---------------------------------------------------------------------------
+// Evaluator separation — the task verification contract (`verify`) and the
+// receipt's `implemented_by` + self-verification warning, end to end.
+// ---------------------------------------------------------------------------
+{
+  const base = { id: "t1", title: "x", status: "open", acceptance: "it works" };
+  acceptsTasks("task without verify stays valid (read-compat)", { tasks: [base] });
+  acceptsTasks("task with a verify contract is valid", { tasks: [{ ...base, verify: "run the suite" }] });
+  rejectsTasks("blank verify is rejected", { tasks: [{ ...base, verify: "  " }] }, "tasks[0].verify");
+  rejectsTasks("non-string verify is rejected", { tasks: [{ ...base, verify: 42 }] }, "tasks[0].verify");
+
+  const brain = makeBrain("verify-contract", { features: [featureFor("alpha")] });
+  const add = runIn(brain, "tasks", "add", "alpha", "--title", "T", "--acceptance", "A", "--verify", "VERIFY-METHOD");
+  ok("tasks add --verify exits 0", add.status === 0, add.stderr);
+  ok("...stores verify on the task", readTasks(brain, "alpha").data?.tasks?.[0]?.verify === "VERIFY-METHOD");
+  const view = runIn(brain, "tasks", "view", "alpha", "t1");
+  ok("tasks view shows verify", /^\s*verify: \|\n\s*VERIFY-METHOD$/m.test(view.stdout || ""), view.stdout);
+  const brief = runIn(brain, "brief", "alpha", "t1");
+  const bout = brief.stdout || "";
+  ok("brief shows verify right after acceptance",
+    /acceptance: \|\n\s*A\n\s*verify: \|\n\s*VERIFY-METHOD\n/.test(bout), bout);
+  const blank = runIn(brain, "tasks", "add", "alpha", "--title", "T", "--acceptance", "A", "--verify", " ");
+  ok("tasks add --verify blank is a usage error", blank.status === 2, `exit ${blank.status}`);
+  const noVerify = runIn(brain, "tasks", "add", "alpha", "--title", "T2", "--acceptance", "A2");
+  ok("tasks add without --verify still works", noVerify.status === 0, noVerify.stderr);
+  const brief2 = runIn(brain, "brief", "alpha", "t2");
+  ok("brief prints a definitive verify: none", /^\s*verify: none$/m.test(brief2.stdout || ""), brief2.stdout);
+
+  // `brain receipt` in a real git repo: author of HEAD is the default implementer.
+  const repo = path.join(tmpRoot, "ind-receipt-repo");
+  fs.mkdirSync(repo, { recursive: true });
+  const g = (...args) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
+  g("init", "-q");
+  g("config", "user.email", "fixture@example.com");
+  g("config", "user.name", "Builder Bot");
+  const rb = path.join(repo, ".brain");
+  fs.mkdirSync(path.join(rb, "features", "alpha", "verifications"), { recursive: true });
+  fs.mkdirSync(path.join(rb, "runs"), { recursive: true });
+  fs.writeFileSync(path.join(rb, "runs", "progress.md"), "# Progress\n\n---\n");
+  fs.writeFileSync(
+    path.join(rb, "features", "feature_list.json"),
+    JSON.stringify({ features: [featureFor("alpha", { status: "shipped", evidence: "proof" })] }, null, 2) + "\n"
+  );
+  fs.writeFileSync(path.join(rb, "features", "alpha", "alpha.md"), "# alpha\n");
+  const vdoc = path.join(rb, "features", "alpha", "verifications", "2026-07-31.md");
+  fs.writeFileSync(vdoc, "# V\n\n**Verdict**: ✅ PASS\n");
+  runIn(rb, "features", "index", "--write", "--create"); // so the whole check is otherwise green
+  g("add", "-A");
+  g("commit", "-qm", "one");
+
+  const self = runIn(rb, "receipt", "alpha", "--verified-by", "builder bot", "--allow-dirty");
+  const sout = self.stdout || "";
+  ok("receipt with equal identities still stamps (exit 0)", self.status === 0, self.stderr);
+  ok("...defaults implemented_by to the HEAD author", /implemented_by: Builder Bot/.test(sout), sout);
+  ok("...writes implemented_by into the block", /implemented_by: Builder Bot/.test(fs.readFileSync(vdoc, "utf8")));
+  ok("...prints a warning line", /^warning: "?self-verified/m.test(sout), sout);
+  ok("...points at the independent verifier playbook", /brain playbook verify/.test(sout), sout);
+  ok("...stderr stays empty", (self.stderr || "") === "", self.stderr);
+  const warnRow = brainCheck(rb, { strict: true }).find((row) => row.check === "every shipped feature was verified independently");
+  ok("check --strict row warns on that receipt", warnRow?.status === "warn", warnRow?.detail);
+  const chk = runIn(rb, "check", "--strict");
+  ok("check --strict exit stays 0 on a warn", chk.status === 0, chk.stdout);
+
+  const indep = runIn(rb, "receipt", "alpha", "--verified-by", "verifier-agent", "--implemented-by", "builder-agent", "--allow-dirty");
+  ok("receipt with distinct identities has no self-verified warning", indep.status === 0 && !/self-verified/.test(indep.stdout || ""), indep.stdout);
+  const passRow = brainCheck(rb, { strict: true }).find((row) => row.check === "every shipped feature was verified independently");
+  ok("...and the independence row passes", passRow?.status === "pass", passRow?.detail);
 }
 
 fs.rmSync(tmpRoot, { recursive: true, force: true });
