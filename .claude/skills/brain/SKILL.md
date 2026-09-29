@@ -115,7 +115,7 @@ this layout with the legacy flat one, so older brains keep working:
 .brain/features/<slug>/
   <slug>.md                                feature doc
   screenshots/NN-<step>.png                golden path (01-, 02-, ...); error paths E1-, E2-, ...
-  verifications/<YYYY-MM-DD>.md            browser-walk verdict docs (PASS/FAIL/BLOCKED evidence)
+  verifications/<YYYY-MM-DD>[-rN].md       browser-walk verdict docs, one per round (PASS/FAIL/BLOCKED evidence)
   runs/<YYYY-MM-DD>-<task>.md              per-feature run notes
   plans/<plan-slug>/                       review plans scoped to this feature
 .brain/runs/progress.md                    stays global — rolling session cursor
@@ -153,8 +153,9 @@ this layout with the legacy flat one, so older brains keep working:
   with hard floors (product-depth 2, functionality 2, design 2 UI-only,
   code-quality 1 — a stub or display-only control is a FAIL); screenshot
   naming, the jsErrors/networkErrors console policy, and how to persist the
-  evidence. On FAIL a fresh verifier re-walks (`- **Round**: N`, cap 3,
-  then escalate — `playbook execute` step 4b).
+  evidence. On FAIL a fresh verifier re-walks in a new doc,
+  `<date>-rN.md` for round N >= 2 (`- **Round**: N`, one Verdict per
+  doc, cap 3, then escalate — `playbook execute` step 4b).
 - `brain verifications [<feature>]` — list verdict docs (feature, date, verdict).
 - `brain verifications view <feature> <date>` — read one in full.
 

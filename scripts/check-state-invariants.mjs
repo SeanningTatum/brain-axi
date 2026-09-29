@@ -38,7 +38,7 @@ import {
   readTasks,
   writeTasksCas,
 } from "../lib/state.js";
-import { brainCheck } from "../lib/review/brain-data.js";
+import { brainCheck, listVerifications } from "../lib/review/brain-data.js";
 
 const failures = [];
 let assertions = 0;
@@ -2927,6 +2927,31 @@ function writeTasksFile(brain, slug, tasks) {
   const dout = dflt.stdout || "";
   ok("receipt with no identity flags defaults verified_by to git user.name", /verified_by: Builder Bot/.test(dout), dout);
   ok("...and warns as self-verified", /^warning: "?.*self-verified/m.test(dout), dout);
+}
+
+// ---------------------------------------------------------------------------
+// Same-day fix rounds: round 1 is <date>.md, round N >= 2 is <date>-rN.md, one
+// Verdict per doc. A same-day "new dated doc" used to collide with round 1's
+// filename, and a `## Round N` addendum holding FAIL + PASS parsed as unknown.
+// Every consumer of the filename stem must accept the -rN suffix.
+// ---------------------------------------------------------------------------
+{
+  const brain = makeBrain("fix-rounds", {
+    features: [featureFor("alpha", { status: "shipped", evidence: "round 2 PASS" })],
+  });
+  const vdir = path.join(brain, "features", "alpha", "verifications");
+  fs.mkdirSync(vdir, { recursive: true });
+  fs.writeFileSync(path.join(vdir, "2026-01-01.md"), "# V\n\n- **Round**: 1\n\n**Verdict**: \u274c FAIL\n");
+  fs.writeFileSync(path.join(vdir, "2026-01-01-r2.md"), PASS_DOC.replace("# V\n\n", "# V\n\n- **Round**: 2\n\n"));
+  const docs = listVerifications(brain, "alpha");
+  ok("fix rounds: listVerifications orders <date>-r2 before <date>", docs.map((d) => d.date).join(",") === "2026-01-01-r2,2026-01-01", JSON.stringify(docs));
+  ok("fix rounds: each round's verdict parses on its own", docs[0]?.verdict === "PASS" && docs[1]?.verdict === "FAIL", JSON.stringify(docs));
+  const view = runIn(brain, "verifications", "view", "alpha", "2026-01-01-r2");
+  ok("fix rounds: `verifications view <slug> <date>-r2` works", view.status === 0 && /verdict: PASS/.test(view.stdout || ""), (view.stdout || "") + (view.stderr || ""));
+  const checks = brainCheck(brain, { strict: true });
+  ok("fix rounds: both docs have a readable Verdict", rowStatus(checks, "verification docs have a readable Verdict") === "pass", JSON.stringify(checks));
+  ok("fix rounds: strict sees the round-2 PASS", rowStatus(checks, "every shipped feature has a PASS verification") === "pass", JSON.stringify(checks));
+  ok("fix rounds: strict sees the round-2 receipt", rowStatus(checks, "every PASS verification is bound to a commit") === "pass", JSON.stringify(checks));
 }
 
 fs.rmSync(tmpRoot, { recursive: true, force: true });

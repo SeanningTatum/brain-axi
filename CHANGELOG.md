@@ -35,7 +35,8 @@ against hard floors, and re-walks in capped fix rounds.
   `brain runs append --step "contract agreed"`.
 - **Playbooks — `execute`**: a step 4b FIX LOOP. After a FAIL, the next round is either
   refine or pivot, and that choice is recorded before the fix. Each round gets a fresh
-  verifier. After 3 rounds the work escalates to the human.
+  verifier and its own doc: round 1 is `verifications/<YYYY-MM-DD>.md`, round N ≥ 2 is
+  `<YYYY-MM-DD>-rN.md`, one Verdict per doc. After 3 rounds the work escalates to the human.
 - **Playbooks — `execute`**: a **Verifier (independent)** role in AGENT TOPOLOGY, plus
   rigor scaled by plan tier. **small** gets a contract review and one fresh sub-agent
   verifier. **full** gets an independent verifier and a recommended second adversarial pass.
