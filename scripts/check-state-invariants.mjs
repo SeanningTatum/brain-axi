@@ -842,6 +842,33 @@ const SCHEMA_CHECK = "feature_list.json is valid";
   ok("parseIndependence reads the declaration",
     parseIndependence("- **Independence**: self-verified — why").self === true);
   ok("parseIndependence: absent is not declared", parseIndependence("# nothing").declared === false);
+
+  // The NEWEST verification decides: an older independent PASS must not hide
+  // a newer FAIL, and a same-day `-rN` round supersedes the base doc.
+  const indepReceipt = `<!-- brain:verification\ncommit: ${realSha}\nverified_by: verifier-agent\nimplemented_by: builder-agent\n-->`;
+  const verDocs = (name, docs) => {
+    const brain = receiptBrain(name, "");
+    const dir = path.join(brain, "features", "alpha", "verifications");
+    for (const f of fs.readdirSync(dir)) fs.unlinkSync(path.join(dir, f));
+    for (const [file, body] of Object.entries(docs)) fs.writeFileSync(path.join(dir, file), body);
+    return brain;
+  };
+  const newerFail = verDocs("newer-fail", {
+    "2026-01-01.md": `# V\n\n**Verdict**: ✅ PASS\n\n${indepReceipt}\n`,
+    "2026-01-02.md": "# V\n\n**Verdict**: ❌ FAIL\n",
+  });
+  ok("older independent PASS + newer FAIL WARNs independence", indOf(newerFail)?.status === "warn", indOf(newerFail)?.detail);
+  ok("...naming the non-PASS latest doc",
+    /latest verification not PASS: alpha \(2026-01-02: FAIL\)/.test(indOf(newerFail)?.detail || ""), indOf(newerFail)?.detail);
+  ok("...and the row adds no failure", failsOf(newerFail).length === failsOf(indep).length,
+    failsOf(newerFail).map((f) => f.check).join(", "));
+  const roundPass = verDocs("round-pass", {
+    "2026-01-01.md": "# V\n\n**Verdict**: ❌ FAIL\n",
+    "2026-01-01-r2.md": `# V\n\n**Verdict**: ✅ PASS\n\n${indepReceipt}\n`,
+  });
+  ok("FAIL then independent PASS round (-r2) passes independence", indOf(roundPass)?.status === "pass", indOf(roundPass)?.detail);
+  ok("...and adds no failure", failsOf(roundPass).length === failsOf(indep).length,
+    failsOf(roundPass).map((f) => f.check).join(", "));
 }
 
 // ---------------------------------------------------------------------------

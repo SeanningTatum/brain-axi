@@ -54,6 +54,9 @@ against hard floors, and re-walks in capped fix rounds.
   - `warn` when `implemented_by` equals `verified_by` (trimmed, case-insensitive). The detail
     says "acknowledged" when the doc declares `- **Independence**: self-verified — <reason>`
     outside fenced or commented blocks.
+  - `warn` when the feature's newest verification doc (stem order, so `<date>-rN.md` rounds
+    count as newer) is not PASS — an older independent PASS does not hide a newer FAIL. The
+    other strict rows still accept any PASS.
   - `skip` when every receipt predates `implemented_by`. The row never fails.
 - **CLI — `brain tasks add --verify "<how checked>"`**: stores the verification contract
   as `task.verify`. `brain tasks view` and `brain brief` print it verbatim, or

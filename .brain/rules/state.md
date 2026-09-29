@@ -259,7 +259,11 @@ is FAIL on product-depth.
   `warn` — never `fail`, even when the doc declares `self-verified`. Receipts stamped before
   `implemented_by` existed make that row `skip` (when nothing else is judgeable), never `fail`.
   A receipt with `implemented_by` but a blank `verified_by` is `warn` too: an unnamed verifier
-  is not evidence of independence.
+  is not evidence of independence. The row also reads each feature's **newest** verification doc
+  (stem order, so a same-day `<date>-rN.md` round is newer): when its verdict is not PASS, the
+  feature is `warn` as `latest verification not PASS: <slug> (<stem>: <verdict>)`, even if an older
+  PASS was independent — re-verify with a fresh verifier or explain the failure. Only this row
+  looks at the latest verdict; the other strict rows accept any PASS.
   Both defaults come from git identity, so one human stamping with defaults trips the warning; a
   sub-agent verifier shares the caller's git identity, so it must pass its own `--verified-by`. It is the visible trace
   of self-grading, and it has to be matched by the Independence reason above.
