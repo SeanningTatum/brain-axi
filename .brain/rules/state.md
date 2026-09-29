@@ -262,7 +262,9 @@ is FAIL on product-depth.
   is not evidence of independence. The row also reads each feature's **newest** verification doc
   (stem order, so a same-day `<date>-rN.md` round is newer): when its verdict is not PASS, the
   feature is `warn` as `latest verification not PASS: <slug> (<stem>: <verdict>)`, even if an older
-  PASS was independent — re-verify with a fresh verifier or explain the failure. Only this row
+  PASS was independent — re-verify with a fresh verifier or explain the failure. A PASS newest
+  doc is judged on its own receipt and Independence line, never an older doc's: an unstamped newest
+  PASS behind an older stamped one is `warn` as `latest PASS has no receipt`. Only this row
   looks at the latest verdict; the other strict rows accept any PASS.
   Both defaults come from git identity, so one human stamping with defaults trips the warning; a
   sub-agent verifier shares the caller's git identity, so it must pass its own `--verified-by`. It is the visible trace
