@@ -61,7 +61,7 @@ Run `brain playbook` for the live id/use_when index; `brain playbook <id>` for t
 - `brain features set-status <slug> --status <planned|in-progress|shipped|blocked|cut>` — flip feature state (enforces one-in-progress policy; `--status shipped` requires `--evidence` **and passes the same preflight as `brain ship` — it refuses and writes nothing if any check would fail**. Transitions *out* of a state are never gated, so a broken record stays repairable)
 - `brain check` — deterministic harness invariants (feature-list **schema** validity — duplicate ids/slugs, unknown status, shipped-without-evidence all fail — one-in-progress per declared policy, doc paths, dependency refs, `features/index.md` agreeing with the tracker, plan/review file integrity, verification docs having a **readable** verdict with resolvable image links, `tasks.json` schema validity, no `shipped` feature with an open task, verify.json shape when present); exit 1 on any failure, CI-usable
 - `brain features index [--write]` — GENERATE the `features/index.md` status table from `feature_list.json` (bounded by `<!-- brain:features-table -->` markers so surrounding prose survives). Hand-maintaining that mirror is how a tracker and its human-facing index end up disagreeing
-- `brain receipt <feature> [--date <d>] [--verified-by <who>] [--implemented-by <who>] [--allow-dirty]` — stamp a commit-bound provenance receipt into a verification doc, written BY THE TOOL: HEAD at stamp time plus the actual gate results for that feature from `runs/gates.jsonl`. Refuses on a dirty tree (a receipt naming HEAD while the tree differs describes code in no commit) and refuses to stamp a doc whose verdict is unreadable — a hand-written receipt is a claim about provenance, not provenance. Records `implemented_by` (default: git author of HEAD) next to `verified_by`; records `verified_by_source` / `implemented_by_source` (`flag` when passed, `default` when taken from git identity) and adds "identities defaulted — pass --verified-by/--implemented-by" to the `warning:` key unless both flags are given; when the two are the same identity it still stamps but prints a `warning:` — **the evaluator must not be the generator** (self-grading is lenient), so have a separate agent run `npx -y brain-axi playbook verify` and stamp with its own `--verified-by`
+- `brain receipt <feature> [--date <d>] [--verified-by <who>] [--implemented-by <who>] [--allow-dirty]` — stamp a commit-bound provenance receipt into a verification doc, written BY THE TOOL: HEAD at stamp time plus the actual gate results for that feature from `runs/gates.jsonl`. Refuses on a dirty tree (a receipt naming HEAD while the tree differs describes code in no commit) and refuses to stamp a doc whose verdict is unreadable — a hand-written receipt is a claim about provenance, not provenance. Records `implemented_by` (default: git author of HEAD) next to `verified_by` (default: `git config user.name`, then `$USER`); records `verified_by_source` / `implemented_by_source` (`flag` when passed, `default` when taken from git identity) and adds "identities defaulted — pass --verified-by/--implemented-by" to the `warning:` key unless both flags are given; when the two are the same identity it still stamps but prints a `warning:` — **the evaluator must not be the generator** (self-grading is lenient), so have a separate agent run `npx -y brain-axi playbook verify` and stamp with its own `--verified-by`
 - `brain check --strict` — adds three: every `shipped` feature must have a verification doc whose verdict parses to PASS, **and** that doc must carry a `brain:verification` receipt naming a commit that is an ancestor of HEAD; plus a verifier-independence row that is `warn` (exit stays 0) when the latest receipt's `implemented_by` equals its `verified_by` — declaring `- **Independence**: self-verified — <reason>` in the doc marks it acknowledged, still `warn`; distinct names only `pass` when `verified_by` was passed explicitly — a `verified_by_source: default` receipt is `warn` ("identities not declared"; receipts predating the source fields are judged as before); only the feature's newest verification doc is judged (a `<date>-rN.md` round counts as newer): `warn` when it is not PASS, names no verifier, or is an unstamped PASS behind an older stamped one (an older receipt never stands in for it); receipts predating `implemented_by` are reported, never failed (full decision table: `rules/state.md`). Opt-in here so brains predating the invariants do not go red on upgrade; `brain ship` and `set-status --status shipped` **always** enforce the first two, since shipping is the moment the claim is made
 - **Verification receipts** — a verdict with no commit is unfalsifiable (the doc is mutable and date-named, so "it passed" could describe any tree that ever existed). Put this block in every verification doc; it renders as nothing:
   ```
@@ -116,8 +116,8 @@ this layout with the legacy flat one, so older brains keep working:
 .brain/features/feature_list.json          tracker (doc paths point at features/<slug>/<slug>.md)
 .brain/features/<slug>/
   <slug>.md                                feature doc
-  screenshots/NN-<step>.png                golden path (01-, 02-, ...); error paths E1-, E2-, ...
-  verifications/<YYYY-MM-DD>[-rN].md       browser-walk verdict docs, one per round (PASS/FAIL/BLOCKED evidence)
+  screenshots/NN-<step>.png                golden path (01-, 02-, ...); error paths E1-, E2-, ...; A<N>- acceptance, X<N>- edge probes; round N >= 2 prefixes rN-
+  verifications/<YYYY-MM-DD>[-rN].md       verdict docs (browser walk + command runs), one per round (PASS/FAIL/BLOCKED)
   runs/<YYYY-MM-DD>-<task>.md              per-feature run notes
   plans/<plan-slug>/                       review plans scoped to this feature
 .brain/runs/progress.md                    stays global — rolling session cursor
@@ -153,9 +153,12 @@ this layout with the legacy flat one, so older brains keep working:
   of record + task acceptance) in an `## Acceptance criteria` table, plus a
   golden path, at least one error path, and edge probes; `## Quality scores`
   with hard floors (product-depth 2, functionality 2, design 2 UI-only,
-  code-quality 1 — a stub or display-only control is a FAIL); screenshot
-  naming, the jsErrors/networkErrors console policy, and how to persist the
-  evidence. On FAIL a fresh verifier re-walks in a new doc,
+  code-quality 1 — a stub or display-only control is a FAIL). Evidence: a
+  screenshot for what a browser can reach; for a CLI-only / non-browser
+  criterion, the named command run, with command + exit code + output.
+  Also screenshot naming (round N >= 2 prefixes `rN-`), the
+  jsErrors/networkErrors console policy, and how to persist the evidence.
+  On FAIL a fresh verifier re-walks in a new doc,
   `<date>-rN.md` for round N >= 2 (`- **Round**: N`, one Verdict per
   doc, cap 3, then escalate — `playbook execute` step 4b).
 - `brain verifications [<feature>]` — list verdict docs (feature, date, verdict).
@@ -164,7 +167,7 @@ this layout with the legacy flat one, so older brains keep working:
 After implementing a user-visible feature, hand it to a fresh-context verifier
 (a sub-agent or new session — never the implementer) that writes the
 verification doc at `.brain/features/<slug>/verifications/<date>.md`
-following `brain playbook verify` — this is how "it works" becomes checkable
+(fix round N >= 2: `<date>-rN.md`) following `brain playbook verify` — this is how "it works" becomes checkable
 evidence instead of a claim. Solo self-verification only when no second agent
 is possible, declared as `- **Independence**: self-verified — <reason>`.
 
@@ -192,8 +195,9 @@ retry, never a corrupted file.
   max when omitted. `--title`/`--acceptance` are required — a task with no
   checkable acceptance is the same premature-"done" shape the feature-level
   evidence rule exists to prevent, one level further down. `--verify` is the
-  optional **verification contract**: how the separate verifier will check the
-  acceptance, agreed by generator and verifier BEFORE coding (stored as the
+  **verification contract** (optional flag, but every task should carry one —
+  omitting it prints a `help:` nudge): how the separate verifier will check
+  the acceptance, agreed by generator and verifier BEFORE coding (stored as the
   task's `verify` field; shown by `tasks view` and `brief`).
 - `brain tasks claim <slug> <id> --owner <name>` — refuses (exit 1, naming
   the current owner) if held by someone else; refuses (naming the unmet

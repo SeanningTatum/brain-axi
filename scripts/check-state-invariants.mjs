@@ -3289,11 +3289,11 @@ function writeTasksFile(brain, slug, tasks) {
   ok("verify playbook: CLI-only still walks golden + error + edge via commands",
     /CLI-ONLY FEATURES\.[\s\S]{0,700}golden path[\s\S]{0,200}error path[\s\S]{0,200}edge probes/.test(v));
   ok("verify playbook: the header allows a CLI-only Base URL", /\*\*Base URL\*\*:.*n\/a — CLI-only/.test(v));
-  ok("verify playbook: screenshot rule names the CLI-only evidence", /Every asserted state gets a screenshot \(for a CLI-only feature/.test(v));
+  ok("verify playbook: screenshot rule names the non-browser evidence", /Every asserted state gets a screenshot \(for a criterion no browser can\s+reach/.test(v));
   for (const id of ["execute", "done"]) {
     const c = PLAYBOOKS[id]?.content || "";
-    ok(`${id} playbook: 'driven in a real browser' carries the CLI-only alternative`,
-      !/driven in a[\s\n]+real browser(?![\s\S]{0,20}\((?:or )?run as commands)/.test(c), id);
+    ok(`${id} playbook: 'driven in a real browser' is scoped to what a browser can reach`,
+      !/driven in a[\s\n]+real browser(?![\s\n]+for what a browser can reach)/.test(c), id);
   }
 }
 

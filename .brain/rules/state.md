@@ -247,7 +247,11 @@ with that reason stated; "it was faster to check it myself" is not one. An undec
 - **Every acceptance row is walked.** Every acceptance criterion (the approved plan of record's
   phases plus each task's `acceptance`, with its `verify` contract line when set) is a row in the
   verification doc's `## Acceptance criteria` table, and each row gets its own observed result. A row with no result counts as a failed row, even if nothing contradicts
-  it. "Spot-checked the main flow" is not a verdict on the rest.
+  it. "Spot-checked the main flow" is not a verdict on the rest. Beyond the rows, the walk covers a
+  golden path, at least one error path and edge probes. What a browser can reach is walked in a
+  browser with screenshots; a criterion no browser reaches (CLI output, an API response, a file on
+  disk) is checked by running its named command, and its evidence is the command, exit code and
+  observed output.
 - **Quality floors bind.** `## Quality scores` rates product-depth / functionality / design /
   code-quality from 0 to 3, with floors of 2 / 2 / 2 / 1. Any score below its floor makes the verdict
   FAIL, whatever the other rows say (design is N/A for non-UI work). A stub or display-only surface

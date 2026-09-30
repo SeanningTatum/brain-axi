@@ -171,7 +171,7 @@ Every command supports `--help` (self-documenting) and a global `--brain <path>`
 | `brain review poll <plan.html> [--agent-reply "..."] [--snapshot] [--timeout-ms n]` | Long-poll for reviewer feedback — leave running until it returns |
 | `brain review end <plan.html>` | End an open review session (marks the plan reviewed) |
 | `brain plans` / `brain plans view <slug> [--full]` | List plan review artifacts, or one plan's meta + review rounds |
-| `brain verifications [feature]` / `brain verifications view <feature> <date> [--full]` | List or read feature verification (browser-walk) verdict docs |
+| `brain verifications [feature]` / `brain verifications view <feature> <date> [--full]` | List or read feature verification verdict docs (browser walk + command runs), one per fix round |
 | `brain timeline [--limit n]` | Merged history: checkpoints, run notes, plan creations, review rounds |
 
 ### Screenshot review loop
