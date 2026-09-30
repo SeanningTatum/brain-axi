@@ -67,7 +67,8 @@ behavior as it ships; the source of truth for the rules is `.brain/rules/state.m
   It judges each shipped feature on its newest verification doc only (stem order; same-day
   `-rN` rounds sort numerically). `pass` only when the names differ and `verified_by` was
   passed explicitly — a defaulted verifier is `warn` ("identities not declared"). `warn` when
-  that doc is not PASS, is self-verified (declared or not), names no verifier, or is an
+  that doc is not PASS, is self-verified (declared with a reason: "acknowledged"; a bare
+  `self-verified` with no reason: "no reason given"; undeclared: "unacknowledged"), names no verifier, or is an
   unstamped PASS behind an older stamped one. `skip` when every receipt predates
   `implemented_by`. The row never fails. Receipts with no source field predate it and are
   judged as before. The full decision table is in `.brain/rules/state.md`, pinned row-for-row

@@ -269,7 +269,8 @@ is FAIL on product-depth.
   |---|---|---|---|---|
   | 1 | (no doc) | — | — | not judged (the PASS row fails) |
   | 2 | not PASS | any | any | `latest verification not PASS` → warn |
-  | 3 | PASS | self-verified | any, even none | `self-verified, acknowledged` → warn |
+  | 3 | PASS | self-verified — <reason> | any, even none | `self-verified, acknowledged` → warn |
+  | 3b | PASS | self-verified, no reason after it | any, even none | `self-verified, no reason given` → warn |
   | 4 | PASS | other / absent | none; an older PASS has one | `latest PASS has no receipt` → warn |
   | 5 | PASS | other / absent | none; no older PASS has one | not judged (the "bound to a commit" row fails) |
   | 6 | PASS | other / absent | no `implemented_by` | legacy: named in the detail, not judged |

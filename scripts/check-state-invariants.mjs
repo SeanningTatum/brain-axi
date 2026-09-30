@@ -928,6 +928,21 @@ const SCHEMA_CHECK = "feature_list.json is valid";
   expectRow("3 declared self, legacy receipt", verDocs("tbl-3-legacy", {
     "2026-01-01.md": PASS_H + DECL_SELF + R_LEGACY,
   }), "warn", /acknowledged: alpha/);
+  // Row 3b — a bare "self-verified" with no reason is not an acknowledgement.
+  expectRow("3b bare self-verified, no reason", verDocs("tbl-3b-bare", {
+    "2026-01-01.md": PASS_H + "- **Independence**: self-verified\n\n" + R_SELF,
+  }), "warn", /self-verified, no reason given: alpha \(2026-01-01\)/);
+  expectRow("3b separator only is still no reason", verDocs("tbl-3b-dash", {
+    "2026-01-01.md": PASS_H + "- **Independence**: self-verified —  \n\n" + R_SELF,
+  }), "warn", /no reason given: alpha/);
+  ok("3b: a bare self-verified never reads as acknowledged",
+    !/self-verified, acknowledged/.test(indOf(verDocs("tbl-3b-bare2", {
+      "2026-01-01.md": PASS_H + "- **Independence**: self-verified\n\n" + R_SELF,
+    }))?.detail || ""));
+  ok("parseIndependence extracts the reason",
+    parseIndependence("- **Independence**: self-verified — solo maintainer").reason === "solo maintainer");
+  ok("parseIndependence: bare self-verified has an empty reason",
+    parseIndependence("- **Independence**: self-verified").reason === "");
   // The declaration on an OLDER doc does not carry over to the newest one.
   expectRow("3 declaration on an older doc only", verDocs("tbl-3-older", {
     "2026-01-01.md": PASS_H + DECL_SELF + R_SELF, "2026-01-02.md": PASS_H + R_INDEP,
