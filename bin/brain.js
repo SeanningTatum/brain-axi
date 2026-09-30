@@ -35,7 +35,10 @@ import {
   validateFeatureListStructure,
   oneInProgressEnforced,
   gitShortHead,
+  gitHeadAuthor,
+  gitUserName,
   gitWorktreeDirty,
+  sameIdentity,
   isGitRepo,
   parseReceipt,
   parseVerdictDetail,
@@ -978,7 +981,7 @@ function cmdCheck(argv) {
   const spec = {
     "--strict": {
       value: false,
-      desc: "also require a PASS verification doc for every shipped feature",
+      desc: "also require a commit-bound PASS verification for every shipped feature (+ an advisory verifier-independence row: warn, never fail)",
     },
   };
   const { flags } = parseArgs(argv, spec, "check");
@@ -1013,14 +1016,21 @@ function cmdCheck(argv) {
   }
 
   const failed = checks.filter((c) => c.status === "fail");
+  // `warn` is advisory (exit stays 0) — e.g. a receipt whose implementer and
+  // verifier are the same identity. Surface it in help so it is not just a row.
+  const warned = checks.filter((c) => c.status === "warn");
   print([
     ...toonTable("checks", checks, ["check", "status", "detail"]),
-    ...toonList(
-      "help",
-      failed.length
+    ...toonList("help", [
+      ...(failed.length
         ? [`${failed.length} check(s) failing — fix the detail(s) above, then re-run \`brain check\``]
-        : ["All checks passing"]
-    ),
+        : [warned.length ? "No failing checks" : "All checks passing"]),
+      ...(warned.length
+        ? [
+            `${warned.length} warning(s) (exit stays 0) — for a self-verified or identity-defaulted receipt, have a separate agent run \`brain playbook verify\` and re-stamp with \`brain receipt <feature> --verified-by <verifier>\``,
+          ]
+        : []),
+    ]),
   ]);
   if (failed.length) process.exit(1);
 }
@@ -1145,8 +1155,12 @@ function quantile(sorted, q) {
 
 function cmdReceipt(argv) {
   const spec = {
-    "--date": { value: true, desc: "verification doc date to stamp (default: the newest)" },
-    "--verified-by": { value: true, desc: "who/what ran the verification (default: the caller)" },
+    "--date": { value: true, desc: "verification doc to stamp, by filename stem (YYYY-MM-DD or YYYY-MM-DD-rN; default: the newest)" },
+    "--verified-by": { value: true, desc: "who/what ran the verification (default: git config user.name, then $USER)" },
+    "--implemented-by": {
+      value: true,
+      desc: "who/what wrote the code being verified (default: git author of HEAD)",
+    },
     "--allow-dirty": {
       value: false,
       desc: "stamp even though the working tree differs from HEAD (records `dirty: true`)",
@@ -1158,7 +1172,10 @@ function cmdReceipt(argv) {
       "receipt",
       "Stamp a commit-bound provenance receipt into a feature's verification doc",
       spec,
-      ["brain receipt authentication", 'brain receipt authentication --verified-by "feature-verifier"'],
+      [
+        "brain receipt authentication",
+        'brain receipt authentication --verified-by "feature-verifier" --implemented-by "builder-agent"',
+      ],
       ["<feature> — feature slug from `brain features`"]
     );
   const slug = positionals[0];
@@ -1213,13 +1230,31 @@ function cmdReceipt(argv) {
     ? observed.map((r) => `${r.check} (exit ${r.exit === null ? "timeout" : r.exit})`).join("; ")
     : "";
 
-  const verifiedBy = flags["verified-by"] || process.env.USER || "unknown";
+  // Default from git config user.name — the same identity source as the
+  // implemented_by default — so self-stamping with defaults is detected.
+  const verifiedBy = flags["verified-by"] || gitUserName(repoRoot) || process.env.USER || "unknown";
+  // Tool-derived like the commit: the author of HEAD wrote the code this
+  // receipt binds to, unless the caller names the implementer explicitly.
+  const implementedBy = flags["implemented-by"] || gitHeadAuthor(repoRoot) || "unknown";
+  // Record where each identity came from. A defaulted verified_by is git
+  // identity, not a declaration: a bot-authored HEAD makes the two defaults
+  // differ with no second agent involved, so `brain check --strict` never
+  // counts a defaulted verifier as independent.
+  const verifiedBySource = flags["verified-by"] ? "flag" : "default";
+  const implementedBySource = flags["implemented-by"] ? "flag" : "default";
+  const defaulted = verifiedBySource === "default" || implementedBySource === "default";
+  // The evaluator must not be the generator — self-grading is lenient. Still
+  // stamps (solo work is real), but the result says so.
+  const selfVerified = sameIdentity(implementedBy, verifiedBy);
   const block = [
     "<!-- brain:verification",
     `verdict: ${verdict}`,
     `commit: ${commit}`,
     `stamped_at: ${new Date().toISOString()}`,
     `verified_by: ${verifiedBy}`,
+    `implemented_by: ${implementedBy}`,
+    `verified_by_source: ${verifiedBySource}`,
+    `implemented_by_source: ${implementedBySource}`,
     ...(commands ? [`commands: ${commands}`] : []),
     ...(dirty ? ["dirty: true"] : []),
     "-->",
@@ -1231,16 +1266,38 @@ function cmdReceipt(argv) {
     : content.replace(/\s*$/, "\n\n" + block + "\n");
   writeFileAtomic(absDoc, next);
 
+  const warnings = [
+    ...(dirty ? ["recorded with dirty: true — the tree differed from HEAD"] : []),
+    ...(selfVerified
+      ? [`self-verified — implemented_by and verified_by are both "${verifiedBy}" (self-grading is lenient evidence)`]
+      : []),
+    ...(defaulted ? ["identities defaulted — pass --verified-by/--implemented-by"] : []),
+  ];
   print([
     "receipt:",
     kv("feature", slug, 2),
     kv("doc", doc.file, 2),
     kv("verdict", verdict, 2),
     kv("commit", commit, 2),
+    kv("verified_by", verifiedBy, 2),
+    kv("implemented_by", implementedBy, 2),
+    kv("verified_by_source", verifiedBySource, 2),
+    kv("implemented_by_source", implementedBySource, 2),
     kv("action", existing.present ? "replaced" : "added", 2),
     ...(commands ? [kv("commands", commands, 2)] : []),
-    ...(dirty ? ["warning: recorded with dirty: true — the tree differed from HEAD"] : []),
+    // One `warning:` key, never two — duplicate keys are ambiguous TOON.
+    ...(warnings.length ? [kv("warning", warnings.join("; "))] : []),
     ...toonList("help", [
+      ...(selfVerified
+        ? [
+            "Self-verified: have a separate agent run `brain playbook verify`, then re-stamp with its --verified-by — or declare `- **Independence**: self-verified — <reason>` in the doc",
+          ]
+        : []),
+      ...(verifiedBySource === "default"
+        ? [
+            `Identities defaulted: re-stamp with \`brain receipt ${slug} --verified-by <verifier> --implemented-by <implementer>\` — a defaulted verified_by never counts as independent in \`brain check --strict\``,
+          ]
+        : []),
       commands
         ? "Run `brain check --strict` to confirm the receipt resolves to an ancestor of HEAD"
         : "No gate rows for this feature yet — run `brain verify --stage verify --feature " +
@@ -1842,8 +1899,14 @@ function cmdTasks(argv) {
   // Every verb takes a positional immediately (`view <slug> <id>`,
   // `claim <slug> <id>`, `add <slug>`), so a verb-shaped argv[0] followed by a
   // flag — or by nothing — is a slug, not a verb.
+  // Exception: `tasks <verb> --help` shows the VERB's help. Help writes
+  // nothing, so a verb-slugged feature losing list-help here costs nothing,
+  // while `tasks add --help` printing the list help hid every add flag.
   const isVerb =
-    argv[0] && TASKS_SUBCOMMANDS.includes(argv[0]) && argv[1] && !argv[1].startsWith("-");
+    argv[0] &&
+    TASKS_SUBCOMMANDS.includes(argv[0]) &&
+    argv[1] &&
+    (!argv[1].startsWith("-") || argv[1] === "--help");
   if (argv[0] === "list") return cmdTasksList(argv.slice(1));
   const sub = isVerb ? argv[0] : "list";
   const rest = isVerb ? argv.slice(1) : argv;
@@ -1944,12 +2007,12 @@ function cmdTasksList(argv) {
 }
 
 function cmdTasksView(argv) {
-  const spec = { "--full": { value: false, desc: "print the complete acceptance/evidence text" } };
+  const spec = { "--full": { value: false, desc: "print the complete acceptance/verify/evidence text" } };
   const { flags, positionals } = parseArgs(argv, spec, "tasks view");
   if (flags.help)
     helpBlock(
       "tasks view",
-      "Show one task: acceptance, deps, files, owner, claimed_at, evidence, receipt, and what blocks it",
+      "Show one task: acceptance, verify contract, deps, files, owner, claimed_at, evidence, receipt, and what blocks it",
       spec,
       ["brain tasks view task-coordination t1", "brain tasks view task-coordination t1 --full"],
       ["<slug> — feature slug", "<id> — task id from `brain tasks <slug>`"]
@@ -1992,6 +2055,14 @@ function cmdTasksView(argv) {
   lines.push(...acceptance.lines);
   truncatedAny = truncatedAny || acceptance.truncated;
 
+  if (task.verify) {
+    const verify = truncatedField("verify", task.verify, { full: !!flags.full });
+    lines.push(...verify.lines);
+    truncatedAny = truncatedAny || verify.truncated;
+  } else {
+    lines.push(kv("verify", "none", 2));
+  }
+
   if (task.evidence) {
     const evidence = truncatedField("evidence", task.evidence, { full: !!flags.full });
     lines.push(...evidence.lines);
@@ -2028,6 +2099,10 @@ function cmdTasksAdd(argv) {
   const spec = {
     "--title": { value: true, desc: "task title (required)" },
     "--acceptance": { value: true, desc: "what makes this task checkably done (required)" },
+    "--verify": {
+      value: true,
+      desc: "verification contract: how the separate verifier will check the acceptance (agreed before coding)",
+    },
     "--depends-on": { value: true, desc: "comma-separated task ids this depends on" },
     "--files": { value: true, desc: "comma-separated file paths this task touches" },
     "--id": { value: true, desc: "task id (default: auto-generated t1, t2, ... from the current max)" },
@@ -2041,6 +2116,7 @@ function cmdTasksAdd(argv) {
       [
         'brain tasks add task-coordination --title "The record" --acceptance "lib/state.js schema + CAS write, green"',
         'brain tasks add task-coordination --title "The gate" --acceptance "..." --depends-on t1 --files lib/state.js,bin/brain.js',
+        'brain tasks add task-coordination --title "The lock" --acceptance "no lost claim under 2 concurrent writers" --verify "run 2 parallel `brain tasks claim`, 5 trials: exactly one wins each"',
       ],
       ["<slug> — feature slug from `brain features`"]
     );
@@ -2051,6 +2127,12 @@ function cmdTasksAdd(argv) {
     usageError("--title is required", [`brain tasks add ${slug} --title "..." --acceptance "..."`]);
   if (!flags.acceptance || !flags.acceptance.trim())
     usageError("--acceptance is required", [`brain tasks add ${slug} --title "${flags.title}" --acceptance "..."`]);
+  // Optional, but a present-and-blank contract says nothing — refuse it rather
+  // than store a verification method nobody can follow.
+  if (flags.verify !== undefined && (typeof flags.verify !== "string" || !flags.verify.trim()))
+    usageError("--verify must be non-empty when given", [
+      `brain tasks add ${slug} --title "..." --acceptance "..." --verify "<how the verifier will check it>"`,
+    ]);
 
   const brain = findBrain(flags.brain);
   const { data, hash } = requireTasks(brain, slug);
@@ -2071,6 +2153,7 @@ function cmdTasksAdd(argv) {
   const files = splitCsv(flags.files);
 
   const newTask = { id, title: flags.title, status: "open", acceptance: flags.acceptance };
+  if (flags.verify) newTask.verify = flags.verify;
   if (dependsOn.length) newTask.depends_on = dependsOn;
   if (files.length) newTask.files = files;
 
@@ -2098,7 +2181,13 @@ function cmdTasksAdd(argv) {
     kv("title", flags.title, 2),
     kv("status", "open", 2),
     ...(dependsOn.length ? [kv("depends_on", dependsOn.join(" "), 2)] : []),
+    kv("verify", flags.verify ? "set" : "none", 2),
     ...toonList("help", [
+      ...(flags.verify
+        ? []
+        : [
+            `No verification contract recorded — pass --verify "<how the verifier will check it>" on \`brain tasks add\` so generator and verifier agree before coding`,
+          ]),
       `Run \`brain tasks view ${slug} ${id}\` to see it in full`,
       `Run \`brain tasks claim ${slug} ${id} --owner <name>\` to claim it`,
       `Run \`brain tasks add ${slug} --title "..." --acceptance "..."\` to add another`,
@@ -2462,12 +2551,12 @@ function ruleOwnership(brain) {
 }
 
 function cmdBrief(argv) {
-  const spec = { "--full": { value: false, desc: "print untruncated acceptance text and decision prompts" } };
+  const spec = { "--full": { value: false, desc: "print untruncated acceptance/verify text and decision prompts" } };
   const { flags, positionals } = parseArgs(argv, spec, "brief");
   if (flags.help)
     helpBlock(
       "brief",
-      "One composed payload for a cold worker: task + acceptance + approved plan decisions + owning rules docs + feature purpose",
+      "One composed payload for a cold worker: task + acceptance + verify contract + approved plan decisions + owning rules docs + feature purpose",
       spec,
       ["brain brief task-coordination t2", "brain brief task-coordination t2 --full"],
       ["<slug> — feature slug", "<id> — task id from `brain tasks <slug>`"]
@@ -2525,6 +2614,16 @@ function cmdBrief(argv) {
   const acceptance = truncatedField("acceptance", task.acceptance, { full: !!flags.full, indent: 2 });
   lines.push(...acceptance.lines);
   anyTruncated = anyTruncated || acceptance.truncated;
+
+  // The verification contract — how the separate verifier will check the
+  // acceptance. Read from the task, never invented; absent prints "none".
+  if (task.verify) {
+    const verify = truncatedField("verify", task.verify, { full: !!flags.full, indent: 2 });
+    lines.push(...verify.lines);
+    anyTruncated = anyTruncated || verify.truncated;
+  } else {
+    lines.push(kv("verify", "none", 2));
+  }
 
   // --- feature purpose + rules-derivation note (not per-task fields, so
   // these sit outside the `task:` block rather than nested under it) -------
@@ -4480,7 +4579,7 @@ function cmdShotsAdd(argv) {
 }
 
 // ---------------------------------------------------------------------------
-// Verifications — feature-verifier browser-walk verdict docs
+// Verifications — feature-verifier verdict docs (browser walk + command runs)
 // ---------------------------------------------------------------------------
 
 function cmdVerifications(argv) {
@@ -4493,7 +4592,7 @@ function cmdVerificationsList(argv) {
   if (flags.help)
     helpBlock(
       "verifications",
-      "List feature verification (browser-walk) verdict docs",
+      "List feature verification verdict docs (browser walk + command runs)",
       {},
       ["brain verifications", "brain verifications authentication", "brain verifications view authentication 2026-07-14"],
       ["[feature] — optional feature slug to filter by"]
@@ -4523,7 +4622,7 @@ function cmdVerificationsView(argv) {
       "Show one feature verification doc",
       spec,
       ["brain verifications view authentication 2026-07-14", "brain verifications view authentication 2026-07-14 --full"],
-      ["<feature> — feature slug", "<date> — YYYY-MM-DD"]
+      ["<feature> — feature slug", "<date> — the doc's filename stem: YYYY-MM-DD, or YYYY-MM-DD-rN for fix round N"]
     );
   const [feature, date] = positionals;
   if (!feature || !date)
@@ -5231,7 +5330,7 @@ Ten standing playbooks — each a full text standard printed by \`brain playbook
 - \`product\` — any plan for user-facing work — the product case before the technical one
 - \`ux\` — any plan that adds or changes a screen — wireframes, screen states, user flows
 - \`ai\` — any work involving prompts, models, or agents — evals, golden sets, regression gates, topology
-- \`verify\` — verifying a user-visible feature works — browser walk with screenshot evidence
+- \`verify\` — verifying a user-visible feature works — independent, skeptical browser walk of every acceptance criterion: golden + error paths, quality floors, screenshot evidence
 - \`execute\` — implementing an approved plan / working a feature to shipped
 - \`done\` — before declaring any task complete — full verify, harness invariants, coherence
 - \`write\` — writing anything into the brain — checkpoints, run notes, feature docs, verdicts, commit bodies
@@ -5275,13 +5374,16 @@ Run \`brain playbook\` for the live id/use_when index; \`brain playbook <id>\` f
 - \`brain features set-status <slug> --status <planned|in-progress|shipped|blocked|cut>\` — flip feature state (enforces one-in-progress policy; \`--status shipped\` requires \`--evidence\` **and passes the same preflight as \`brain ship\` — it refuses and writes nothing if any check would fail**. Transitions *out* of a state are never gated, so a broken record stays repairable)
 - \`brain check\` — deterministic harness invariants (feature-list **schema** validity — duplicate ids/slugs, unknown status, shipped-without-evidence all fail — one-in-progress per declared policy, doc paths, dependency refs, \`features/index.md\` agreeing with the tracker, plan/review file integrity, verification docs having a **readable** verdict with resolvable image links, \`tasks.json\` schema validity, no \`shipped\` feature with an open task, verify.json shape when present); exit 1 on any failure, CI-usable
 - \`brain features index [--write]\` — GENERATE the \`features/index.md\` status table from \`feature_list.json\` (bounded by \`<!-- brain:features-table -->\` markers so surrounding prose survives). Hand-maintaining that mirror is how a tracker and its human-facing index end up disagreeing
-- \`brain receipt <feature> [--date <d>] [--verified-by <who>] [--allow-dirty]\` — stamp a commit-bound provenance receipt into a verification doc, written BY THE TOOL: HEAD at stamp time plus the actual gate results for that feature from \`runs/gates.jsonl\`. Refuses on a dirty tree (a receipt naming HEAD while the tree differs describes code in no commit) and refuses to stamp a doc whose verdict is unreadable — a hand-written receipt is a claim about provenance, not provenance
-- \`brain check --strict\` — adds two: every \`shipped\` feature must have a verification doc whose verdict parses to PASS, **and** that doc must carry a \`brain:verification\` receipt naming a commit that is an ancestor of HEAD. Opt-in here so brains predating the invariants do not go red on upgrade; \`brain ship\` and \`set-status --status shipped\` **always** enforce both, since shipping is the moment the claim is made
+- \`brain receipt <feature> [--date <d>] [--verified-by <who>] [--implemented-by <who>] [--allow-dirty]\` — stamp a commit-bound provenance receipt into a verification doc, written BY THE TOOL: HEAD at stamp time plus the actual gate results for that feature from \`runs/gates.jsonl\`. Refuses on a dirty tree (a receipt naming HEAD while the tree differs describes code in no commit) and refuses to stamp a doc whose verdict is unreadable — a hand-written receipt is a claim about provenance, not provenance. Records \`implemented_by\` (default: git author of HEAD) next to \`verified_by\` (default: \`git config user.name\`, then \`$USER\`); records \`verified_by_source\` / \`implemented_by_source\` (\`flag\` when passed, \`default\` when taken from git identity) and adds "identities defaulted — pass --verified-by/--implemented-by" to the \`warning:\` key unless both flags are given; when the two are the same identity it still stamps but prints a \`warning:\` — **the evaluator must not be the generator** (self-grading is lenient), so have a separate agent run \`npx -y brain-axi playbook verify\` and stamp with its own \`--verified-by\`
+- \`brain check --strict\` — adds three: every \`shipped\` feature must have a verification doc whose verdict parses to PASS, **and** that doc must carry a \`brain:verification\` receipt naming a commit that is an ancestor of HEAD; plus a verifier-independence row that is \`warn\` (exit stays 0) when the latest receipt's \`implemented_by\` equals its \`verified_by\` — declaring \`- **Independence**: self-verified — <reason>\` in the doc marks it acknowledged, still \`warn\` (a bare \`self-verified\` with no reason is reported as "no reason given"); distinct names only \`pass\` when \`verified_by\` was passed explicitly — a \`verified_by_source: default\` receipt is \`warn\` ("identities not declared"; receipts predating the source fields are judged as before); only the feature's newest verification doc is judged (a \`<date>-rN.md\` round counts as newer): \`warn\` when it is not PASS, names no verifier, or is an unstamped PASS behind an older stamped one (an older receipt never stands in for it); receipts predating \`implemented_by\` are reported, never failed (full decision table: \`rules/state.md\`). Opt-in here so brains predating the invariants do not go red on upgrade; \`brain ship\` and \`set-status --status shipped\` **always** enforce the first two, since shipping is the moment the claim is made
 - **Verification receipts** — a verdict with no commit is unfalsifiable (the doc is mutable and date-named, so "it passed" could describe any tree that ever existed). Put this block in every verification doc; it renders as nothing:
   \`\`\`
   <!-- brain:verification
   commit: <short sha, e.g. \`git rev-parse --short HEAD\`>
   verified_by: feature-verifier
+  implemented_by: builder-agent
+  verified_by_source: flag
+  implemented_by_source: flag
   commands: bun run test (exit 0); bun run typecheck (exit 0)
   -->
   \`\`\`
@@ -5327,8 +5429,8 @@ this layout with the legacy flat one, so older brains keep working:
 .brain/features/feature_list.json          tracker (doc paths point at features/<slug>/<slug>.md)
 .brain/features/<slug>/
   <slug>.md                                feature doc
-  screenshots/NN-<step>.png                golden path (01-, 02-, ...); error paths E1-, E2-, ...
-  verifications/<YYYY-MM-DD>.md            browser-walk verdict docs (PASS/FAIL/BLOCKED evidence)
+  screenshots/NN-<step>.png                golden path (01-, 02-, ...); error paths E1-, E2-, ...; A<N>- acceptance, X<N>- edge probes; round N >= 2 prefixes rN-
+  verifications/<YYYY-MM-DD>[-rN].md       verdict docs (browser walk + command runs), one per round (PASS/FAIL/BLOCKED)
   runs/<YYYY-MM-DD>-<task>.md              per-feature run notes
   plans/<plan-slug>/                       review plans scoped to this feature
 .brain/runs/progress.md                    stays global — rolling session cursor
@@ -5358,16 +5460,29 @@ this layout with the legacy flat one, so older brains keep working:
 
 ## Verifications — proof a feature actually works
 
-- \`npx -y brain-axi playbook verify\` — the verification-doc standard: browser
-  walk (golden path + one error path), screenshot naming, the jsErrors/
-  networkErrors console policy, and how to persist the evidence.
+- \`npx -y brain-axi playbook verify\` — the verification-doc standard: an
+  INDEPENDENT verifier (fresh context, did not write the code; declared in an
+  \`- **Independence**:\` header line) walks EVERY acceptance criterion (plan
+  of record + task acceptance) in an \`## Acceptance criteria\` table, plus a
+  golden path, at least one error path, and edge probes; \`## Quality scores\`
+  with hard floors (product-depth 2, functionality 2, design 2 UI-only,
+  code-quality 1 — a stub or display-only control is a FAIL). Evidence: a
+  screenshot for what a browser can reach; for a CLI-only / non-browser
+  criterion, the named command run, with command + exit code + output.
+  Also screenshot naming (round N >= 2 prefixes \`rN-\`), the
+  jsErrors/networkErrors console policy, and how to persist the evidence.
+  On FAIL a fresh verifier re-walks in a new doc,
+  \`<date>-rN.md\` for round N >= 2 (\`- **Round**: N\`, one Verdict per
+  doc, cap 3, then escalate — \`playbook execute\` step 4b).
 - \`brain verifications [<feature>]\` — list verdict docs (feature, date, verdict).
 - \`brain verifications view <feature> <date>\` — read one in full.
 
-After implementing and testing a user-visible feature, produce a verification
-doc at \`.brain/features/<slug>/verifications/<date>.md\` following
-\`brain playbook verify\` — this is how "it works" becomes checkable evidence
-instead of a claim.
+After implementing a user-visible feature, hand it to a fresh-context verifier
+(a sub-agent or new session — never the implementer) that writes the
+verification doc at \`.brain/features/<slug>/verifications/<date>.md\`
+(fix round N >= 2: \`<date>-rN.md\`) following \`brain playbook verify\` — this is how "it works" becomes checkable
+evidence instead of a claim. Solo self-verification only when no second agent
+is possible, declared as \`- **Independence**: self-verified — <reason>\`.
 
 ## Tasks — coordination BELOW a feature (\`brain tasks\`)
 
@@ -5383,16 +5498,20 @@ retry, never a corrupted file.
   that already includes how many are unblocked (open, every \`depends_on\`
   done) — no second call needed. A claimed row shows how long it has been
   held (\`held 41m\`) right there, so a stale claim is visible without \`view\`.
-- \`brain tasks view <slug> <id>\` — full detail: acceptance, \`depends_on\`,
-  files, owner, \`claimed_at\`, evidence, receipt, and what it is **blocked
-  by** right now (computed from the other tasks' current status, not just
-  the declared list).
-- \`brain tasks add <slug> --title "..." --acceptance "..." [--depends-on
-  t1,t2] [--files a,b] [--id <id>]\` — creates \`tasks.json\` on the first
-  task; \`--id\` auto-generates (\`t1\`, \`t2\`, ...) from the current max when
-  omitted. \`--title\`/\`--acceptance\` are required — a task with no checkable
-  acceptance is the same premature-"done" shape the feature-level evidence
-  rule exists to prevent, one level further down.
+- \`brain tasks view <slug> <id>\` — full detail: acceptance, \`verify\`,
+  \`depends_on\`, files, owner, \`claimed_at\`, evidence, receipt, and what it
+  is **blocked by** right now (computed from the other tasks' current status,
+  not just the declared list).
+- \`brain tasks add <slug> --title "..." --acceptance "..." [--verify "..."]
+  [--depends-on t1,t2] [--files a,b] [--id <id>]\` — creates \`tasks.json\` on
+  the first task; \`--id\` auto-generates (\`t1\`, \`t2\`, ...) from the current
+  max when omitted. \`--title\`/\`--acceptance\` are required — a task with no
+  checkable acceptance is the same premature-"done" shape the feature-level
+  evidence rule exists to prevent, one level further down. \`--verify\` is the
+  **verification contract** (optional flag, but every task should carry one —
+  omitting it prints a \`help:\` nudge): how the separate verifier will check
+  the acceptance, agreed by generator and verifier BEFORE coding (stored as the
+  task's \`verify\` field; shown by \`tasks view\` and \`brief\`).
 - \`brain tasks claim <slug> <id> --owner <name>\` — refuses (exit 1, naming
   the current owner) if held by someone else; refuses (naming the unmet
   dependency) if any \`depends_on\` is not \`done\`; re-claiming your OWN
@@ -5413,7 +5532,7 @@ retry, never a corrupted file.
   wrong for some task, so release is always an explicit act.
 - \`brain brief <slug> <task-id> [--full]\` — the handoff: one payload a COLD
   worker can act on without reading the plan artifact or being told anything
-  else. Composes the task (acceptance, \`depends_on\` with their current
+  else. Composes the task (acceptance, its \`verify\` contract or \`none\`, \`depends_on\` with their current
   statuses, declared \`files\`), the **approved** decision prompts read verbatim
   from that feature's bound plan(s) (\`plans/<slug>/reviews.jsonl\` — the round
   that concluded review, filtered to \`tag: decision\`; names which plan they
@@ -5574,7 +5693,7 @@ Rules:
 - A poll's DOM snapshot is a compact outline, not the raw page — it prints as \`snapshot_chars: N\` by default; pass \`--snapshot\` to see the full outline block only when you actually need it.
 - \`npx -y brain-axi review end <plan.html>\` — end the session yourself once the plan is fully approved
 - \`npx -y brain-axi shots add <img> --feature <slug> --step <NN-name>\` — attach a screenshot to a feature (\`--scope <plan-or-feature>\` is the legacy form)
-- \`npx -y brain-axi plans\` / \`plans view <slug>\` — see past plan artifacts and their review rounds. Each round prints a \`snapshot:\` path (\`plans/<slug>/vN.html\`) — the FROZEN copy of the artifact as it stood at that round. A snapshot is written for every round, so the newest one is NOT automatically the approved one: the approved snapshot is the one for the round that ended the review (\`ended by\` in the round header). \`plans view\` names it for you in its \`help:\` line, and says so explicitly when no round has ended yet. When verifying a feature whose plan carried wireframes, compare the shipped UI against that approved snapshot, never against the live artifact path (the agent has been editing it); record each difference in the verification doc's mockup-reconciliation table per \`playbook verify\` 5b.
+- \`npx -y brain-axi plans\` / \`plans view <slug>\` — see past plan artifacts and their review rounds. Each round prints a \`snapshot:\` path (\`plans/<slug>/vN.html\`) — the FROZEN copy of the artifact as it stood at that round. A snapshot is written for every round, so the newest one is NOT automatically the approved one: the approved snapshot — the FROZEN copy the human approved — is the one for the round that ended the review (\`ended by\` in the round header). \`plans view\` names it for you in its \`help:\` line, and says so explicitly when no round has ended yet. When verifying a feature whose plan carried wireframes, compare the shipped UI against that approved snapshot, never against the live artifact path (the agent has been editing it); record each difference in the verification doc's mockup-reconciliation table per \`playbook verify\` 5b.
 - \`npx -y brain-axi timeline\` — merged history across checkpoints, run notes, plan reviews, and verifications
 
 ## Install & session hooks (run once per repo)

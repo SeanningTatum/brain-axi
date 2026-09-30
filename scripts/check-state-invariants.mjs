@@ -26,6 +26,8 @@ import {
   parseVerdict,
   parseVerdictDetail,
   parseReceipt,
+  parseIndependence,
+  sameIdentity,
   writeFileAtomic,
   STATUSES,
   SUMMARY_MAX_CHARS,
@@ -36,7 +38,7 @@ import {
   readTasks,
   writeTasksCas,
 } from "../lib/state.js";
-import { brainCheck } from "../lib/review/brain-data.js";
+import { brainCheck, healthChecks, listVerifications } from "../lib/review/brain-data.js";
 
 const failures = [];
 let assertions = 0;
@@ -764,6 +766,375 @@ const SCHEMA_CHECK = "feature_list.json is valid";
   ok("receipt verified_by parsed", r.verified_by === "x", r.verified_by);
   ok("receipt commands parsed", r.commands === "a; b", r.commands);
   ok("absent receipt is not an error", parseReceipt("nothing here").present === false);
+
+  // Verifier independence — the evaluator must not be the generator. Never a
+  // fail (solo work is real; legacy receipts predate the field), so every case
+  // below must also leave the run's fail set empty.
+  const IND_ROW = "every shipped feature was verified independently";
+  const indOf = (brain) => brainCheck(brain, { strict: true }).find((row) => row.check === IND_ROW);
+  const failsOf = (brain) => brainCheck(brain, { strict: true }).filter((row) => row.status === "fail");
+
+  ok("receipt implemented_by parsed",
+    parseReceipt("<!-- brain:verification\ncommit: abc1234\nverified_by: v\nimplemented_by: builder\n-->")
+      .implemented_by === "builder");
+  ok("legacy receipt parses with implemented_by null", r.present && r.implemented_by === null, String(r.implemented_by));
+  ok("legacy receipt parses with both identity sources null",
+    r.verified_by_source === null && r.implemented_by_source === null,
+    `${r.verified_by_source}/${r.implemented_by_source}`);
+  const srcR = parseReceipt(
+    "<!-- brain:verification\ncommit: abc1234\nverified_by: v\nimplemented_by: b\nverified_by_source: flag\nimplemented_by_source: Default\n-->"
+  );
+  ok("receipt identity sources parsed (lowercased)",
+    srcR.verified_by_source === "flag" && srcR.implemented_by_source === "default",
+    `${srcR.verified_by_source}/${srcR.implemented_by_source}`);
+  ok("sameIdentity is case-insensitive and trimmed", sameIdentity(" Sean ", "sean"));
+  ok("sameIdentity: two blanks are NOT the same identity", !sameIdentity("", null));
+  ok("sameIdentity: different names differ", !sameIdentity("builder", "verifier"));
+
+  // Legacy (no implemented_by) — judged nothing, so skip, never fail.
+  const legacyRow = indOf(good);
+  ok("legacy receipt (no implemented_by) does not fail independence",
+    legacyRow && legacyRow.status !== "fail" && legacyRow.status !== "warn", legacyRow && `${legacyRow.status}: ${legacyRow.detail}`);
+  ok("...and names it as predating implemented_by", /predate implemented_by: alpha/.test(legacyRow?.detail || ""), legacyRow?.detail);
+
+  const indep = receiptBrain(
+    "independent",
+    `<!-- brain:verification\ncommit: ${realSha}\nverified_by: verifier-agent\nimplemented_by: builder-agent\n-->`
+  );
+  ok("distinct implemented_by/verified_by passes independence", indOf(indep)?.status === "pass", indOf(indep)?.detail);
+
+  // A receipt with implemented_by but no verified_by names no verifier — a
+  // blank must not read as "different from the implementer" and pass.
+  const unnamedVerifier = receiptBrain(
+    "unnamed-verifier",
+    `<!-- brain:verification\ncommit: ${realSha}\nimplemented_by: builder-agent\n-->`
+  );
+  ok("implemented_by without verified_by WARNs, not passes", indOf(unnamedVerifier)?.status === "warn", indOf(unnamedVerifier)?.detail);
+  ok("...and says the receipt names no verifier", /names no verifier: alpha/.test(indOf(unnamedVerifier)?.detail || ""), indOf(unnamedVerifier)?.detail);
+
+  const selfSilent = receiptBrain(
+    "self-silent",
+    `<!-- brain:verification\ncommit: ${realSha}\nverified_by: Sean\nimplemented_by: sean\n-->`
+  );
+  ok("equal identities (case-insensitive) WARN", indOf(selfSilent)?.status === "warn", indOf(selfSilent)?.detail);
+  ok("...flagged as unacknowledged", /unacknowledged: alpha/.test(indOf(selfSilent)?.detail || ""), indOf(selfSilent)?.detail);
+  // (these fixtures have no features/index.md, so that row fails independently —
+  // the claim here is only that the independence row adds no failure)
+  ok("...and a warn is not a failure",
+    failsOf(selfSilent).length === failsOf(indep).length, failsOf(selfSilent).map((f) => f.check).join(", "));
+
+  const selfAck = receiptBrain(
+    "self-ack",
+    `- **Independence**: self-verified — solo maintainer, no second agent\n\n<!-- brain:verification\ncommit: ${realSha}\nverified_by: sean\nimplemented_by: sean\n-->`
+  );
+  ok("declared self-verification is acknowledged (still warn)", indOf(selfAck)?.status === "warn", indOf(selfAck)?.detail);
+  ok("...and carries the reason", /acknowledged: alpha \(sean: self-verified — solo maintainer/.test(indOf(selfAck)?.detail || ""), indOf(selfAck)?.detail);
+
+  // A declaration outranks the receipt names: distinct defaults (bot-authored
+  // HEAD vs git user.name) must not turn a declared self-verify into a pass.
+  const selfAckDistinct = receiptBrain(
+    "self-ack-distinct",
+    `- **Independence**: self-verified — HEAD authored by a bot\n\n<!-- brain:verification\ncommit: ${realSha}\nverified_by: sean\nimplemented_by: dependabot\n-->`
+  );
+  ok("declared self-verification with distinct receipt names still WARNs",
+    indOf(selfAckDistinct)?.status === "warn" && /acknowledged: alpha/.test(indOf(selfAckDistinct)?.detail || ""),
+    indOf(selfAckDistinct)?.detail);
+
+  // A fenced example of the declaration is documentation, not a declaration.
+  const fencedAck = receiptBrain(
+    "self-fenced",
+    "```\n- **Independence**: self-verified — example\n```\n\n" +
+      `<!-- brain:verification\ncommit: ${realSha}\nverified_by: sean\nimplemented_by: sean\n-->`
+  );
+  ok("a fenced Independence example does not count as acknowledgement",
+    /unacknowledged: alpha/.test(indOf(fencedAck)?.detail || ""), indOf(fencedAck)?.detail);
+  ok("parseIndependence reads the declaration",
+    parseIndependence("- **Independence**: self-verified — why").self === true);
+  ok("parseIndependence: absent is not declared", parseIndependence("# nothing").declared === false);
+
+  // The NEWEST verification decides: an older independent PASS must not hide
+  // a newer FAIL, and a same-day `-rN` round supersedes the base doc.
+  const indepReceipt = `<!-- brain:verification\ncommit: ${realSha}\nverified_by: verifier-agent\nimplemented_by: builder-agent\n-->`;
+  const verDocs = (name, docs) => {
+    const brain = receiptBrain(name, "");
+    const dir = path.join(brain, "features", "alpha", "verifications");
+    for (const f of fs.readdirSync(dir)) fs.unlinkSync(path.join(dir, f));
+    for (const [file, body] of Object.entries(docs)) fs.writeFileSync(path.join(dir, file), body);
+    return brain;
+  };
+  const newerFail = verDocs("newer-fail", {
+    "2026-01-01.md": `# V\n\n**Verdict**: ✅ PASS\n\n${indepReceipt}\n`,
+    "2026-01-02.md": "# V\n\n**Verdict**: ❌ FAIL\n",
+  });
+  ok("older independent PASS + newer FAIL WARNs independence", indOf(newerFail)?.status === "warn", indOf(newerFail)?.detail);
+  ok("...naming the non-PASS latest doc",
+    /latest verification not PASS: alpha \(2026-01-02: FAIL\)/.test(indOf(newerFail)?.detail || ""), indOf(newerFail)?.detail);
+  ok("...and the row adds no failure", failsOf(newerFail).length === failsOf(indep).length,
+    failsOf(newerFail).map((f) => f.check).join(", "));
+  const roundPass = verDocs("round-pass", {
+    "2026-01-01.md": "# V\n\n**Verdict**: ❌ FAIL\n",
+    "2026-01-01-r2.md": `# V\n\n**Verdict**: ✅ PASS\n\n${indepReceipt}\n`,
+  });
+  ok("FAIL then independent PASS round (-r2) passes independence", indOf(roundPass)?.status === "pass", indOf(roundPass)?.detail);
+  ok("...and adds no failure", failsOf(roundPass).length === failsOf(indep).length,
+    failsOf(roundPass).map((f) => f.check).join(", "));
+
+  // ---- Independence decision table, row for row (lib/review/brain-data.js
+  // independenceRow header; .brain/rules/state.md). Each row below is judged
+  // on the NEWEST doc only. Every case also asserts the row never fails.
+  const PASS_H = "# V\n\n**Verdict**: ✅ PASS\n\n";
+  const FAIL_H = "# V\n\n**Verdict**: ❌ FAIL\n\n";
+  const rcpt = (fields) =>
+    `<!-- brain:verification\ncommit: ${realSha}\n${Object.entries(fields).map(([k, v]) => `${k}: ${v}`).join("\n")}\n-->`;
+  const R_INDEP = rcpt({ verified_by: "verifier-agent", implemented_by: "builder-agent" });
+  const R_SELF = rcpt({ verified_by: "sean", implemented_by: "Sean" });
+  const R_LEGACY = rcpt({ verified_by: "fixture" });
+  const R_UNNAMED = rcpt({ implemented_by: "builder-agent" });
+  const DECL_SELF = "- **Independence**: self-verified — solo maintainer\n\n";
+  const DECL_INDEP = "- **Independence**: independent — verifier-agent\n\n";
+  const noIndFail = (label, brain) =>
+    ok(`${label} — the independence row is never a fail`, indOf(brain)?.status !== "fail", indOf(brain)?.detail);
+  const expectRow = (label, brain, status, re) => {
+    const row = indOf(brain);
+    ok(`table: ${label} → ${status}`, row?.status === status, row && `${row.status}: ${row.detail}`);
+    if (re) ok(`table: ${label} → detail ${re}`, re.test(row?.detail || ""), row?.detail);
+    noIndFail(`table: ${label}`, brain);
+  };
+
+  // Row 1 — no verification doc at all: not judged (the PASS row reports it).
+  const t1 = verDocs("tbl-1-nodocs", {});
+  expectRow("1 no docs", t1, "skip", /no receipt to judge/);
+  ok("table: 1 no docs → the PASS row fails instead",
+    brainCheck(t1, { strict: true }).find((r) => r.check === "every shipped feature has a PASS verification")?.status === "fail");
+
+  // Row 2 — newest not PASS (FAIL, or an unreadable verdict), whatever the older docs say.
+  expectRow("2 newest FAIL over independent PASS", verDocs("tbl-2-fail", {
+    "2026-01-01.md": PASS_H + R_INDEP, "2026-01-02.md": FAIL_H + R_INDEP,
+  }), "warn", /latest verification not PASS: alpha \(2026-01-02: FAIL\)/);
+  expectRow("2 newest unknown verdict", verDocs("tbl-2-unknown", {
+    "2026-01-01.md": PASS_H + R_INDEP, "2026-01-02.md": "# V\n\nno verdict here\n",
+  }), "warn", /latest verification not PASS: alpha \(2026-01-02: unknown\)/);
+  expectRow("2 -r2 FAIL round supersedes base PASS", verDocs("tbl-2-round", {
+    "2026-01-01.md": PASS_H + R_INDEP, "2026-01-01-r2.md": FAIL_H,
+  }), "warn", /latest verification not PASS: alpha \(2026-01-01-r2: FAIL\)/);
+
+  // Row 3 — declared self-verified on the newest PASS: acknowledged, with or without a receipt.
+  expectRow("3 declared self, receipt names differ", verDocs("tbl-3-distinct", {
+    "2026-01-01.md": PASS_H + DECL_SELF + R_INDEP,
+  }), "warn", /self-verified, acknowledged: alpha \(verifier-agent: self-verified — solo maintainer\)/);
+  expectRow("3 declared self, no receipt", verDocs("tbl-3-noreceipt", {
+    "2026-01-01.md": PASS_H + DECL_SELF,
+  }), "warn", /self-verified, acknowledged: alpha \(unknown: self-verified/);
+  expectRow("3 declared self, legacy receipt", verDocs("tbl-3-legacy", {
+    "2026-01-01.md": PASS_H + DECL_SELF + R_LEGACY,
+  }), "warn", /acknowledged: alpha/);
+  // Row 3b — a bare "self-verified" with no reason is not an acknowledgement.
+  expectRow("3b bare self-verified, no reason", verDocs("tbl-3b-bare", {
+    "2026-01-01.md": PASS_H + "- **Independence**: self-verified\n\n" + R_SELF,
+  }), "warn", /self-verified, no reason given: alpha \(2026-01-01\)/);
+  expectRow("3b separator only is still no reason", verDocs("tbl-3b-dash", {
+    "2026-01-01.md": PASS_H + "- **Independence**: self-verified —  \n\n" + R_SELF,
+  }), "warn", /no reason given: alpha/);
+  ok("3b: a bare self-verified never reads as acknowledged",
+    !/self-verified, acknowledged/.test(indOf(verDocs("tbl-3b-bare2", {
+      "2026-01-01.md": PASS_H + "- **Independence**: self-verified\n\n" + R_SELF,
+    }))?.detail || ""));
+  ok("parseIndependence extracts the reason",
+    parseIndependence("- **Independence**: self-verified — solo maintainer").reason === "solo maintainer");
+  ok("parseIndependence: bare self-verified has an empty reason",
+    parseIndependence("- **Independence**: self-verified").reason === "");
+  // The declaration on an OLDER doc does not carry over to the newest one.
+  expectRow("3 declaration on an older doc only", verDocs("tbl-3-older", {
+    "2026-01-01.md": PASS_H + DECL_SELF + R_SELF, "2026-01-02.md": PASS_H + R_INDEP,
+  }), "pass", /1 verified independently/);
+
+  // Row 4 — newest PASS unstamped behind an older STAMPED PASS: warn. This is
+  // the round-5 bug: before 64c7702 the older stamped receipt stood in for the
+  // newest round and the row passed (the newer self-verified round hid).
+  const t4 = verDocs("tbl-4-unstamped", {
+    "2026-01-01.md": PASS_H + R_INDEP, "2026-01-02.md": PASS_H,
+  });
+  expectRow("4 newest PASS unstamped behind stamped PASS", t4, "warn", /latest PASS has no receipt: alpha \(2026-01-02\)/);
+  ok("table: 4 → the bound row still passes (an older receipt binds), so only this row reports it",
+    brainCheck(t4, { strict: true }).find((r) => r.check === RECEIPT_ROW)?.status === "pass");
+  ok("table: 4 → not reported as independent", !/verified independently/.test(indOf(t4)?.detail || ""), indOf(t4)?.detail);
+  expectRow("4 via -rN: unstamped r2 behind stamped base", verDocs("tbl-4-round", {
+    "2026-01-01.md": PASS_H + R_INDEP, "2026-01-01-r2.md": PASS_H,
+  }), "warn", /latest PASS has no receipt: alpha \(2026-01-01-r2\)/);
+  // An Independence "independent" line is prose: it does not stand in for the receipt.
+  expectRow("4 declared independent but unstamped", verDocs("tbl-4-declindep", {
+    "2026-01-01.md": PASS_H + R_INDEP, "2026-01-02.md": PASS_H + DECL_INDEP,
+  }), "warn", /latest PASS has no receipt/);
+
+  // Row 5 — newest PASS unstamped and NO stamped PASS anywhere: not judged here;
+  // the "bound to a commit" row fails, so the state is still reported once.
+  const t5 = verDocs("tbl-5-nowhere", {
+    "2026-01-01.md": FAIL_H + R_INDEP, "2026-01-02.md": PASS_H,
+  });
+  expectRow("5 no stamped PASS anywhere", t5, "skip", /no receipt to judge/);
+  ok("table: 5 → the bound row fails instead",
+    brainCheck(t5, { strict: true }).find((r) => r.check === RECEIPT_ROW)?.status === "fail");
+
+  // Row 6 — legacy receipt (no implemented_by): not judged, named, skip when alone.
+  expectRow("6 legacy receipt", verDocs("tbl-6-legacy", { "2026-01-01.md": PASS_H + R_LEGACY }),
+    "skip", /1 receipt\(s\) predate implemented_by: alpha/);
+  // A legacy newest round does NOT inherit an older independent receipt's pass.
+  expectRow("6 legacy newest over independent older", verDocs("tbl-6-over", {
+    "2026-01-01.md": PASS_H + R_INDEP, "2026-01-02.md": PASS_H + R_LEGACY,
+  }), "skip", /predate implemented_by: alpha/);
+
+  // Row 7 — implemented_by with a blank verified_by.
+  expectRow("7 unnamed verifier", verDocs("tbl-7-unnamed", { "2026-01-01.md": PASS_H + R_UNNAMED }),
+    "warn", /receipt names no verifier: alpha/);
+  expectRow("7 whitespace verified_by", verDocs("tbl-7-blank", {
+    "2026-01-01.md": PASS_H + rcpt({ verified_by: "   ", implemented_by: "builder-agent" }),
+  }), "warn", /names no verifier: alpha/);
+
+  // Row 8 — distinct names, but verified_by was a DEFAULT (git identity): a
+  // bot-authored HEAD makes the defaults differ with no second agent → warn.
+  const srcRcpt = (vs, is) => rcpt({ verified_by: "sean", implemented_by: "dependabot", verified_by_source: vs, implemented_by_source: is });
+  expectRow("8 distinct names, both defaulted", verDocs("tbl-8-defaults", { "2026-01-01.md": PASS_H + srcRcpt("default", "default") }),
+    "warn", /identities not declared: alpha \(2026-01-01\) — .*--verified-by <verifier>/);
+  ok("table: 8 → not reported as independent",
+    !/verified independently/.test(indOf(verDocs("tbl-8-defaults2", { "2026-01-01.md": PASS_H + srcRcpt("default", "default") }))?.detail || ""));
+  expectRow("8 distinct names, verifier defaulted, implementer explicit", verDocs("tbl-8-mixed-v", {
+    "2026-01-01.md": PASS_H + srcRcpt("default", "flag"),
+  }), "warn", /identities not declared: alpha/);
+  expectRow("8 unrecognised verified_by_source is not a declaration", verDocs("tbl-8-garbage", {
+    "2026-01-01.md": PASS_H + srcRcpt("yes", "flag"),
+  }), "warn", /identities not declared: alpha/);
+  // Row 9 via explicit sources: both flags → pass; explicit verifier + default implementer → pass.
+  expectRow("9 distinct names, both explicit", verDocs("tbl-9-flags", { "2026-01-01.md": PASS_H + srcRcpt("flag", "flag") }),
+    "pass", /1 verified independently/);
+  expectRow("9 distinct names, verifier explicit, implementer defaulted", verDocs("tbl-9-mixed-i", {
+    "2026-01-01.md": PASS_H + srcRcpt("flag", "default"),
+  }), "pass", /1 verified independently/);
+  // Row 10 still wins over row 8 for equal names: defaults that agree are self-verified.
+  expectRow("10 equal names, both defaulted", verDocs("tbl-10-defaults", {
+    "2026-01-01.md": PASS_H + rcpt({ verified_by: "sean", implemented_by: "Sean", verified_by_source: "default", implemented_by_source: "default" }),
+  }), "warn", /self-verified, unacknowledged: alpha \(sean\)/);
+
+  // Row 9 — distinct names on the newest PASS; an older self round does not taint it.
+  // R_INDEP has no source fields (legacy, pre-2026-09-30): judged as before — pass.
+  expectRow("9 distinct identities (legacy, no source fields)", verDocs("tbl-8-indep", { "2026-01-01.md": PASS_H + R_INDEP }),
+    "pass", /1 verified independently/);
+  expectRow("9 independent r2 over self-verified base", verDocs("tbl-8-round", {
+    "2026-01-01.md": PASS_H + R_SELF, "2026-01-01-r2.md": PASS_H + R_INDEP,
+  }), "pass", /1 verified independently/);
+
+  // Row 10 — equal names, no self declaration (an "independent" line does not help).
+  expectRow("10 equal identities, silent", verDocs("tbl-9-silent", { "2026-01-01.md": PASS_H + R_SELF }),
+    "warn", /self-verified, unacknowledged: alpha \(sean\)/);
+  expectRow("10 equal identities, declared independent", verDocs("tbl-9-declindep", {
+    "2026-01-01.md": PASS_H + DECL_INDEP + R_SELF,
+  }), "warn", /unacknowledged: alpha/);
+  expectRow("10 self r2 over independent base", verDocs("tbl-9-round", {
+    "2026-01-01.md": PASS_H + R_INDEP, "2026-01-01-r2.md": PASS_H + R_SELF,
+  }), "warn", /unacknowledged: alpha/);
+
+  // -rN ordering is numeric: r10 is newer than r2 (string order would invert it).
+  const t10 = verDocs("tbl-r10", {
+    "2026-01-01.md": FAIL_H, "2026-01-01-r2.md": PASS_H + R_SELF, "2026-01-01-r10.md": PASS_H + R_INDEP,
+  });
+  ok("table: -rN ordering is numeric (r10 > r2 > base)",
+    listVerifications(t10, "alpha").map((d) => d.date).join(",") === "2026-01-01-r10,2026-01-01-r2,2026-01-01",
+    listVerifications(t10, "alpha").map((d) => d.date).join(","));
+  expectRow("-r10 independent is the newest round", t10, "pass", /1 verified independently/);
+  ok("table: a later day outranks any same-day round",
+    listVerifications(verDocs("tbl-day", { "2026-01-01-r3.md": PASS_H, "2026-01-02.md": PASS_H }), "alpha")[0]?.date === "2026-01-02");
+
+  // Aggregation across features: any warn bucket → warn; else any independent → pass; else skip.
+  const multi = (name, perFeature) => {
+    const brain = path.join(repo, name, ".brain");
+    fs.mkdirSync(path.join(brain, "runs"), { recursive: true });
+    fs.writeFileSync(path.join(brain, "runs", "progress.md"), "# Progress\n\n---\n");
+    const slugs = Object.keys(perFeature);
+    fs.mkdirSync(path.join(brain, "features"), { recursive: true });
+    fs.writeFileSync(path.join(brain, "features", "feature_list.json"), JSON.stringify({
+      features: slugs.map((s) => featureFor(s, { status: "shipped", evidence: "proof" })),
+    }, null, 2) + "\n");
+    for (const s of slugs) {
+      const dir = path.join(brain, "features", s, "verifications");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(brain, "features", s, `${s}.md`), `# ${s}\n`);
+      for (const [file, body] of Object.entries(perFeature[s])) fs.writeFileSync(path.join(dir, file), body);
+    }
+    return brain;
+  };
+  const one = (body) => ({ "2026-01-01.md": body });
+  expectRow("mix: independent + legacy", multi("tbl-mix-pass", {
+    alpha: one(PASS_H + R_INDEP), beta: one(PASS_H + R_LEGACY),
+  }), "pass", /1 verified independently; 1 receipt\(s\) predate implemented_by: beta/);
+  expectRow("mix: legacy + legacy", multi("tbl-mix-skip", {
+    alpha: one(PASS_H + R_LEGACY), beta: one(PASS_H + R_LEGACY),
+  }), "skip", /2 receipt\(s\) predate implemented_by: alpha, beta/);
+  const mixAll = multi("tbl-mix-all", {
+    a1: one(PASS_H + R_INDEP),
+    a2: { "2026-01-01.md": PASS_H + R_INDEP, "2026-01-02.md": FAIL_H },
+    a3: { "2026-01-01.md": PASS_H + R_INDEP, "2026-01-02.md": PASS_H },
+    a4: one(PASS_H + R_SELF),
+    a5: one(PASS_H + R_UNNAMED),
+    a6: one(PASS_H + DECL_SELF + R_SELF),
+    a7: one(PASS_H + R_LEGACY),
+    a8: one(PASS_H + rcpt({ verified_by: "sean", implemented_by: "dependabot", verified_by_source: "default", implemented_by_source: "default" })),
+  });
+  expectRow("mix: one of every bucket", mixAll, "warn");
+  for (const [bucket, re] of [
+    ["stale", /latest verification not PASS: a2 \(2026-01-02: FAIL\)/],
+    ["unstamped", /latest PASS has no receipt: a3 \(2026-01-02\)/],
+    ["silent", /unacknowledged: a4 \(sean\)/],
+    ["unnamed", /names no verifier: a5/],
+    ["acknowledged", /acknowledged: a6 \(sean: self-verified/],
+    ["independent", /1 verified independently/],
+    ["legacy", /1 receipt\(s\) predate implemented_by: a7/],
+    ["undeclared", /identities not declared: a8 \(2026-01-01\)/],
+  ])
+    ok(`table: mix names the ${bucket} bucket`, re.test(indOf(mixAll)?.detail || ""), indOf(mixAll)?.detail);
+  // Non-strict brainCheck emits no warn row and no independence row: those are
+  // strict-only, which is why the browser health strips now go through
+  // healthChecks() (strict, strict-only rows tagged advisory) — Greptile round 6/7.
+  const nonStrict = brainCheck(mixAll);
+  ok("non-strict brainCheck emits no warn row (warns are strict-only)",
+    !nonStrict.some((row) => row.status === "warn"), nonStrict.filter((row) => row.status === "warn").map((row) => row.check).join(", "));
+  ok("non-strict brainCheck omits the independence row", !nonStrict.some((row) => row.check === IND_ROW));
+
+  // ---- healthChecks(): the payload behind both health strips (/session/<key>/health
+  // and /watch/context). Contract: strict rows reach the strip, but a strict-only
+  // row is ALWAYS advisory, so enabling strict never turns a green strip red; a
+  // non-strict row passes through untouched (a real fail stays red).
+  const HEALTH_KEYS = new Set(["check", "status", "detail", "advisory"]);
+  const healthContract = (label, brain) => {
+    const base = brainCheck(brain);
+    const health = healthChecks(brain);
+    const baseNames = new Set(base.map((r) => r.check));
+    ok(`health ${label}: every row is {check,status,detail[,advisory]}`,
+      health.every((r) => Object.keys(r).every((k) => HEALTH_KEYS.has(k)) && typeof r.check === "string"),
+      JSON.stringify(health.find((r) => !Object.keys(r).every((k) => HEALTH_KEYS.has(k)))));
+    ok(`health ${label}: every non-strict row passes through, same status, not advisory`,
+      base.every((b) => health.some((h) => h.check === b.check && h.status === b.status && !h.advisory)));
+    ok(`health ${label}: every strict-only row is advisory`,
+      health.filter((h) => !baseNames.has(h.check)).every((h) => h.advisory === true));
+    const redHealth = health.filter((h) => h.status === "fail" && !h.advisory).map((h) => h.check).sort();
+    const redBase = base.filter((b) => b.status === "fail").map((b) => b.check).sort();
+    ok(`health ${label}: red rows == non-strict fails (strict never adds red)`,
+      JSON.stringify(redHealth) === JSON.stringify(redBase), `${redHealth} vs ${redBase}`);
+    return health;
+  };
+  const mixHealth = healthContract("mix", mixAll);
+  const mixInd = mixHealth.find((r) => r.check === IND_ROW);
+  ok("health: the independence warn reaches the strip as an advisory",
+    mixInd?.status === "warn" && mixInd?.advisory === true, mixInd && JSON.stringify(mixInd));
+  const t1Health = healthContract("no-docs", t1);
+  const t1Pass = t1Health.find((r) => r.check === "every shipped feature has a PASS verification");
+  ok("health: a strict-only FAIL is advisory, not red",
+    t1Pass?.status === "fail" && t1Pass?.advisory === true, t1Pass && JSON.stringify(t1Pass));
+  const cleanHealth = healthContract("independent", indep);
+  ok("health: an all-independent brain has no advisory warn/fail",
+    !cleanHealth.some((r) => r.advisory && (r.status === "warn" || r.status === "fail")),
+    cleanHealth.filter((r) => r.advisory && r.status !== "pass" && r.status !== "skip").map((r) => r.check).join(", "));
+  expectRow("mix: a single warn among independents", multi("tbl-mix-onewarn", {
+    alpha: one(PASS_H + R_INDEP), beta: one(PASS_H + R_INDEP), gamma: one(PASS_H + R_SELF),
+  }), "warn", /unacknowledged: gamma.*2 verified independently/);
 }
 
 // ---------------------------------------------------------------------------
@@ -804,6 +1175,9 @@ const SCHEMA_CHECK = "feature_list.json is valid";
   const row = brainCheck(brain).find((r) => r.check === "tasks.json files parse");
   ok("malformed tasks.json FAILS the parse row", row?.status === "fail", row && `${row.status}: ${row.detail}`);
   ok("...and names the file", /alpha\/tasks\.json/.test(row?.detail || ""), row?.detail);
+  // A NON-strict fail must stay red on the health strips (not demoted to advisory).
+  const hrow = healthChecks(brain).find((r) => r.check === "tasks.json files parse");
+  ok("health: a non-strict FAIL stays red (not advisory)", hrow?.status === "fail" && !hrow?.advisory, hrow && JSON.stringify(hrow));
 }
 
 {
@@ -2782,6 +3156,160 @@ function writeTasksFile(brain, slug, tasks) {
     (index.stdout || "").includes("grill,") && (index.stdout || "").includes("write,"),
     index.stdout
   );
+}
+
+// ---------------------------------------------------------------------------
+// Evaluator separation — the task verification contract (`verify`) and the
+// receipt's `implemented_by` + self-verification warning, end to end.
+// ---------------------------------------------------------------------------
+{
+  const base = { id: "t1", title: "x", status: "open", acceptance: "it works" };
+  acceptsTasks("task without verify stays valid (read-compat)", { tasks: [base] });
+  acceptsTasks("task with a verify contract is valid", { tasks: [{ ...base, verify: "run the suite" }] });
+  rejectsTasks("blank verify is rejected", { tasks: [{ ...base, verify: "  " }] }, "tasks[0].verify");
+  rejectsTasks("non-string verify is rejected", { tasks: [{ ...base, verify: 42 }] }, "tasks[0].verify");
+
+  const brain = makeBrain("verify-contract", { features: [featureFor("alpha")] });
+  const add = runIn(brain, "tasks", "add", "alpha", "--title", "T", "--acceptance", "A", "--verify", "VERIFY-METHOD");
+  ok("tasks add --verify exits 0", add.status === 0, add.stderr);
+  ok("...stores verify on the task", readTasks(brain, "alpha").data?.tasks?.[0]?.verify === "VERIFY-METHOD");
+  const view = runIn(brain, "tasks", "view", "alpha", "t1");
+  ok("tasks view shows verify", /^\s*verify: \|\n\s*VERIFY-METHOD$/m.test(view.stdout || ""), view.stdout);
+  const brief = runIn(brain, "brief", "alpha", "t1");
+  const bout = brief.stdout || "";
+  ok("brief shows verify right after acceptance",
+    /acceptance: \|\n\s*A\n\s*verify: \|\n\s*VERIFY-METHOD\n/.test(bout), bout);
+  const blank = runIn(brain, "tasks", "add", "alpha", "--title", "T", "--acceptance", "A", "--verify", " ");
+  ok("tasks add --verify blank is a usage error", blank.status === 2, `exit ${blank.status}`);
+  const noVerify = runIn(brain, "tasks", "add", "alpha", "--title", "T2", "--acceptance", "A2");
+  ok("tasks add without --verify still works", noVerify.status === 0, noVerify.stderr);
+  const brief2 = runIn(brain, "brief", "alpha", "t2");
+  ok("brief prints a definitive verify: none", /^\s*verify: none$/m.test(brief2.stdout || ""), brief2.stdout);
+
+  // `brain receipt` in a real git repo: author of HEAD is the default implementer.
+  const repo = path.join(tmpRoot, "ind-receipt-repo");
+  fs.mkdirSync(repo, { recursive: true });
+  const g = (...args) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
+  g("init", "-q");
+  g("config", "user.email", "fixture@example.com");
+  g("config", "user.name", "Builder Bot");
+  const rb = path.join(repo, ".brain");
+  fs.mkdirSync(path.join(rb, "features", "alpha", "verifications"), { recursive: true });
+  fs.mkdirSync(path.join(rb, "runs"), { recursive: true });
+  fs.writeFileSync(path.join(rb, "runs", "progress.md"), "# Progress\n\n---\n");
+  fs.writeFileSync(
+    path.join(rb, "features", "feature_list.json"),
+    JSON.stringify({ features: [featureFor("alpha", { status: "shipped", evidence: "proof" })] }, null, 2) + "\n"
+  );
+  fs.writeFileSync(path.join(rb, "features", "alpha", "alpha.md"), "# alpha\n");
+  const vdoc = path.join(rb, "features", "alpha", "verifications", "2026-07-31.md");
+  fs.writeFileSync(vdoc, "# V\n\n**Verdict**: ✅ PASS\n");
+  runIn(rb, "features", "index", "--write", "--create"); // so the whole check is otherwise green
+  g("add", "-A");
+  g("commit", "-qm", "one");
+
+  const self = runIn(rb, "receipt", "alpha", "--verified-by", "builder bot", "--allow-dirty");
+  const sout = self.stdout || "";
+  ok("receipt with equal identities still stamps (exit 0)", self.status === 0, self.stderr);
+  ok("...defaults implemented_by to the HEAD author", /implemented_by: Builder Bot/.test(sout), sout);
+  ok("...writes implemented_by into the block", /implemented_by: Builder Bot/.test(fs.readFileSync(vdoc, "utf8")));
+  ok("...prints a warning line", /^warning: "?self-verified/m.test(sout), sout);
+  ok("...points at the independent verifier playbook", /brain playbook verify/.test(sout), sout);
+  ok("...records verified_by_source: flag / implemented_by_source: default",
+    /^verified_by_source: flag$/m.test(fs.readFileSync(vdoc, "utf8")) &&
+      /^implemented_by_source: default$/m.test(fs.readFileSync(vdoc, "utf8")),
+    fs.readFileSync(vdoc, "utf8"));
+  ok("...prints both sources in the result",
+    /^\s+verified_by_source: flag$/m.test(sout) && /^\s+implemented_by_source: default$/m.test(sout), sout);
+  ok("...one flag only → warning names identities defaulted",
+    /^warning: .*identities defaulted — pass --verified-by\/--implemented-by/m.test(sout), sout);
+  ok("...exactly one warning key", (sout.match(/^warning:/gm) || []).length === 1, sout);
+  ok("...stderr stays empty", (self.stderr || "") === "", self.stderr);
+  const warnRow = brainCheck(rb, { strict: true }).find((row) => row.check === "every shipped feature was verified independently");
+  ok("check --strict row warns on that receipt", warnRow?.status === "warn", warnRow?.detail);
+  const chk = runIn(rb, "check", "--strict");
+  ok("check --strict exit stays 0 on a warn", chk.status === 0, chk.stdout);
+
+  const indep = runIn(rb, "receipt", "alpha", "--verified-by", "verifier-agent", "--implemented-by", "builder-agent", "--allow-dirty");
+  ok("receipt with distinct identities has no self-verified warning", indep.status === 0 && !/self-verified/.test(indep.stdout || ""), indep.stdout);
+  ok("...and, with both flags, no identities-defaulted warning", !/identities defaulted/.test(indep.stdout || ""), indep.stdout);
+  ok("...records both sources as flag",
+    /^verified_by_source: flag$/m.test(fs.readFileSync(vdoc, "utf8")) && /^implemented_by_source: flag$/m.test(fs.readFileSync(vdoc, "utf8")));
+  const passRow = brainCheck(rb, { strict: true }).find((row) => row.check === "every shipped feature was verified independently");
+  ok("...and the independence row passes", passRow?.status === "pass", passRow?.detail);
+
+  // Both defaults come from git identity: a solo human stamping with NO flags
+  // must trip the self-verified warning, not silently pass ($USER vs author).
+  const dflt = runIn(rb, "receipt", "alpha", "--allow-dirty");
+  const dout = dflt.stdout || "";
+  ok("receipt with no identity flags defaults verified_by to git user.name", /verified_by: Builder Bot/.test(dout), dout);
+  ok("...and warns as self-verified", /^warning: "?.*self-verified/m.test(dout), dout);
+  ok("...and warns identities defaulted", /^warning: .*identities defaulted/m.test(dout), dout);
+  ok("...and help says to re-stamp with --verified-by", /Identities defaulted: re-stamp with `brain receipt alpha --verified-by/.test(dout), dout);
+
+  // The round-7 hole: defaults that DIFFER (a bot authored HEAD, user.name is
+  // you) must not read as independent.
+  g("config", "user.name", "Human Reviewer");
+  const botDflt = runIn(rb, "receipt", "alpha", "--allow-dirty");
+  const bout2 = botDflt.stdout || "";
+  ok("defaults with differing names: receipt stamps (exit 0)", botDflt.status === 0, botDflt.stderr);
+  ok("...no self-verified warning (names differ)", !/self-verified/.test(bout2), bout2);
+  ok("...but warns identities defaulted", /^warning: .*identities defaulted/m.test(bout2), bout2);
+  const botRow = brainCheck(rb, { strict: true }).find((row) => row.check === "every shipped feature was verified independently");
+  ok("...and check --strict warns identities not declared, never passes", botRow?.status === "warn" && /identities not declared: alpha/.test(botRow?.detail || ""), botRow && `${botRow.status}: ${botRow.detail}`);
+  const botChk = runIn(rb, "check", "--strict");
+  ok("...check --strict exit stays 0", botChk.status === 0, botChk.stdout);
+  const explicitV = runIn(rb, "receipt", "alpha", "--verified-by", "verifier-agent", "--allow-dirty");
+  ok("explicit verifier + defaulted implementer: still warns identities defaulted", /^warning: .*identities defaulted/m.test(explicitV.stdout || ""), explicitV.stdout);
+  const evRow = brainCheck(rb, { strict: true }).find((row) => row.check === "every shipped feature was verified independently");
+  ok("...but the independence row passes (the verifier declared itself)", evRow?.status === "pass", evRow && `${evRow.status}: ${evRow.detail}`);
+}
+
+// ---------------------------------------------------------------------------
+// Same-day fix rounds: round 1 is <date>.md, round N >= 2 is <date>-rN.md, one
+// Verdict per doc. A same-day "new dated doc" used to collide with round 1's
+// filename, and a `## Round N` addendum holding FAIL + PASS parsed as unknown.
+// Every consumer of the filename stem must accept the -rN suffix.
+// ---------------------------------------------------------------------------
+{
+  const brain = makeBrain("fix-rounds", {
+    features: [featureFor("alpha", { status: "shipped", evidence: "round 2 PASS" })],
+  });
+  const vdir = path.join(brain, "features", "alpha", "verifications");
+  fs.mkdirSync(vdir, { recursive: true });
+  fs.writeFileSync(path.join(vdir, "2026-01-01.md"), "# V\n\n- **Round**: 1\n\n**Verdict**: \u274c FAIL\n");
+  fs.writeFileSync(path.join(vdir, "2026-01-01-r2.md"), PASS_DOC.replace("# V\n\n", "# V\n\n- **Round**: 2\n\n"));
+  const docs = listVerifications(brain, "alpha");
+  ok("fix rounds: listVerifications orders <date>-r2 before <date>", docs.map((d) => d.date).join(",") === "2026-01-01-r2,2026-01-01", JSON.stringify(docs));
+  ok("fix rounds: each round's verdict parses on its own", docs[0]?.verdict === "PASS" && docs[1]?.verdict === "FAIL", JSON.stringify(docs));
+  const view = runIn(brain, "verifications", "view", "alpha", "2026-01-01-r2");
+  ok("fix rounds: `verifications view <slug> <date>-r2` works", view.status === 0 && /verdict: PASS/.test(view.stdout || ""), (view.stdout || "") + (view.stderr || ""));
+  const checks = brainCheck(brain, { strict: true });
+  ok("fix rounds: both docs have a readable Verdict", rowStatus(checks, "verification docs have a readable Verdict") === "pass", JSON.stringify(checks));
+  ok("fix rounds: strict sees the round-2 PASS", rowStatus(checks, "every shipped feature has a PASS verification") === "pass", JSON.stringify(checks));
+  ok("fix rounds: strict sees the round-2 receipt", rowStatus(checks, "every PASS verification is bound to a commit") === "pass", JSON.stringify(checks));
+}
+
+// ---------------------------------------------------------------------------
+// The verify playbook must be walkable for a feature with no browser surface
+// at all (Greptile round 8): no mandatory dev server / browser for CLI-only work,
+// and the golden + error + edge layers still bind, via commands.
+// ---------------------------------------------------------------------------
+{
+  const { PLAYBOOKS } = await import("../lib/review/playbooks.js");
+  const v = PLAYBOOKS.verify.content;
+  ok("verify playbook: has a CLI-ONLY FEATURES clause", /CLI-ONLY FEATURES\./.test(v));
+  ok("verify playbook: the app-reachable step is skipped for CLI-only features",
+    /Confirm the app is reachable[\s\S]{0,200}Skip this for a CLI-only feature/.test(v));
+  ok("verify playbook: CLI-only still walks golden + error + edge via commands",
+    /CLI-ONLY FEATURES\.[\s\S]{0,700}golden path[\s\S]{0,200}error path[\s\S]{0,200}edge probes/.test(v));
+  ok("verify playbook: the header allows a CLI-only Base URL", /\*\*Base URL\*\*:.*n\/a — CLI-only/.test(v));
+  ok("verify playbook: screenshot rule names the non-browser evidence", /Every asserted state gets a screenshot \(for a criterion no browser can\s+reach/.test(v));
+  for (const id of ["execute", "done"]) {
+    const c = PLAYBOOKS[id]?.content || "";
+    ok(`${id} playbook: 'driven in a real browser' is scoped to what a browser can reach`,
+      !/driven in a[\s\n]+real browser(?![\s\n]+for what a browser can reach)/.test(c), id);
+  }
 }
 
 fs.rmSync(tmpRoot, { recursive: true, force: true });

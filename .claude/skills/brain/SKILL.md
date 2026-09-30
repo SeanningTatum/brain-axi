@@ -17,7 +17,7 @@ Ten standing playbooks — each a full text standard printed by `brain playbook 
 - `product` — any plan for user-facing work — the product case before the technical one
 - `ux` — any plan that adds or changes a screen — wireframes, screen states, user flows
 - `ai` — any work involving prompts, models, or agents — evals, golden sets, regression gates, topology
-- `verify` — verifying a user-visible feature works — browser walk with screenshot evidence
+- `verify` — verifying a user-visible feature works — independent, skeptical browser walk of every acceptance criterion: golden + error paths, quality floors, screenshot evidence
 - `execute` — implementing an approved plan / working a feature to shipped
 - `done` — before declaring any task complete — full verify, harness invariants, coherence
 - `write` — writing anything into the brain — checkpoints, run notes, feature docs, verdicts, commit bodies
@@ -61,13 +61,16 @@ Run `brain playbook` for the live id/use_when index; `brain playbook <id>` for t
 - `brain features set-status <slug> --status <planned|in-progress|shipped|blocked|cut>` — flip feature state (enforces one-in-progress policy; `--status shipped` requires `--evidence` **and passes the same preflight as `brain ship` — it refuses and writes nothing if any check would fail**. Transitions *out* of a state are never gated, so a broken record stays repairable)
 - `brain check` — deterministic harness invariants (feature-list **schema** validity — duplicate ids/slugs, unknown status, shipped-without-evidence all fail — one-in-progress per declared policy, doc paths, dependency refs, `features/index.md` agreeing with the tracker, plan/review file integrity, verification docs having a **readable** verdict with resolvable image links, `tasks.json` schema validity, no `shipped` feature with an open task, verify.json shape when present); exit 1 on any failure, CI-usable
 - `brain features index [--write]` — GENERATE the `features/index.md` status table from `feature_list.json` (bounded by `<!-- brain:features-table -->` markers so surrounding prose survives). Hand-maintaining that mirror is how a tracker and its human-facing index end up disagreeing
-- `brain receipt <feature> [--date <d>] [--verified-by <who>] [--allow-dirty]` — stamp a commit-bound provenance receipt into a verification doc, written BY THE TOOL: HEAD at stamp time plus the actual gate results for that feature from `runs/gates.jsonl`. Refuses on a dirty tree (a receipt naming HEAD while the tree differs describes code in no commit) and refuses to stamp a doc whose verdict is unreadable — a hand-written receipt is a claim about provenance, not provenance
-- `brain check --strict` — adds two: every `shipped` feature must have a verification doc whose verdict parses to PASS, **and** that doc must carry a `brain:verification` receipt naming a commit that is an ancestor of HEAD. Opt-in here so brains predating the invariants do not go red on upgrade; `brain ship` and `set-status --status shipped` **always** enforce both, since shipping is the moment the claim is made
+- `brain receipt <feature> [--date <d>] [--verified-by <who>] [--implemented-by <who>] [--allow-dirty]` — stamp a commit-bound provenance receipt into a verification doc, written BY THE TOOL: HEAD at stamp time plus the actual gate results for that feature from `runs/gates.jsonl`. Refuses on a dirty tree (a receipt naming HEAD while the tree differs describes code in no commit) and refuses to stamp a doc whose verdict is unreadable — a hand-written receipt is a claim about provenance, not provenance. Records `implemented_by` (default: git author of HEAD) next to `verified_by` (default: `git config user.name`, then `$USER`); records `verified_by_source` / `implemented_by_source` (`flag` when passed, `default` when taken from git identity) and adds "identities defaulted — pass --verified-by/--implemented-by" to the `warning:` key unless both flags are given; when the two are the same identity it still stamps but prints a `warning:` — **the evaluator must not be the generator** (self-grading is lenient), so have a separate agent run `npx -y brain-axi playbook verify` and stamp with its own `--verified-by`
+- `brain check --strict` — adds three: every `shipped` feature must have a verification doc whose verdict parses to PASS, **and** that doc must carry a `brain:verification` receipt naming a commit that is an ancestor of HEAD; plus a verifier-independence row that is `warn` (exit stays 0) when the latest receipt's `implemented_by` equals its `verified_by` — declaring `- **Independence**: self-verified — <reason>` in the doc marks it acknowledged, still `warn` (a bare `self-verified` with no reason is reported as "no reason given"); distinct names only `pass` when `verified_by` was passed explicitly — a `verified_by_source: default` receipt is `warn` ("identities not declared"; receipts predating the source fields are judged as before); only the feature's newest verification doc is judged (a `<date>-rN.md` round counts as newer): `warn` when it is not PASS, names no verifier, or is an unstamped PASS behind an older stamped one (an older receipt never stands in for it); receipts predating `implemented_by` are reported, never failed (full decision table: `rules/state.md`). Opt-in here so brains predating the invariants do not go red on upgrade; `brain ship` and `set-status --status shipped` **always** enforce the first two, since shipping is the moment the claim is made
 - **Verification receipts** — a verdict with no commit is unfalsifiable (the doc is mutable and date-named, so "it passed" could describe any tree that ever existed). Put this block in every verification doc; it renders as nothing:
   ```
   <!-- brain:verification
   commit: <short sha, e.g. `git rev-parse --short HEAD`>
   verified_by: feature-verifier
+  implemented_by: builder-agent
+  verified_by_source: flag
+  implemented_by_source: flag
   commands: bun run test (exit 0); bun run typecheck (exit 0)
   -->
   ```
@@ -113,8 +116,8 @@ this layout with the legacy flat one, so older brains keep working:
 .brain/features/feature_list.json          tracker (doc paths point at features/<slug>/<slug>.md)
 .brain/features/<slug>/
   <slug>.md                                feature doc
-  screenshots/NN-<step>.png                golden path (01-, 02-, ...); error paths E1-, E2-, ...
-  verifications/<YYYY-MM-DD>.md            browser-walk verdict docs (PASS/FAIL/BLOCKED evidence)
+  screenshots/NN-<step>.png                golden path (01-, 02-, ...); error paths E1-, E2-, ...; A<N>- acceptance, X<N>- edge probes; round N >= 2 prefixes rN-
+  verifications/<YYYY-MM-DD>[-rN].md       verdict docs (browser walk + command runs), one per round (PASS/FAIL/BLOCKED)
   runs/<YYYY-MM-DD>-<task>.md              per-feature run notes
   plans/<plan-slug>/                       review plans scoped to this feature
 .brain/runs/progress.md                    stays global — rolling session cursor
@@ -144,16 +147,29 @@ this layout with the legacy flat one, so older brains keep working:
 
 ## Verifications — proof a feature actually works
 
-- `npx -y brain-axi playbook verify` — the verification-doc standard: browser
-  walk (golden path + one error path), screenshot naming, the jsErrors/
-  networkErrors console policy, and how to persist the evidence.
+- `npx -y brain-axi playbook verify` — the verification-doc standard: an
+  INDEPENDENT verifier (fresh context, did not write the code; declared in an
+  `- **Independence**:` header line) walks EVERY acceptance criterion (plan
+  of record + task acceptance) in an `## Acceptance criteria` table, plus a
+  golden path, at least one error path, and edge probes; `## Quality scores`
+  with hard floors (product-depth 2, functionality 2, design 2 UI-only,
+  code-quality 1 — a stub or display-only control is a FAIL). Evidence: a
+  screenshot for what a browser can reach; for a CLI-only / non-browser
+  criterion, the named command run, with command + exit code + output.
+  Also screenshot naming (round N >= 2 prefixes `rN-`), the
+  jsErrors/networkErrors console policy, and how to persist the evidence.
+  On FAIL a fresh verifier re-walks in a new doc,
+  `<date>-rN.md` for round N >= 2 (`- **Round**: N`, one Verdict per
+  doc, cap 3, then escalate — `playbook execute` step 4b).
 - `brain verifications [<feature>]` — list verdict docs (feature, date, verdict).
 - `brain verifications view <feature> <date>` — read one in full.
 
-After implementing and testing a user-visible feature, produce a verification
-doc at `.brain/features/<slug>/verifications/<date>.md` following
-`brain playbook verify` — this is how "it works" becomes checkable evidence
-instead of a claim.
+After implementing a user-visible feature, hand it to a fresh-context verifier
+(a sub-agent or new session — never the implementer) that writes the
+verification doc at `.brain/features/<slug>/verifications/<date>.md`
+(fix round N >= 2: `<date>-rN.md`) following `brain playbook verify` — this is how "it works" becomes checkable
+evidence instead of a claim. Solo self-verification only when no second agent
+is possible, declared as `- **Independence**: self-verified — <reason>`.
 
 ## Tasks — coordination BELOW a feature (`brain tasks`)
 
@@ -169,16 +185,20 @@ retry, never a corrupted file.
   that already includes how many are unblocked (open, every `depends_on`
   done) — no second call needed. A claimed row shows how long it has been
   held (`held 41m`) right there, so a stale claim is visible without `view`.
-- `brain tasks view <slug> <id>` — full detail: acceptance, `depends_on`,
-  files, owner, `claimed_at`, evidence, receipt, and what it is **blocked
-  by** right now (computed from the other tasks' current status, not just
-  the declared list).
-- `brain tasks add <slug> --title "..." --acceptance "..." [--depends-on
-  t1,t2] [--files a,b] [--id <id>]` — creates `tasks.json` on the first
-  task; `--id` auto-generates (`t1`, `t2`, ...) from the current max when
-  omitted. `--title`/`--acceptance` are required — a task with no checkable
-  acceptance is the same premature-"done" shape the feature-level evidence
-  rule exists to prevent, one level further down.
+- `brain tasks view <slug> <id>` — full detail: acceptance, `verify`,
+  `depends_on`, files, owner, `claimed_at`, evidence, receipt, and what it
+  is **blocked by** right now (computed from the other tasks' current status,
+  not just the declared list).
+- `brain tasks add <slug> --title "..." --acceptance "..." [--verify "..."]
+  [--depends-on t1,t2] [--files a,b] [--id <id>]` — creates `tasks.json` on
+  the first task; `--id` auto-generates (`t1`, `t2`, ...) from the current
+  max when omitted. `--title`/`--acceptance` are required — a task with no
+  checkable acceptance is the same premature-"done" shape the feature-level
+  evidence rule exists to prevent, one level further down. `--verify` is the
+  **verification contract** (optional flag, but every task should carry one —
+  omitting it prints a `help:` nudge): how the separate verifier will check
+  the acceptance, agreed by generator and verifier BEFORE coding (stored as the
+  task's `verify` field; shown by `tasks view` and `brief`).
 - `brain tasks claim <slug> <id> --owner <name>` — refuses (exit 1, naming
   the current owner) if held by someone else; refuses (naming the unmet
   dependency) if any `depends_on` is not `done`; re-claiming your OWN
@@ -199,7 +219,7 @@ retry, never a corrupted file.
   wrong for some task, so release is always an explicit act.
 - `brain brief <slug> <task-id> [--full]` — the handoff: one payload a COLD
   worker can act on without reading the plan artifact or being told anything
-  else. Composes the task (acceptance, `depends_on` with their current
+  else. Composes the task (acceptance, its `verify` contract or `none`, `depends_on` with their current
   statuses, declared `files`), the **approved** decision prompts read verbatim
   from that feature's bound plan(s) (`plans/<slug>/reviews.jsonl` — the round
   that concluded review, filtered to `tag: decision`; names which plan they
@@ -360,7 +380,7 @@ Rules:
 - A poll's DOM snapshot is a compact outline, not the raw page — it prints as `snapshot_chars: N` by default; pass `--snapshot` to see the full outline block only when you actually need it.
 - `npx -y brain-axi review end <plan.html>` — end the session yourself once the plan is fully approved
 - `npx -y brain-axi shots add <img> --feature <slug> --step <NN-name>` — attach a screenshot to a feature (`--scope <plan-or-feature>` is the legacy form)
-- `npx -y brain-axi plans` / `plans view <slug>` — see past plan artifacts and their review rounds. Each round prints a `snapshot:` path (`plans/<slug>/vN.html`) — the FROZEN copy of the artifact as it stood at that round. A snapshot is written for every round, so the newest one is NOT automatically the approved one: the approved snapshot is the one for the round that ended the review (`ended by` in the round header). `plans view` names it for you in its `help:` line, and says so explicitly when no round has ended yet. When verifying a feature whose plan carried wireframes, compare the shipped UI against that approved snapshot, never against the live artifact path (the agent has been editing it); record each difference in the verification doc's mockup-reconciliation table per `playbook verify` 5b.
+- `npx -y brain-axi plans` / `plans view <slug>` — see past plan artifacts and their review rounds. Each round prints a `snapshot:` path (`plans/<slug>/vN.html`) — the FROZEN copy of the artifact as it stood at that round. A snapshot is written for every round, so the newest one is NOT automatically the approved one: the approved snapshot — the FROZEN copy the human approved — is the one for the round that ended the review (`ended by` in the round header). `plans view` names it for you in its `help:` line, and says so explicitly when no round has ended yet. When verifying a feature whose plan carried wireframes, compare the shipped UI against that approved snapshot, never against the live artifact path (the agent has been editing it); record each difference in the verification doc's mockup-reconciliation table per `playbook verify` 5b.
 - `npx -y brain-axi timeline` — merged history across checkpoints, run notes, plan reviews, and verifications
 
 ## Install & session hooks (run once per repo)

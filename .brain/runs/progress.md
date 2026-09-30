@@ -21,6 +21,15 @@
 
 ---
 
+## 2026-09-29 — Merged evaluator-separation W1-W4 clean + integrate pass; verify 4/4, check/strict exit 0 (independence row skip), 459 invariants, evals 37/37
+- branch: `feat/evaluator-separation`
+- in-progress feature: none
+- run note: none
+- eval: skill-coverage 1.000 (+0.000), 37/37 pass, no frozen failures, cost 0, run 2026-09-29T14:09:16.034Z
+- next: Coordinator: review 17-case CLI verification, decide on USER-vs-git-author default gap, clean worktrees, open PR
+
+---
+
 ## 2026-08-10 — shipped plan-phase: 2026-08-10 verification PASS (features/plan-phase/verifications/2026-08-10.md, receipt bound to 76356f6): playbook index
 - branch: `feat/plan-phase`
 - in-progress feature: none

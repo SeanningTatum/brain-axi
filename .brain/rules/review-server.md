@@ -12,6 +12,7 @@ Binding contract: [`docs/REVIEW-ARCHITECTURE.md`](../../docs/REVIEW-ARCHITECTURE
 - **Keep store mutations synchronous, whole-file rewrite** (single process). Never throw across the poll waiter — a missing artifact yields `line: null`, not a crash.
 - **Persist read-compat, write-new:** readers merge legacy flat + per-feature layouts; writers target per-feature when a slug is known, else the legacy fallback pool.
 - **`brainCheck` and every brain-data reader never throw** — missing sections → empty arrays.
+- **Health endpoints (`/session/<key>/health`, `/watch/context` `checks`) serve `healthChecks(brain)`, never raw `brainCheck`.** It runs strict and tags every row the non-strict run does not emit (diffed by row name) `advisory: true`. A strict-only FAIL is advisory, not red, because `brain check` keeps strict opt-in for read-compat and the strip must not go red on upgrade either. Pinned in `scripts/check-state-invariants.mjs` ("health …").
 
 ## Don't
 

@@ -106,6 +106,33 @@ for (const id of ids) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Verify rounds must not reuse screenshot step names. `shots add` overwrites a
+// step's file, so a round-2 walk under round 1's names replaced the images the
+// round-1 FAIL doc cites (Greptile round 7). The verify playbook must keep
+// telling round N >= 2 to prefix steps with rN-.
+// ---------------------------------------------------------------------------
+if (PLAYBOOKS.verify && !/Round N >= 2: prefix every --step with rN-/.test(PLAYBOOKS.verify.content))
+  failures.push("verify: section 6 no longer tells round N >= 2 to prefix screenshot --step names with rN- (rounds would overwrite each other's evidence)");
+
+// ---------------------------------------------------------------------------
+// The verification standard is restated in verify, execute (step 4) and done
+// (step 2). Greptile rounds kept finding one surface drifting from the others,
+// so pin the two sentences most often lost: the error-path floor is "at least
+// one" (never exactly one), and non-browser criteria are run as commands —
+// the browser walk covers only what a browser can reach.
+// ---------------------------------------------------------------------------
+for (const id of ids) {
+  if (/golden path \+ one error path/i.test(PLAYBOOKS[id].content))
+    failures.push(`${id}: states the walk as "golden path + one error path" — the standard is at least one error path + edge probes`);
+}
+for (const id of ["verify", "execute", "done"]) {
+  if (PLAYBOOKS[id] && !/what a browser\s+can\s+reach/.test(PLAYBOOKS[id].content))
+    failures.push(`${id}: no longer scopes the browser walk to "what a browser can reach" (CLI-only criteria are checked by running the named command)`);
+}
+if (PLAYBOOKS.verify && !/Cap: 3\s+rounds/.test(PLAYBOOKS.verify.content))
+  failures.push("verify: no longer states the 3-round fix-loop cap");
+
 if (failures.length) {
   console.error(`playbook-refs: ${failures.length} problem(s)`);
   for (const f of failures) console.error(`  ${f}`);

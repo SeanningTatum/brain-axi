@@ -505,12 +505,15 @@ proceed and mention it to the human instead of looping.
   feature: `{feature: {slug, status, evidence}, checkpoints: [last 5 progress entries
   {date, summary}], runs: [{name, title}], verifications: [{date, verdict, file}],
   shots: [{rel, caption}]}` — all from brain-data readers, feature-scoped.
-  New `GET /session/<key>/health` → `{checks: [{check, status: "pass"|"fail", detail}]}`
-  from `brainCheck(brain)` (v6.4).
+  New `GET /session/<key>/health` → `{checks: [{check, status: "pass"|"fail"|"warn"|"skip",
+  detail, advisory?: true}]}` from `healthChecks(brain)` — strict `brainCheck`, with every
+  row the non-strict run does not emit tagged `advisory: true` (v6.4; strict + advisory
+  since Greptile round 7).
 - chrome (C): new collapsible "Execution" section in the session sidebar, shown only
   when `context.execution` present. Contents top-down: feature status chip + evidence
   line; health strip (fetch `/health` on load + context-update; green "harness ok" or
-  red list of failing checks); latest checkpoints feed; verification chips (date +
+  red list of non-advisory failing checks, plus an amber advisory line for `warn` rows
+  and advisory fails — ok line then reads "harness ok · N advisory"; `skip` hidden); latest checkpoints feed; verification chips (date +
   verdict color); screenshot thumbnail row (images via existing shot route, click =
   open full image in new tab — no lightbox needed here). Live-updates on
   `context-update` SSE. Empty states are one-liners.
@@ -683,7 +686,7 @@ points at the source file (`truncated: true`).
 
 - `GET /watch/<feature>?brain=` → dashboard.html with `{{FEATURE}}` (HTML-escaped)
   and `{{BRAIN}}` (URI-encoded) substituted; 503 JSON if dashboard.html missing.
-- `GET /watch/<feature>/context?brain=` → `{...watchContext, checks: brainCheck(brain)}`
+- `GET /watch/<feature>/context?brain=` → `{...watchContext, checks: healthChecks(brain)}`
 - `GET /watch/<feature>/shot/<rel>?brain=` → isAllowedShotRel + serveSandboxed
 - `GET /watch-events/<feature>?brain=` → SSE. Clients register in the shared
   sseClients registry under key `watch:<brain>:<feature>` (idle accounting and

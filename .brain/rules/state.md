@@ -163,8 +163,11 @@ template's `harness-check.sh` as `✓ brain check --strict passed`.
 
 They now report **`skip`** with the outstanding debt in the detail. `skip` keeps
 the exit code 0 — the debt is acknowledged, not failing — while making the
-zero-coverage impossible to mistake for proof. Consumers must treat `skip` as
-neither pass nor fail (`chrome.js`, `dashboard.js`).
+zero-coverage impossible to mistake for proof. The same holds for **`warn`** —
+an advisory row (today only the strict verifier-independence row — decision
+table under "What a PASS verification must contain") that also keeps exit 0. Consumers must treat `skip` and
+`warn` as neither pass nor fail (`chrome.js`, `dashboard.js`, `brain check`'s
+exit code).
 
 The ship path shipped once with whole-brain scope, and it made the gate unusable
 in both repos that own it: a single legacy feature predating the invariant refused
@@ -225,6 +228,79 @@ well-formed lie.
 **The agent grades its own homework.** `brain ship` requires a PASS verification
 bound to a commit — but the same agent writes the verdict. A receipt proves *when*
 a claim was made about *which* code, never that anyone ran anything.
+
+The rules below narrow that hole. They do not close it (see the verification-content section
+that follows).
+
+### What a PASS verification must contain
+
+These are content rules, owned by `brain playbook verify` / `done`. The CLI surfaces them
+(receipt fields, a `brain check --strict` **warn** row), but it cannot prove them, because every
+field below is agent-written.
+
+- **Verifier independence.** The verdict is written by a fresh-context agent that did not
+  implement the change. It is declared as `- **Independence**:` in the doc header. Self-verification
+  is allowed only when no second agent is possible (no sub-agent support, single-session harness),
+with that reason stated; "it was faster to check it myself" is not one. An undeclared or unexplained
+  self-verify is a FAIL, not a style nit. Every state-integrity review round that found a P0 or P1
+  was run by a separate agent (CHANGELOG 2026-07-31 → 08-01).
+- **Every acceptance row is walked.** Every acceptance criterion (the approved plan of record's
+  phases plus each task's `acceptance`, with its `verify` contract line when set) is a row in the
+  verification doc's `## Acceptance criteria` table, and each row gets its own observed result. A row with no result counts as a failed row, even if nothing contradicts
+  it. "Spot-checked the main flow" is not a verdict on the rest. Beyond the rows, the walk covers a
+  golden path, at least one error path and edge probes. What a browser can reach is walked in a
+  browser with screenshots; a criterion no browser reaches (CLI output, an API response, a file on
+  disk) is checked by running its named command, and its evidence is the command, exit code and
+  observed output.
+- **Quality floors bind.** `## Quality scores` rates product-depth / functionality / design /
+  code-quality from 0 to 3, with floors of 2 / 2 / 2 / 1. Any score below its floor makes the verdict
+  FAIL, whatever the other rows say (design is N/A for non-UI work). A stub or display-only surface
+is FAIL on product-depth.
+- **The receipt names both sides.** `implemented_by` (default: the HEAD commit's git author) sits
+  beside `verified_by` (default: `git config user.name`, then `$USER`). The two being equal (compared trimmed, case-insensitive)
+  is a **warning**, not a refusal: `brain receipt` still stamps and adds it to its `warning:` key,
+  and `brain check --strict` reports the row `every shipped feature was verified independently` as
+  `warn` — never `fail`, even when the doc declares `self-verified`. That row judges each shipped
+  feature on its **newest** verification doc D only (stem order; a same-day `<date>-rN.md` round is
+  newer, rounds compared numerically so `-r10` > `-r2`) — D's own verdict, Independence line and
+  receipt, never an older doc's. First matching row wins:
+
+  | # | D verdict | D Independence | D receipt | Bucket → row |
+  |---|---|---|---|---|
+  | 1 | (no doc) | — | — | not judged (the PASS row fails) |
+  | 2 | not PASS | any | any | `latest verification not PASS` → warn |
+  | 3 | PASS | self-verified — <reason> | any, even none | `self-verified, acknowledged` → warn |
+  | 3b | PASS | self-verified, no reason after it | any, even none | `self-verified, no reason given` → warn |
+  | 4 | PASS | other / absent | none; an older PASS has one | `latest PASS has no receipt` → warn |
+  | 5 | PASS | other / absent | none; no older PASS has one | not judged (the "bound to a commit" row fails) |
+  | 6 | PASS | other / absent | no `implemented_by` | legacy: named in the detail, not judged |
+  | 7 | PASS | other / absent | `implemented_by`, blank `verified_by` | `receipt names no verifier` → warn |
+  | 8 | PASS | other / absent | names differ; `verified_by_source` present and not `flag` | `identities not declared` → warn |
+  | 9 | PASS | other / absent | names differ | independent → pass |
+  | 10 | PASS | other / absent | names equal (trimmed, case-insensitive) | `self-verified, unacknowledged` → warn |
+
+  Across features: any warn bucket → `warn`; else any independent → `pass`; else `skip` (all
+  legacy, or nothing judgeable). An Independence line other than `self-verified` is prose: the
+  receipt names decide rows 6–10. Only this row looks at the latest verdict; the other strict rows
+  accept any PASS. `scripts/check-state-invariants.mjs` pins every row.
+  Both defaults come from git identity, so one human stamping with defaults trips the warning; a
+  sub-agent verifier shares the caller's git identity, so it must pass its own `--verified-by`. It is the visible trace
+  of self-grading, and it has to be matched by the Independence reason above.
+  `brain receipt` records where each name came from — `verified_by_source` /
+  `implemented_by_source`, `flag` or `default` — one field per side rather than one combined
+  `identity_source: flags|defaults|mixed`, because the rule hinges on the verifier alone and
+  `mixed` could not say which side was declared. Distinct names reach `pass` (row 9) only when
+  `verified_by` was passed explicitly: defaults can differ with no second agent involved (a bot
+  or collaborator authored HEAD, `git config user.name` is you), so a `default` verifier lands in
+  row 8 → warn, and `brain receipt` adds "identities defaulted — pass
+  --verified-by/--implemented-by" to its `warning:` key unless both flags were given. An explicit
+  `--verified-by` with a defaulted implementer still passes when the names differ — the verifier
+  declared itself. **Read-compat:** a receipt with no `verified_by_source` (stamped before
+  2026-09-30) is judged exactly as before (row 9 when names differ); no existing receipt gains a
+  warning from this change.
+
+Read-compat still holds. Verification docs written before 2026-09-29 have no Independence header or
+`implemented_by`, and they are not retroactively failed. The rules apply to new verdicts.
 
 What the gates therefore actually buy:
 
