@@ -270,16 +270,29 @@ is FAIL on product-depth.
   | 5 | PASS | other / absent | none; no older PASS has one | not judged (the "bound to a commit" row fails) |
   | 6 | PASS | other / absent | no `implemented_by` | legacy: named in the detail, not judged |
   | 7 | PASS | other / absent | `implemented_by`, blank `verified_by` | `receipt names no verifier` → warn |
-  | 8 | PASS | other / absent | names differ | independent → pass |
-  | 9 | PASS | other / absent | names equal (trimmed, case-insensitive) | `self-verified, unacknowledged` → warn |
+  | 8 | PASS | other / absent | names differ; `verified_by_source` present and not `flag` | `identities not declared` → warn |
+  | 9 | PASS | other / absent | names differ | independent → pass |
+  | 10 | PASS | other / absent | names equal (trimmed, case-insensitive) | `self-verified, unacknowledged` → warn |
 
   Across features: any warn bucket → `warn`; else any independent → `pass`; else `skip` (all
   legacy, or nothing judgeable). An Independence line other than `self-verified` is prose: the
-  receipt names decide rows 6–9. Only this row looks at the latest verdict; the other strict rows
+  receipt names decide rows 6–10. Only this row looks at the latest verdict; the other strict rows
   accept any PASS. `scripts/check-state-invariants.mjs` pins every row.
   Both defaults come from git identity, so one human stamping with defaults trips the warning; a
   sub-agent verifier shares the caller's git identity, so it must pass its own `--verified-by`. It is the visible trace
   of self-grading, and it has to be matched by the Independence reason above.
+  `brain receipt` records where each name came from — `verified_by_source` /
+  `implemented_by_source`, `flag` or `default` — one field per side rather than one combined
+  `identity_source: flags|defaults|mixed`, because the rule hinges on the verifier alone and
+  `mixed` could not say which side was declared. Distinct names reach `pass` (row 9) only when
+  `verified_by` was passed explicitly: defaults can differ with no second agent involved (a bot
+  or collaborator authored HEAD, `git config user.name` is you), so a `default` verifier lands in
+  row 8 → warn, and `brain receipt` adds "identities defaulted — pass
+  --verified-by/--implemented-by" to its `warning:` key unless both flags were given. An explicit
+  `--verified-by` with a defaulted implementer still passes when the names differ — the verifier
+  declared itself. **Read-compat:** a receipt with no `verified_by_source` (stamped before
+  2026-09-30) is judged exactly as before (row 9 when names differ); no existing receipt gains a
+  warning from this change.
 
 Read-compat still holds. Verification docs written before 2026-09-29 have no Independence header or
 `implemented_by`, and they are not retroactively failed. The rules apply to new verdicts.

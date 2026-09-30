@@ -50,8 +50,17 @@ against hard floors, and re-walks in capped fix rounds.
   product + high-level design (no signatures or line-level edits).
 - **CLI — `brain receipt --implemented-by <who>`**: records `implemented_by` in the
   receipt beside `verified_by`. The default is the git author of HEAD.
+- **CLI — `brain receipt`**: records where each identity came from, as
+  `verified_by_source` and `implemented_by_source` (`flag` or `default`), in the block and
+  the output. One field per side, not a combined `identity_source`, because independence
+  hinges on the verifier alone. Unless both `--verified-by` and `--implemented-by` are
+  passed, `warning:` adds "identities defaulted — pass --verified-by/--implemented-by".
 - **CLI — `brain check --strict`**: a new row, `every shipped feature was verified independently`.
-  - `pass` when the identities differ.
+  - `pass` when the identities differ and `verified_by` was passed explicitly.
+  - `warn` ("identities not declared: <slug> (<stem>)") when the identities differ but the
+    receipt records `verified_by_source: default`. Two git-identity defaults can differ with
+    no second agent (a bot authored HEAD), so they never count as independent. Receipts with
+    no source field predate it and are judged as before — no existing receipt gains a warning.
   - `warn` when the receipt has `implemented_by` but no `verified_by` (no named verifier).
   - `warn` when `implemented_by` equals `verified_by` (trimmed, case-insensitive). The detail
     says "acknowledged" when the doc declares `- **Independence**: self-verified — <reason>`

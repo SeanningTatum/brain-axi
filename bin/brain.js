@@ -1027,7 +1027,7 @@ function cmdCheck(argv) {
         : [warned.length ? "No failing checks" : "All checks passing"]),
       ...(warned.length
         ? [
-            `${warned.length} warning(s) (exit stays 0) — for a self-verified receipt, have a separate agent run \`brain playbook verify\` and re-stamp with \`brain receipt <feature> --verified-by <verifier>\``,
+            `${warned.length} warning(s) (exit stays 0) — for a self-verified or identity-defaulted receipt, have a separate agent run \`brain playbook verify\` and re-stamp with \`brain receipt <feature> --verified-by <verifier>\``,
           ]
         : []),
     ]),
@@ -1236,6 +1236,13 @@ function cmdReceipt(argv) {
   // Tool-derived like the commit: the author of HEAD wrote the code this
   // receipt binds to, unless the caller names the implementer explicitly.
   const implementedBy = flags["implemented-by"] || gitHeadAuthor(repoRoot) || "unknown";
+  // Record where each identity came from. A defaulted verified_by is git
+  // identity, not a declaration: a bot-authored HEAD makes the two defaults
+  // differ with no second agent involved, so `brain check --strict` never
+  // counts a defaulted verifier as independent.
+  const verifiedBySource = flags["verified-by"] ? "flag" : "default";
+  const implementedBySource = flags["implemented-by"] ? "flag" : "default";
+  const defaulted = verifiedBySource === "default" || implementedBySource === "default";
   // The evaluator must not be the generator — self-grading is lenient. Still
   // stamps (solo work is real), but the result says so.
   const selfVerified = sameIdentity(implementedBy, verifiedBy);
@@ -1246,6 +1253,8 @@ function cmdReceipt(argv) {
     `stamped_at: ${new Date().toISOString()}`,
     `verified_by: ${verifiedBy}`,
     `implemented_by: ${implementedBy}`,
+    `verified_by_source: ${verifiedBySource}`,
+    `implemented_by_source: ${implementedBySource}`,
     ...(commands ? [`commands: ${commands}`] : []),
     ...(dirty ? ["dirty: true"] : []),
     "-->",
@@ -1262,6 +1271,7 @@ function cmdReceipt(argv) {
     ...(selfVerified
       ? [`self-verified — implemented_by and verified_by are both "${verifiedBy}" (self-grading is lenient evidence)`]
       : []),
+    ...(defaulted ? ["identities defaulted — pass --verified-by/--implemented-by"] : []),
   ];
   print([
     "receipt:",
@@ -1271,6 +1281,8 @@ function cmdReceipt(argv) {
     kv("commit", commit, 2),
     kv("verified_by", verifiedBy, 2),
     kv("implemented_by", implementedBy, 2),
+    kv("verified_by_source", verifiedBySource, 2),
+    kv("implemented_by_source", implementedBySource, 2),
     kv("action", existing.present ? "replaced" : "added", 2),
     ...(commands ? [kv("commands", commands, 2)] : []),
     // One `warning:` key, never two — duplicate keys are ambiguous TOON.
@@ -1279,6 +1291,11 @@ function cmdReceipt(argv) {
       ...(selfVerified
         ? [
             "Self-verified: have a separate agent run `brain playbook verify`, then re-stamp with its --verified-by — or declare `- **Independence**: self-verified — <reason>` in the doc",
+          ]
+        : []),
+      ...(verifiedBySource === "default"
+        ? [
+            `Identities defaulted: re-stamp with \`brain receipt ${slug} --verified-by <verifier> --implemented-by <implementer>\` — a defaulted verified_by never counts as independent in \`brain check --strict\``,
           ]
         : []),
       commands
@@ -5357,14 +5374,16 @@ Run \`brain playbook\` for the live id/use_when index; \`brain playbook <id>\` f
 - \`brain features set-status <slug> --status <planned|in-progress|shipped|blocked|cut>\` — flip feature state (enforces one-in-progress policy; \`--status shipped\` requires \`--evidence\` **and passes the same preflight as \`brain ship\` — it refuses and writes nothing if any check would fail**. Transitions *out* of a state are never gated, so a broken record stays repairable)
 - \`brain check\` — deterministic harness invariants (feature-list **schema** validity — duplicate ids/slugs, unknown status, shipped-without-evidence all fail — one-in-progress per declared policy, doc paths, dependency refs, \`features/index.md\` agreeing with the tracker, plan/review file integrity, verification docs having a **readable** verdict with resolvable image links, \`tasks.json\` schema validity, no \`shipped\` feature with an open task, verify.json shape when present); exit 1 on any failure, CI-usable
 - \`brain features index [--write]\` — GENERATE the \`features/index.md\` status table from \`feature_list.json\` (bounded by \`<!-- brain:features-table -->\` markers so surrounding prose survives). Hand-maintaining that mirror is how a tracker and its human-facing index end up disagreeing
-- \`brain receipt <feature> [--date <d>] [--verified-by <who>] [--implemented-by <who>] [--allow-dirty]\` — stamp a commit-bound provenance receipt into a verification doc, written BY THE TOOL: HEAD at stamp time plus the actual gate results for that feature from \`runs/gates.jsonl\`. Refuses on a dirty tree (a receipt naming HEAD while the tree differs describes code in no commit) and refuses to stamp a doc whose verdict is unreadable — a hand-written receipt is a claim about provenance, not provenance. Records \`implemented_by\` (default: git author of HEAD) next to \`verified_by\`; when the two are the same identity it still stamps but prints a \`warning:\` — **the evaluator must not be the generator** (self-grading is lenient), so have a separate agent run \`npx -y brain-axi playbook verify\` and stamp with its own \`--verified-by\`
-- \`brain check --strict\` — adds three: every \`shipped\` feature must have a verification doc whose verdict parses to PASS, **and** that doc must carry a \`brain:verification\` receipt naming a commit that is an ancestor of HEAD; plus a verifier-independence row that is \`warn\` (exit stays 0) when the latest receipt's \`implemented_by\` equals its \`verified_by\` — declaring \`- **Independence**: self-verified — <reason>\` in the doc marks it acknowledged, still \`warn\`; only the feature's newest verification doc is judged (a \`<date>-rN.md\` round counts as newer): \`warn\` when it is not PASS, names no verifier, or is an unstamped PASS behind an older stamped one (an older receipt never stands in for it); receipts predating \`implemented_by\` are reported, never failed (full decision table: \`rules/state.md\`). Opt-in here so brains predating the invariants do not go red on upgrade; \`brain ship\` and \`set-status --status shipped\` **always** enforce the first two, since shipping is the moment the claim is made
+- \`brain receipt <feature> [--date <d>] [--verified-by <who>] [--implemented-by <who>] [--allow-dirty]\` — stamp a commit-bound provenance receipt into a verification doc, written BY THE TOOL: HEAD at stamp time plus the actual gate results for that feature from \`runs/gates.jsonl\`. Refuses on a dirty tree (a receipt naming HEAD while the tree differs describes code in no commit) and refuses to stamp a doc whose verdict is unreadable — a hand-written receipt is a claim about provenance, not provenance. Records \`implemented_by\` (default: git author of HEAD) next to \`verified_by\`; records \`verified_by_source\` / \`implemented_by_source\` (\`flag\` when passed, \`default\` when taken from git identity) and adds "identities defaulted — pass --verified-by/--implemented-by" to the \`warning:\` key unless both flags are given; when the two are the same identity it still stamps but prints a \`warning:\` — **the evaluator must not be the generator** (self-grading is lenient), so have a separate agent run \`npx -y brain-axi playbook verify\` and stamp with its own \`--verified-by\`
+- \`brain check --strict\` — adds three: every \`shipped\` feature must have a verification doc whose verdict parses to PASS, **and** that doc must carry a \`brain:verification\` receipt naming a commit that is an ancestor of HEAD; plus a verifier-independence row that is \`warn\` (exit stays 0) when the latest receipt's \`implemented_by\` equals its \`verified_by\` — declaring \`- **Independence**: self-verified — <reason>\` in the doc marks it acknowledged, still \`warn\`; distinct names only \`pass\` when \`verified_by\` was passed explicitly — a \`verified_by_source: default\` receipt is \`warn\` ("identities not declared"; receipts predating the source fields are judged as before); only the feature's newest verification doc is judged (a \`<date>-rN.md\` round counts as newer): \`warn\` when it is not PASS, names no verifier, or is an unstamped PASS behind an older stamped one (an older receipt never stands in for it); receipts predating \`implemented_by\` are reported, never failed (full decision table: \`rules/state.md\`). Opt-in here so brains predating the invariants do not go red on upgrade; \`brain ship\` and \`set-status --status shipped\` **always** enforce the first two, since shipping is the moment the claim is made
 - **Verification receipts** — a verdict with no commit is unfalsifiable (the doc is mutable and date-named, so "it passed" could describe any tree that ever existed). Put this block in every verification doc; it renders as nothing:
   \`\`\`
   <!-- brain:verification
   commit: <short sha, e.g. \`git rev-parse --short HEAD\`>
   verified_by: feature-verifier
   implemented_by: builder-agent
+  verified_by_source: flag
+  implemented_by_source: flag
   commands: bun run test (exit 0); bun run typecheck (exit 0)
   -->
   \`\`\`
