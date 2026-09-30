@@ -1,0 +1,69 @@
+{
+  "feature": "task-coordination",
+  "updated": "2026-08-07",
+  "tasks": [
+    {
+      "id": "t1",
+      "title": "Phase 2 — the gate",
+      "status": "done",
+      "acceptance": "Two brain check rows (task schema parses; no shipped feature has an open task). Ship + set-status shipped preflight refuses on an open task, writing nothing (feature_list.json byte-identical). Closing the LAST open task auto-runs the ship path through the identical strict preflight; --no-autoship opts out; a refused autoship leaves the task closed and the feature untouched. Absent tasks.json passes everywhere (read-compat).",
+      "files": [
+        "bin/brain.js",
+        "lib/review/brain-data.js",
+        "scripts/check-state-invariants.mjs"
+      ],
+      "owner": "worker-gate",
+      "claimed_at": "2026-08-06T23:39:30.601Z",
+      "evidence": "Two brain check rows added (lib/review/brain-data.js:1291-1345 approx): \"tasks.json files parse\" and \"no shipped feature has an open task\", both scope-respecting and passing vacuously with 0 tasks.json files. brain ship / features set-status --status shipped refuse through the existing scoped brainCheck preflight with no special-case code (bin/brain.js: shipFeature/cmdFeaturesSetStatus). Gated autoship added to `tasks done` (bin/brain.js cmdTasksDone): closing the last open/claimed task runs shipFeature() through the identical strict preflight; --no-autoship opts out. Verified via node scripts/check-state-invariants.mjs (368 assertions, up from 330, all green), node bin/brain.js check/--strict/verify/skill --check all exit 0 against .brain, and an end-to-end throwaway-brain walk: ship refuses on an open task naming \"demo: t1\"; refused autoship leaves feature_list.json byte-identical (md5 unchanged) with the feature still in-progress while the task itself stays closed (status done); successful autoship flips feature_list.json to shipped on disk; --no-autoship suppresses the ship attempt entirely (no \"ship:\" line, feature_list.json unchanged)."
+    },
+    {
+      "id": "t2",
+      "title": "Phase 3 — the handoff",
+      "status": "done",
+      "acceptance": "brain brief <slug> <task-id> composes task + acceptance + the approved decision prompts read from plans/<slug>/reviews.jsonl + the rules docs owning the task's declared files. Output fits one screen and cites at least one decision verbatim. runs append gains --task and --author, both surfaced by runs view.",
+      "depends_on": [
+        "t1"
+      ],
+      "files": [
+        "bin/brain.js",
+        "scripts/check-state-invariants.mjs"
+      ],
+      "owner": "worker-brief",
+      "claimed_at": "2026-08-06T23:59:24.224Z",
+      "evidence": "brain brief <slug> <task-id> (bin/brain.js) composes task+depends_on-with-statuses+files-with-owning-rules+acceptance+feature-purpose+approved-decisions from plans/<slug>/reviews.jsonl (matches a feature-bound plan OR a legacy plan whose own slug equals the feature slug), with a rules_source line documenting the rules/index.md Touches-column derivation and a definitive line when decisions/owning-rules are absent. runs append gained --task/--author (validated against tasks.json when present), written as '- task:'/'- author:' lines before the fenced observed block (backward-compatible: omitted, output is byte-identical to before); runs view/list extended to merge the legacy .brain/runs/ pool with every feature's own runs/ (a pre-existing read-compat gap: runs append has always written per-feature, runs view only ever read the legacy pool) with --feature to disambiguate. Verified: node scripts/check-state-invariants.mjs -> 409 assertions (up from 375), all green; node bin/brain.js check --brain .brain -> 18/18 pass; check --strict -> 21/21 pass; verify -> 4/4 pass; skill --check -> up to date; brain brief task-coordination t3 --brain .brain produced a real, correct, one-screen brief citing all 9 approved decisions verbatim and resolving 2 of 4 declared files to owning rules."
+    },
+    {
+      "id": "t3",
+      "title": "Phase 4 — teach it",
+      "status": "done",
+      "acceptance": "execute playbook rewritten as a coordinator/worker loop naming which role runs each command, with the topology table. tasks + brief added to skillContent(). rules/state.md and rules/cli-commands.md updated. brain skill --check exits 0 and brain verify 4/4 including skill-sync and playbook-refs.",
+      "depends_on": [
+        "t1",
+        "t2"
+      ],
+      "files": [
+        "lib/review/playbooks.js",
+        "bin/brain.js",
+        ".brain/rules/state.md",
+        ".brain/rules/cli-commands.md"
+      ],
+      "owner": "worker-teach",
+      "claimed_at": "2026-08-07T00:19:43.845Z",
+      "evidence": "playbook execute rewritten as coordinator/worker loop with AGENT TOPOLOGY, THE CAS CONFLICT PATH, GATED AUTOSHIP, and EVIDENCE DISCIPLINE sections (node bin/brain.js playbook execute --brain .brain); skillContent() already documented tasks/brief/runs--task--author (brain skill --check: 'skill: .claude/skills/brain/SKILL.md is up to date', exit 0); rules/state.md + rules/cli-commands.md updated with TASK_STATUSES, validateTasksShape, cycle detection, the CAS lock (withTasksLock/writeTasksCas) and its two ownership rules, and the two new check rows; node scripts/check-state-invariants.mjs: 'state-invariants: ok — 409 assertions'; node bin/brain.js check --brain .brain: 18 checks, all pass, exit 0; node bin/brain.js check --strict --brain .brain: 21 checks, all pass, exit 0; node bin/brain.js verify --brain .brain: '4/4 pass', exit 0"
+    },
+    {
+      "id": "t4",
+      "title": "Harden the lock + close audit findings",
+      "status": "done",
+      "acceptance": "Regression tests for the stale-lock steal path: a backdated lock stolen from a LIVE holder must leave the victim refusing with reason lock-lost, tasks.json byte-identical, and the thief's lock intact after the victim's cleanup (the ownership-checked release). Plus: brain tasks dispatch must not break when a feature slug shadows a verb (view|add|claim|done|release) — currently 'brain tasks release' on a feature slugged release exits 2; document the list verb. Plus: decide receipt-without-commit — either require commit when receipt is present, or state it is reserved for a later phase.",
+      "files": [
+        "lib/state.js",
+        "bin/brain.js",
+        "scripts/check-state-invariants.mjs"
+      ],
+      "owner": "coordinator",
+      "claimed_at": "2026-08-06T23:55:27.878Z",
+      "evidence": "Lock hardened: ownership token + pre-write ownership re-check; 4 new assertions verified to FAIL against the reverted rules (stolen-from holder wrote anyway, victim deleted the thief's live lock) and pass against the fix. Stale-breaker still recovers an abandoned lock. Verb/slug collision fixed — 'brain tasks release' on a feature slugged release now lists (was exit 2); explicit 'list' verb documented in --help. receipt.commit now required whenever a receipt is present. 375 assertions, check 18/18, strict 21/21, verify 4/4, skill clean."
+    }
+  ]
+}

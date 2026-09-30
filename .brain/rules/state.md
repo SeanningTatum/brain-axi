@@ -66,6 +66,69 @@ both depend on it. It must never import from `lib/review/`.
 | A receipt commit must be a hex object id | `HEAD`, a branch, or a tag resolves through git but moves, so it binds the verdict to nothing |
 | Verification docs contain **no raw HTML** except the receipt | Chasing HTML constructs one at a time is unwinnable — a verdict in `<details>` renders collapsed, in `<div>` renders as literal asterisks. Removing the ambiguity beats parsing it |
 | Every entry on `strict_grandfathered` is a known, already-shipped feature | Otherwise the exemption key is an off switch: new work could ship unverified by listing itself |
+| `tasks.json` files parse (`validateTasksShape`) | Same class of bug as the feature schema, one layer down — a malformed task record breaks every command that reads it |
+| No `shipped` feature has an open task | A feature can't be "done" while a task under it is still `open`/`claimed`/`blocked` — same shape as shipped-without-evidence, scoped to the task layer |
+
+## Tasks — a unit of work below the feature (`features/<slug>/tasks.json`)
+
+Same shared-module discipline as the feature schema above, one layer down: **one definition of the
+shape, in `lib/state.js`**, imported by both `bin/brain.js` (`cmdTasks*`, `cmdBrief`) and
+`lib/review/brain-data.js` (`brainCheck`'s two task rows). A task record re-declared or re-validated
+in either caller is the exact bug this module exists to prevent, recurring one layer down.
+
+- **`TASK_STATUSES`** = `open | claimed | done | blocked | cut` — `open` plays the role `planned`
+  plays for a feature; `claimed` is `in-progress` held by exactly one `owner`. Tasks are allowed to
+  run in parallel (`policy.one_in_progress_at_a_time` is a **feature-level** policy only — many tasks
+  under one in-progress feature may be `claimed` at once).
+- **`validateTasksShape(data, slug)`** — same contract as `validateFeatureListShape`: `null` when
+  valid, else one precise message naming the exact bad field with its index (`tasks[2].status`).
+  `acceptance` is required from creation, not just at close — a task with no checkable definition of
+  done is the feature-level evidence rule's failure mode, one level further down. `evidence` is
+  required when `status: done`; `owner` + `claimed_at` are required when `status: claimed` (an
+  unrecoverable claim — nothing to show, nothing for `tasks release` to release). A `receipt`, when
+  present, requires a `commit` that is a hex object id — the same `RECEIPT_COMMIT_RE` a verification
+  receipt uses, not a second regex that could drift from it.
+- **Cycle detection (`findDependsOnCycle`)** — iterative DFS with an explicit stack, not recursion, so
+  an unbounded `depends_on` chain can't blow the call stack. A cyclic file makes `unblockedTasks`
+  return `[]` rather than guess at a partial ordering — a wrong "what's next" answer is worse than a
+  refusal to answer.
+- **Read-compat, write-new holds here too.** A feature with no `tasks.json` at all passes every
+  check — both new `brain check` rows report "N tasks.json file(s) checked" over the ones that exist,
+  never failing on absence.
+
+### The claim lock — why a CAS write needed more than a hash compare
+
+`writeTasksCas`/`withTasksLock` (`lib/state.js`) is the one place in this codebase that takes a real
+lock, and it exists because **a hash comparison followed by a write is not itself atomic.** The
+original design (recorded in the approved plan as "compare-and-swap on a content hash") read the
+current file, compared its hash to the caller's expected hash, and wrote if they matched — three
+separate steps, with no exclusion between them. Measured, not theorised: two concurrent `brain tasks
+claim` runs each reported success in 5 of 5 trials, and one claim was silently discarded — precisely
+the failure the CAS decision existed to prevent.
+
+The fix wraps the compare-and-write in an `O_EXCL` lock file (`tasks.json.lock`) with two rules that
+are **both load-bearing** — an earlier version had neither, and adversarial review broke it in three
+moves (a holder's section overran a stale threshold; a second holder judged the lock stale and took
+it; the first holder's `finally` then unlinked the second holder's LIVE lock by path, letting a third
+holder in while the second was still inside):
+
+1. **A holder owns an unforgeable token** (`pid:random-hex`) written into the lock file, and releases
+   only a lock whose content still matches its own token — never unlinks by path alone.
+2. **A holder re-checks it still owns the lock immediately before writing**, and refuses to write if
+   it does not. A holder whose lock was stolen out from under it therefore never writes — the thief
+   wins, the victim gets a refusal, the caller retries. Never two winners, even when two processes are
+   nominally "inside" the critical section at once.
+
+A stale lock (holder SIGKILLed mid-section) is broken by age, not by identity: `LOCK_STALE_MS` is
+60s — deliberately loose, since the critical section is a handful of filesystem calls, so a minute
+only ever elapses for a process that is actually dead; a tighter threshold once tripped the breaker on
+a live holder inside a paused container.
+
+**Stated honestly, not closed:** between the final ownership re-check and the rename there is a
+microsecond-scale window with no fsync in it. Closing that residual needs fencing tokens and a real
+lock service — not a thing a zero-dependency CLI writing JSON files gets to have. This is the same
+"trust boundary, not a bug" posture as the rest of this file: the lock defends against real concurrent
+writers losing each other's work, not against an adversary racing the filesystem.
 
 ## Scope is the difference between an audit and a gate
 
@@ -126,7 +189,7 @@ unconditionally.
 ## Verify
 
 ```bash
-node scripts/check-state-invariants.mjs      # 220 assertions — schema, verdict, atomic write, brainCheck, ship, scope
+node scripts/check-state-invariants.mjs      # 409 assertions — schema, verdict, atomic write, brainCheck, ship, scope, tasks, CAS lock
 node bin/brain.js verify --stage baseline    # runs the above plus skill-sync, harness, playbook-refs
 node bin/brain.js check --brain .brain --strict   # adds shipped ⇒ PASS
 ```

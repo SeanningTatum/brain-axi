@@ -3,3 +3,7 @@ node_modules/
 
 # Gate telemetry is per-machine run history, not shared state.
 .brain/runs/gates.jsonl
+
+# The CAS critical-section lock is released in a finally, but a SIGKILL mid-write
+# can leak one. It is transient by definition and never shared state.
+.brain/features/*/tasks.json.lock

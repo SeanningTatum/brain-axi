@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The plan phase — grill before the artifact, and a register for the record</title>
+<style>
+  :root {
+    --bg: #faf9f5; --surface: #ffffff; --fg: #141413; --fg-secondary: #3d3d3a;
+    --muted: #73726c; --border: #dedcd1; --highlight: #fff7ca; --accent: #d97757;
+    --space-2: 8px; --space-3: 16px; --space-4: 24px; --space-6: 40px;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+      Helvetica, Arial, sans-serif;
+    font-size: 16px; background: var(--bg); color: var(--fg); line-height: 1.6;
+    max-width: 72ch; margin: 0 auto; padding: var(--space-6) var(--space-4);
+  }
+  h1, h2, h3 {
+    font-family: Charter, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    font-weight: 600; line-height: 1.25; color: var(--fg);
+  }
+  h1 { font-size: 1.75em; }
+  h2 { font-size: 1.3em; font-weight: 500; margin-top: var(--space-6);
+    border-bottom: 1px solid var(--border); padding-bottom: var(--space-2); }
+  h3 { font-size: 1.05em; font-weight: 500; margin-top: var(--space-4); }
+  p, li { color: var(--fg-secondary); }
+  mark, .highlight { background: var(--highlight); color: var(--fg); padding: 0 2px; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88em; }
+  blockquote { margin: var(--space-3) 0; padding: var(--space-2) var(--space-3);
+    border-left: 3px solid var(--border); color: var(--muted); font-size: 0.94em; }
+  .chip { display: inline-block; padding: 2px 10px; border-radius: 999px;
+    font-size: 0.8em; font-weight: 600; border: 1px solid var(--border); }
+  .chip-status-draft { background: var(--surface); color: var(--muted); }
+  .chip-status-in-review { background: var(--highlight); color: var(--fg);
+    border-color: var(--highlight); }
+  .chip-status-reviewed { background: var(--fg); color: #fff; border-color: var(--fg); }
+  .chip-high { color: var(--accent); border-color: var(--accent); }
+  .chip-med { color: var(--fg-secondary); }
+  .chip-low { color: var(--muted); }
+  .decision-card { background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: var(--space-4); margin: var(--space-4) 0; }
+  table { width: 100%; border-collapse: collapse; margin: var(--space-3) 0;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    overflow: hidden; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid
+    var(--border); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  .tag-recommended { color: var(--accent); font-weight: 600; }
+  .btn-queue, .btn-approve, .btn-request-changes {
+    border: none; border-radius: 10px; padding: 8px 16px; font-weight: 600;
+    cursor: pointer; font-size: 0.95em;
+  }
+  .btn-queue, .btn-approve { background: var(--fg); color: #fff; }
+  .btn-request-changes { background: transparent; color: var(--fg);
+    border: 1px solid var(--border); }
+  .queue-ack { margin-left: var(--space-3); font-size: 0.9em; color: var(--muted); }
+  .checklist { list-style: none; padding: 0; }
+  .checklist li { margin: var(--space-2) 0; }
+  pre.mermaid { text-align: center; }
+  pre.mermaid svg { display: block; margin: 0 auto; }
+  pre.sample { background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: var(--space-3); overflow-x: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.82em; line-height: 1.5; color: var(--fg-secondary); }
+  .verdict { margin-top: var(--space-6); padding-top: var(--space-4);
+    border-top: 1px solid var(--border); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>The plan phase — grill before the artifact, and a register for the record</h1>
+  <div>
+    <span>2026-08-10</span> ·
+    <span>feature: plan-phase (proposed, not yet registered)</span> ·
+    <span class="chip chip-status-draft">draft</span> ·
+    <span>round 0</span>
+  </div>
+</header>
+
+<section id="tldr">
+  <h2>TL;DR</h2>
+  <p>Two additions to the harness, both playbooks, both in <code>brain-axi</code> so every repo that
+  installs the brain skill inherits them. <strong><code>brain playbook grill</code></strong> interviews the
+  human <em>before</em> the plan artifact exists, and checks the brain for an already-settled answer
+  before asking anything. <strong><code>brain playbook write</code></strong> gives the written record — checkpoints,
+  run notes, feature docs, commit bodies — a reference register instead of the release-note register
+  it uses today.</p>
+</section>
+
+<section id="product-brief">
+  <h2>Product brief</h2>
+
+  <h3>Problem + evidence</h3>
+  <p><strong>Nothing in the plan phase asks the human a question until the artifact is already
+  written.</strong> <code>playbook start</code> frames the task from the user's opening words;
+  <code>playbook plan</code> writes 17 sections; <code>brain review</code> collects reactions. The
+  first time the human is asked to choose anything, the thing has been fully designed.</p>
+
+  <p>The state says what that produces. Two checkpoints, verbatim from <code>brain progress</code>:</p>
+
+  <blockquote>2026-08-06 — “…planned task-coordination (feat-009) — plan reviewed round 1,
+  <mark>all 9 decisions at recommended</mark>, tier complete (phases 1-4).”</blockquote>
+
+  <blockquote>2026-07-31 — “…reviewed via brain review round 1: <mark>all 4 decisions at
+  recommended</mark> (GitHub Actions CI, eval kind=judge, model=claude-opus-5, global
+  runs/gates.jsonl).”</blockquote>
+
+  <p>Thirteen of thirteen decisions, across two plans, landed on the option the agent had already
+  pre-checked. Both approved in a single round. That is either flawless calibration, or the cards
+  arrive after the thinking is finished and there is nothing left to choose. Grilling first is how
+  you find out which — a question asked before the design exists can still change it.</p>
+
+  <p><strong>Second problem: the written record is expensive to read cold.</strong> The current top
+  entry in <code>.brain/runs/progress.md</code> in the <code>cf-saas-starter</code> template puts five
+  sentences, four parentheticals and two em-dash asides inside its <code>##</code> heading — where that
+  file's own documented format says <code>&lt;one-line summary&gt;</code>. The format is right. Nothing
+  enforces it, and no playbook says how to write what goes in it.</p>
+
+  <h3>User + job</h3>
+  <p>Two users, both real:</p>
+  <ul>
+    <li><strong>The agent in the plan phase.</strong> It has run <code>playbook start</code>, holds a
+    framed intent, and is about to write an artifact. Its job is to produce a plan the human approves
+    in one round <em>because the plan is right</em>, not because the plan is the only option
+    presented.</li>
+    <li><strong>The agent reading the record cold, six weeks later.</strong> It runs
+    <code>brain progress</code> or opens a feature doc looking for <em>one fact</em> — what was decided,
+    what the gate was, what shipped. Its job is scanning, not reading.</li>
+  </ul>
+
+  <h3>Success metric</h3>
+  <p>Share of plan decisions that land somewhere other than the agent's recommendation. Today
+  that is <strong>0 of 13</strong> across the two most recent plans. If grilling works, decisions get
+  settled in conversation before the artifact, so the artifact carries <em>fewer cards and more
+  citations</em> — and the cards that remain are the ones that genuinely could go either way.</p>
+  <p>Secondary, cheaper to read: rounds-to-approval stays at 1, and no plan regresses to 2+.</p>
+
+  <h3>Non-goals</h3>
+  <ul>
+    <li>No new state file. Grill output lands in the plan artifact and the existing
+      <code>reviews.jsonl</code>.</li>
+    <li>Not a replacement for <code>brain review</code>. Grilling happens in the terminal, before the
+      browser.</li>
+    <li>No restyling of the plan artifact's CSS. Section 0 stays as it is.</li>
+    <li>No retroactive rewrite of the 38 existing checkpoints.</li>
+  </ul>
+
+  <h3>Scope tiers</h3>
+  <table>
+    <thead><tr><th>Tier</th><th>Ships</th><th>Why stop here</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Thin</strong></td><td>Phases 1–2: the two playbooks</td>
+        <td>The standards are the whole value. Everything below is enforcement.</td></tr>
+      <tr><td><strong>Complete</strong></td><td>+ Phase 3: plan tiering, <code>progress add</code> length gate</td>
+        <td>Turns the register rule from advice into a gate, in the brain-axi idiom.</td></tr>
+      <tr><td><strong>Gold</strong></td><td>+ Phase 4: <code>brain check</code> rows</td>
+        <td>Makes “every decision is clickable” checkable rather than aspirational.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Prior art</h3>
+  <p>The interview loop — design tree, frontier, numbered rounds, agent finds facts and human makes
+  decisions — is lifted from <a href="https://github.com/mattpocock/skills">mattpocock/skills</a>'
+  <code>grilling</code> skill. The register rules are its <code>writing-for-agents</code> skill, minus
+  the parts that only matter to a plugin distribution. Neither has any state, so neither can do the
+  memory check in §8 D5, which is the part that matters most here.</p>
+</section>
+
+<section id="context">
+  <h2>Context — what the brain already says</h2>
+  <p>Read from <code>brain progress</code>, <code>brain features</code>, <code>brain plans</code> on
+  2026-08-10:</p>
+  <ul>
+    <li>9 features. <code>feat-009 task-coordination</code> shipped 2026-08-07, receipt bound to
+      <code>2017620</code>. Nothing in progress — this plan claims a free slot.</li>
+    <li>8 playbooks today: <code>start · plan · product · ux · ai · verify · execute · done</code>.
+      This plan adds two, taking the index to 10.</li>
+    <li>10 plan artifacts, 8 carrying recorded decision rounds. Every one of those decisions is
+      already stored as <code>tag: decision</code> in <code>reviews.jsonl</code> — the corpus the
+      memory check reads.</li>
+    <li>Two open items carry over untouched and are out of scope here: the
+      <code>--strict</code> grandfather debt, and the red Deploy jobs on the missing D1:Edit scope.</li>
+  </ul>
+</section>
+
+<section id="big-picture">
+  <h2>Big picture</h2>
+  <pre class="mermaid">
+flowchart TD
+  S["playbook start<br/>frame intent, baseline"]
+  G["playbook grill  ← NEW<br/>rounds until frontier empty"]
+  M{"brain search<br/>already decided?"}
+  C["cite it — do not ask"]
+  A["ask the round<br/>question + options + recommended"]
+  P["playbook plan<br/>artifact, tiered"]
+  R["brain review + poll"]
+  E["playbook execute"]
+  W["playbook write  ← NEW<br/>register for the record"]
+
+  S --> G
+  G --> M
+  M -->|yes| C
+  M -->|no| A
+  C --> P
+  A -->|answers reshape the tree| G
+  G --> P
+  P --> R
+  R --> E
+  W -.governs.-> R
+  W -.governs.-> E
+  </pre>
+  <figcaption>Grill sits between framing and authoring. Write is not a step — it governs
+  every artifact the other steps produce.</figcaption>
+</section>
+
+<section id="product-decisions">
+  <h2>Product decisions</h2>
+
+  <div class="decision-card" id="decision-grill-mandatory" data-brain-action>
+    <p><strong>P1. When is grilling required?</strong></p>
+    <p>A mandatory interview on a two-line change is ceremony. Optional means it never runs.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-grill-mandatory" id="opt-gm-cards"
+            value="Required whenever the plan will carry any decision card" checked data-brain-action></td>
+          <td><label for="opt-gm-cards">Required whenever the plan will carry any decision card
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Binds to the real trigger — an unanswered question. Trivial plans skip it for free.</td>
+          <td>The agent judges "will there be cards" before writing them.</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-grill-mandatory" id="opt-gm-always"
+            value="Required before every plan artifact" data-brain-action></td>
+          <td><label for="opt-gm-always">Required before every plan artifact</label></td>
+          <td>No judgement call, no skipping.</td>
+          <td>Ceremony on small plans teaches the agent to rush it.</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-grill-mandatory" id="opt-gm-opt"
+            value="Opt-in — the human types /grill" data-brain-action></td>
+          <td><label for="opt-gm-opt">Opt-in — the human asks for it</label></td>
+          <td>Zero friction.</td>
+          <td>The human is the index; it will be forgotten exactly when it was needed.</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-grill-mandatory','When is grilling required?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-grill-mandatory"></span>
+  </div>
+
+  <div class="decision-card" id="decision-write-scope" data-brain-action>
+    <p><strong>P2. Does <code>playbook write</code> cover commit bodies?</strong></p>
+    <p>Commit messages are not brain state. brain-axi has no hook there and can never gate it.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-write-scope" id="opt-ws-yes"
+            value="Yes — same register, marked ungated" checked data-brain-action></td>
+          <td><label for="opt-ws-yes">Yes, same register, marked explicitly ungated
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>One standard for the whole written record. Commit bodies have the same defect today.</td>
+          <td>Advice the CLI cannot enforce sits next to advice it can.</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-write-scope" id="opt-ws-no"
+            value="No — brain artifacts only" data-brain-action></td>
+          <td><label for="opt-ws-no">No — brain artifacts only</label></td>
+          <td>Everything in the playbook is gateable. Cleaner boundary.</td>
+          <td>Leaves the most-read artifact in the repo unaddressed.</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-write-scope','Does playbook write cover commit bodies?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-write-scope"></span>
+  </div>
+</section>
+
+<section id="decisions">
+  <h2>Technical decisions needed</h2>
+
+  <div class="decision-card" id="decision-grill-home" data-brain-action>
+    <p><strong>1. Own playbook, or a phase inside <code>playbook plan</code>?</strong></p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-grill-home" id="opt-gh-own"
+            value="Its own playbook: brain playbook grill" checked data-brain-action></td>
+          <td><label for="opt-gh-own">Its own playbook — <code>brain playbook grill</code>
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Reachable on its own (grilling a decision with no plan attached is useful). Keeps
+            <code>plan</code> from growing past 952 lines.</td>
+          <td>One more id in the index the agent must know to reach.</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-grill-home" id="opt-gh-sec"
+            value="Section 0 of playbook plan" data-brain-action></td>
+          <td><label for="opt-gh-sec">A phase inside <code>playbook plan</code></label></td>
+          <td>Impossible to skip — you read it on the way to writing.</td>
+          <td>Unreachable when you want the interview without an artifact.</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-grill-home','Own playbook or a phase inside playbook plan?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-grill-home"></span>
+  </div>
+
+  <div class="decision-card" id="decision-grill-output" data-brain-action>
+    <p><strong>2. Where does grill output land?</strong></p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-grill-output" id="opt-go-cards"
+            value="Into the plan artifact as pre-answered decision cards" checked data-brain-action></td>
+          <td><label for="opt-go-cards">Into the plan artifact — pre-answered cards + citations
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>No new format. The human confirms rather than re-answers. Answers still reach
+            <code>reviews.jsonl</code> through the normal queue.</td>
+          <td>An abandoned grill (no artifact written) leaves no trace.</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-grill-output" id="opt-go-jsonl"
+            value="New grill.jsonl per plan" data-brain-action></td>
+          <td><label for="opt-go-jsonl">A new <code>grill.jsonl</code> beside the plan</label></td>
+          <td>Survives an abandoned session. Queryable on its own.</td>
+          <td>A second decision store next to <code>reviews.jsonl</code> — two places to look, drift
+            between them.</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-grill-output" id="opt-go-ckpt"
+            value="A progress checkpoint only" data-brain-action></td>
+          <td><label for="opt-go-ckpt">A progress checkpoint only</label></td>
+          <td>Zero new machinery.</td>
+          <td>Prose, unstructured — the next agent cannot tell a settled answer from a note.</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-grill-output','Where does grill output land?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-grill-output"></span>
+  </div>
+
+  <div class="decision-card" id="decision-memory-check" data-brain-action>
+    <p><strong>3. How hard is the “already decided” check?</strong></p>
+    <p>Before asking anything, grill searches <code>reviews.jsonl</code> decision rounds and the brain
+    docs. What happens on a hit?</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-memory-check" id="opt-mc-cite"
+            value="Cite and skip; ask only whether it has changed" checked data-brain-action></td>
+          <td><label for="opt-mc-cite">Cite it and skip — one line offering to reopen
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Directly kills re-litigation, which is brain-axi's stated reason to exist. Human can
+            still reopen in one word.</td>
+          <td>A stale decision gets carried forward if the human skims past the citation.</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-memory-check" id="opt-mc-ask"
+            value="Ask anyway, with the prior answer pre-selected" data-brain-action></td>
+          <td><label for="opt-mc-ask">Ask anyway, prior answer pre-selected</label></td>
+          <td>Nothing goes stale silently.</td>
+          <td>Re-asks settled questions — the exact behaviour the brain exists to stop.</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-memory-check" id="opt-mc-none"
+            value="No memory check" data-brain-action></td>
+          <td><label for="opt-mc-none">No memory check</label></td>
+          <td>Simplest possible playbook.</td>
+          <td>Throws away the only advantage this has over a stateless grilling skill.</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-memory-check','How hard is the already-decided check?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-memory-check"></span>
+  </div>
+
+  <div class="decision-card" id="decision-length-gate" data-brain-action>
+    <p><strong>4. What does <code>progress add</code> do with an over-long summary?</strong></p>
+    <p><code>progress.md</code> documents <code>&lt;one-line summary&gt;</code>. Today's entries run 5
+    sentences.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-length-gate" id="opt-lg-reject"
+            value="Reject over 200 chars, exit 2, help line showing the slot skeleton" checked data-brain-action></td>
+          <td><label for="opt-lg-reject">Reject over ~200 chars, exit 2, <code>help:</code> shows the
+            slot skeleton <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Matches how every other brain mutation refuses. The agent self-corrects from the help
+            line, no human involved.</td>
+          <td>Breaks any script piping a long summary in. Cap number is a guess until tried.</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-length-gate" id="opt-lg-warn"
+            value="Accept, print a warning" data-brain-action></td>
+          <td><label for="opt-lg-warn">Accept and warn</label></td>
+          <td>Never blocks a checkpoint — losing state is worse than an ugly one.</td>
+          <td>A warning nothing acts on is the current situation with extra output.</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-length-gate" id="opt-lg-check"
+            value="Accept silently; brain check flags it later" data-brain-action></td>
+          <td><label for="opt-lg-check">Accept; <code>brain check</code> flags it later</label></td>
+          <td>Enforcement without a write-path change.</td>
+          <td>Found long after the context to fix it is gone.</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-length-gate','What does progress add do with an over-long summary?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-length-gate"></span>
+  </div>
+
+  <div class="decision-card" id="decision-tier-select" data-brain-action>
+    <p><strong>5. How is a plan's tier chosen?</strong></p>
+    <p>Adding a <strong>small</strong> tier (TL;DR · Context · Decisions · Plan of record · Files)
+    beside the full 17 sections.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-tier-select" id="opt-ts-declare"
+            value="Agent picks and states the tier in the header strip" checked data-brain-action></td>
+          <td><label for="opt-ts-declare">Agent picks it, states it in the header strip
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Visible to the reviewer, who can push back in one annotation. No CLI change.</td>
+          <td>An agent under-scoping to save work is invisible until review.</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-tier-select" id="opt-ts-derive"
+            value="Derived from blast radius (files/phases)" data-brain-action></td>
+          <td><label for="opt-ts-derive">Derived from blast radius</label></td>
+          <td>Not a judgement call.</td>
+          <td>A one-file change can carry the hardest decision in the repo.</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-tier-select" id="opt-ts-none"
+            value="No tiers — keep the single 17-section standard" data-brain-action></td>
+          <td><label for="opt-ts-none">No tiers</label></td>
+          <td>One standard, nothing to get wrong.</td>
+          <td>Leaves the “plan is too heavy” complaint unaddressed.</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-tier-select','How is a plan tier chosen?')">Queue answer</button>
+    <span class="queue-ack" id="ack-decision-tier-select"></span>
+  </div>
+</section>
+
+<section id="register">
+  <h2>What the register standard actually says</h2>
+  <p>One rule carries the rest: <strong>the record is reference, not release notes.</strong> It is read
+  cold, months later, by someone hunting one fact. Facts go in named slots; prose is reserved for the
+  <em>why</em> that no slot can hold.</p>
+
+  <p>Today, verbatim from the template's <code>progress.md</code>:</p>
+  <pre class="sample">## 2026-08-06 — Released v1.8.0 'Your Sub-Agents Follow You To Kimi' (squash 2fac879,
+PR #24 squash-merged). The ten .claude/agents/ operators now load under Kimi Code too:
+.kimi-code/agents is a symlink onto .claude/agents (git mode 120000), .gitignore shares
+that one path only, and harness-check check D2 asserts symlink identity rather than
+existence. Discovery path was read out of the kimi binary and confirmed with
+'kimi --agent &lt;bogus&gt;', which prints the roster at zero model cost. Greptile pre-PR
+caught a false green in D2's first draft — a dangling symlink compared two failed cd
+resolutions as equal and reported PASS; fixed in dce3ba2 and driven into all five states.</pre>
+
+  <p>Same facts, in slots:</p>
+  <pre class="sample">## 2026-08-06 — Kimi Code loads the same sub-agents as Claude
+- what: `.kimi-code/agents` is a symlink to `.claude/agents`. Add an agent once, both CLIs see it.
+- why symlink, not copy: a copy passes an existence check until someone edits one side.
+- gate: harness-check D2 asserts symlink identity. Exercised all 5 states.
+- shipped: v1.8.0 · squash 2fac879 · PR #24
+- next: ...</pre>
+
+  <p>Roughly 40% of the words, scannable without reading. Note what survives: <em>false green</em> is a
+  good compact term and stays. What goes is the rhythm — an aphorism per paragraph, the load-bearing
+  mechanism buried mid-clause, four parentheticals in five sentences.</p>
+
+  <p>The playbook carries a slot skeleton per artifact type — checkpoint, run-note step, feature doc,
+  verification doc, and (pending P2) commit body — plus three prune tests borrowed from
+  <code>writing-for-agents</code>: cut any line the reader already assumes; one meaning, one place;
+  prefer a familiar word over a coined one.</p>
+</section>
+
+<section id="plan-of-record">
+  <h2>Plan of record</h2>
+  <ol>
+    <li><strong>Phase 1 — <code>playbook grill</code>.</strong>
+      Acceptance: <code>brain playbook grill</code> prints the full standard;
+      <code>brain playbook</code> lists 9 ids; <code>playbook start</code>'s closing step and
+      <code>playbook plan</code>'s opening both name it; the memory-check step names the exact
+      commands it runs.</li>
+
+    <li><strong>Phase 2 — <code>playbook write</code>.</strong>
+      Acceptance: prints the register rule plus a slot skeleton for each artifact type;
+      <code>playbook execute</code> and <code>playbook done</code> point at it where they instruct a
+      write; <code>brain playbook</code> lists 10 ids.
+      <details>
+        <summary>Why two playbooks and not one “authoring” playbook?</summary>
+        <p>They fire at different moments and for different readers. Grill runs once, before an
+        artifact exists, and its reader is the human. Write governs every artifact the harness ever
+        produces, and its reader is a future agent. Merging them makes one document that is wrong
+        half the time it is opened.</p>
+      </details>
+    </li>
+
+    <li><strong>Phase 3 — tiering + the length gate.</strong>
+      Acceptance: <code>playbook plan</code> opens with the tier ladder and the small tier's section
+      list; <code>brain progress add</code> handles an over-long summary per decision 4 with a
+      copy-pasteable <code>help:</code> line; existing checkpoints are untouched.</li>
+
+    <li><strong>Phase 4 — check rows.</strong>
+      Acceptance: <code>brain check</code> gains a row asserting every decision card in a bound plan
+      carries exactly one <code>(recommended)</code> option; the row passes vacuously for plans with
+      no cards; a planted violation fails it.
+      <details>
+        <summary>Risk on this phase</summary>
+        <p>It needs to parse decision cards out of the plan HTML. The review server already audits
+        artifact layout, so the capability exists — but this is the phase most likely to be cut if the
+        parse turns out fragile. Cutting it leaves tiers 1–3 whole.</p>
+      </details>
+    </li>
+  </ol>
+</section>
+
+<section id="files-changed">
+  <h2>Files that change</h2>
+  <table>
+    <thead><tr><th>Path</th><th>Change</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td><code>lib/review/playbooks.js</code></td><td>edit</td>
+        <td>Two new playbook texts; tier ladder + register rule added to <code>plan</code>; pointers
+          added to <code>start</code>, <code>execute</code>, <code>done</code></td></tr>
+      <tr><td><code>bin/brain.js</code></td><td>edit</td>
+        <td>Register the two ids; <code>progress add</code> summary validation (phase 3)</td></tr>
+      <tr><td><code>scripts/check-state-invariants.mjs</code></td><td>edit</td>
+        <td>New rows + their planted-violation fixtures (phases 3–4)</td></tr>
+      <tr><td><code>.claude/skills/brain/SKILL.md</code></td><td>regenerated</td>
+        <td><code>brain skill --write</code>; <code>--check</code> fails otherwise</td></tr>
+      <tr><td><code>.brain/rules/cli-commands.md</code></td><td>edit</td>
+        <td>Playbook-id conventions if the count changes the doc's own list</td></tr>
+      <tr><td><code>.brain/features/feature_list.json</code></td><td>edit</td>
+        <td>Register <code>feat-010 plan-phase</code> on approval</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="golden-path">
+  <h2>Golden path</h2>
+  <pre class="mermaid">
+sequenceDiagram
+  participant H as Human
+  participant A as Agent
+  participant B as brain CLI
+  H->>A: "add rate limiting to the upload endpoint"
+  A->>B: playbook start · brain · progress · features
+  A->>B: playbook grill
+  A->>B: search reviews.jsonl + docs for prior decisions
+  B-->>A: 2 hits (storage backend, error shape)
+  A->>H: Round 1 — 4 questions, each with a recommendation<br/>+ 2 citations, not asked
+  H-->>A: answers (2 at recommended, 2 not)
+  A->>B: recompute frontier — empty
+  A->>B: playbook plan (small tier)
+  A->>H: artifact: 4 pre-answered cards, 2 cited, 0 open
+  H-->>A: brain review → approve, round 1
+  </pre>
+  <figcaption>The two decisions that moved off the recommendation are the ones that would have
+  shipped wrong.</figcaption>
+</section>
+
+<section id="error-paths">
+  <h2>Error paths</h2>
+  <table>
+    <thead><tr><th>Failure</th><th>Detected by</th><th>Handled by</th><th>What happens</th></tr></thead>
+    <tbody>
+      <tr><td>Human goes AFK mid-grill</td><td>No answer to a round</td>
+        <td>Playbook says: do not answer your own questions</td>
+        <td>Agent stops. Unanswered questions become §15 open questions, not invented answers.</td></tr>
+      <tr><td>Cited prior decision is stale</td><td>Human reads the citation</td>
+        <td>The citation line offers to reopen</td>
+        <td>Reopened as a live question in the next round.</td></tr>
+      <tr><td>Frontier never empties</td><td>Round 4+ with no shrink</td>
+        <td>Playbook caps the loop</td>
+        <td>Scope is too big. Stop, say so, and point at <code>brain tasks</code> to split it.</td></tr>
+      <tr><td>Grill run with no plan following</td><td>—</td><td>Nothing</td>
+        <td>Answers are lost under decision 2's recommended option. Accepted cost.</td></tr>
+      <tr><td>Over-long summary blocks a checkpoint</td><td>exit 2 from <code>progress add</code></td>
+        <td><code>help:</code> line carries the skeleton</td>
+        <td>Agent reshapes and retries. No state lost — nothing was written.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="testing-plan">
+  <h2>Testing plan</h2>
+  <ul class="checklist">
+    <li><label><input type="checkbox"> <code>brain playbook</code> lists 10 ids; each prints
+      non-empty and exits 0</label></li>
+    <li><label><input type="checkbox"> <code>brain skill --check</code> exits 0 after regenerating</label></li>
+    <li><label><input type="checkbox"> <code>progress add</code> with a 400-char summary exits 2 and
+      the help line contains the skeleton</label></li>
+    <li><label><input type="checkbox"> <code>progress add</code> at the cap exits 0 and writes exactly
+      one entry</label></li>
+    <li><label><input type="checkbox"> Planted plan with a card missing <code>(recommended)</code>
+      fails the new check row</label></li>
+    <li><label><input type="checkbox"> Planted plan with two <code>(recommended)</code> in one card
+      also fails</label></li>
+    <li><label><input type="checkbox"> Plan with zero decision cards passes the row vacuously</label></li>
+    <li><label><input type="checkbox"> Regression: <code>brain check</code> stays green on all 9
+      existing features and 10 existing plans</label></li>
+    <li><label><input type="checkbox"> Regression: <code>brain verify --stage baseline</code> green</label></li>
+    <li><label><input type="checkbox"> Dogfood — the next real plan is written after a grill, and its
+      recommendation-departure rate is recorded in the checkpoint</label></li>
+  </ul>
+</section>
+
+<section id="open-questions">
+  <h2>Open questions</h2>
+  <ul>
+    <li>Should the memory check get its own verb — <code>brain decisions [&lt;slug&gt;]</code> — rather
+      than grill hand-rolling a search across <code>reviews.jsonl</code>? It would also serve the spec-axis
+      idea (checking a diff against approved decisions), but that is a separate plan.</li>
+    <li>Do grill rounds eventually belong in the <code>brain review</code> browser UI, where the answer
+      is already a click and lands in <code>reviews.jsonl</code> natively? Terminal-first is right for
+      v1; unclear whether the browser version is a real improvement or just more surface.</li>
+    <li>How do we know the register standard worked? Word count per checkpoint is measurable but
+      dumb. Time-to-find-a-fact is the real metric and there is no way to instrument it.</li>
+    <li>Should <code>playbook write</code> apply to the playbooks themselves? <code>plan</code> is 952
+      lines and this plan proposes adding to it.</li>
+  </ul>
+</section>
+
+<div class="verdict">
+  <button type="button" class="btn-approve" data-brain-action
+    onclick="queueVerdict('approve')">Approve plan</button>
+  <button type="button" class="btn-request-changes" data-brain-action
+    onclick="queueVerdict('request-changes')">Request changes</button>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "neutral" });
+</script>
+
+<script>
+  function queueDecision(cardId, question) {
+    var card = document.getElementById(cardId);
+    var checked = card.querySelector('input[type="radio"]:checked');
+    if (!checked) return;
+    var choice = checked.value;
+    if (window.brain && typeof window.brain.queuePrompt === "function") {
+      window.brain.queuePrompt({
+        tag: "decision",
+        queueKey: cardId,
+        prompt: question + ": " + choice,
+        target: { type: "decision", question: question, choice: choice }
+      });
+    }
+    var ack = document.getElementById("ack-" + cardId);
+    if (ack) ack.textContent = "Queued: " + choice;
+  }
+
+  function queueVerdict(verdict) {
+    if (!(window.brain && typeof window.brain.queuePrompt === "function")) return;
+    window.brain.queuePrompt({
+      tag: "message",
+      queueKey: "verdict",
+      prompt: verdict === "approve"
+        ? "Plan approved as written."
+        : "Requesting changes — see annotations."
+    });
+  }
+</script>
+
+</body>
+</html>

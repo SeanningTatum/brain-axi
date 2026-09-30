@@ -21,6 +21,43 @@
 
 ---
 
+## 2026-08-10 — shipped plan-phase: 2026-08-10 verification PASS (features/plan-phase/verifications/2026-08-10.md, receipt bound to 76356f6): playbook index
+- branch: `feat/plan-phase`
+- in-progress feature: none
+- run note: none
+
+---
+
+## 2026-08-10 — plan-phase phases 1-3 built: playbook grill + playbook write, plan tiering, progress add 200-char gate
+- branch: `chore/ship-state-integrity`
+- in-progress feature: plan-phase
+- run note: none
+- next: Commit, then verification doc + brain receipt + ship. Phase 4 (decision-card check row) deferred by the plan.
+
+---
+
+## 2026-08-07 — shipped task-coordination: 2026-08-06 verification PASS (features/task-coordination/verifications/2026-08-06.md, receipt bound to 2017620): 409 ass
+- branch: `chore/ship-state-integrity`
+- in-progress feature: none
+- run note: none
+
+---
+
+## 2026-08-06 — Closed state-integrity (feat-008): verification PASS + commit-bound receipt (e2df4da) + shipped. Then planned task-coordination (feat-009) — plan reviewed round 1, all 9 decisions at recommended, tier complete (phases 1-4). Also fixed a FEATURE_FIELDS re-declaration in bin/brain.js violating rules/state.md's one-definition rule.
+- branch: `chore/ship-state-integrity`
+- in-progress feature: none
+- run note: none
+- next: Start feat-009 phase 1 (the record): TASK_STATUSES + validateTasksShape + depends_on cycle detection + CAS write in lib/state.js, then cmdTasks. Set feat-009 in-progress first — the slot is free. Separate from this plan: CI runs brain check WITHOUT --strict (.brain/verify.json:5), and npm view brain-axi is still 404 so every npx -y brain-axi path is aspirational.
+
+---
+
+## 2026-08-06 — shipped state-integrity: 2026-08-06 verification PASS (features/state-integrity/verifications/2026-08-06.md, receipt bound to e2df4da): brain che
+- branch: `chore/ship-state-integrity`
+- in-progress feature: none
+- run note: none
+
+---
+
 ## 2026-07-31 — Harness hardening complete, loop closed. Closing independent score: CLI 8.0 / template 7.5 (from 4.0 baseline). Then fixed the three bypasses that audit found (bogus HTML comments hiding verdicts, nested dead branch inside the mapper, text-regex test-parity) — each proven closed with a live plant. 13 commits across brain-axi (feat/state-integrity) and cf-saas-starter (feat/harness-gates).
 - branch: `feat/state-integrity`
 - in-progress feature: none

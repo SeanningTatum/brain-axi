@@ -26,6 +26,8 @@ import {
 } from "../lib/review/brain-data.js";
 import {
   STATUSES,
+  SUMMARY_MAX_CHARS,
+  FEATURE_FIELDS,
   featureListPath,
   saveFeatureList,
   writeFileAtomic,
@@ -38,6 +40,12 @@ import {
   parseReceipt,
   parseVerdictDetail,
   VERDICT_ACCEPTED,
+  TASK_STATUSES,
+  tasksPath,
+  validateTasksShape,
+  unblockedTasks,
+  readTasks,
+  writeTasksCas,
 } from "../lib/state.js";
 import { sessionKey, stateDir, listSessions } from "../lib/review/store.js";
 import { PLAYBOOKS } from "../lib/review/playbooks.js";
@@ -291,6 +299,74 @@ function loadFeatureList(brain) {
   return parsed;
 }
 
+// Best-effort feature_list.json read for a purely orientational enrichment
+// (a one-line "what is this feature for" note, a set of known slugs for
+// disambiguation) — never opError, never throw. A malformed or missing
+// tracker must not take down a command whose primary payload is something
+// else entirely (a task, a run note); loadFeatureList's hard-fail contract is
+// for commands where the tracker IS the payload.
+function safeLoadFeatureList(brain) {
+  try {
+    const p = featureListPath(brain);
+    if (!fs.existsSync(p)) return null;
+    const parsed = JSON.parse(fs.readFileSync(p, "utf8"));
+    return parsed && Array.isArray(parsed.features) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function safeFeatureSlugs(brain) {
+  const list = safeLoadFeatureList(brain);
+  return list ? list.features.map((f) => f.slug).filter(Boolean) : [];
+}
+
+// tasks.json read-compat loader — mirrors loadFeatureList's contract: a
+// MISSING file is legal (no tasks yet, read-compat), but a file that exists
+// and fails validateTasksShape is a hard stop, since every caller below trusts
+// data.tasks unconditionally (a non-array `tasks` would throw on the first
+// .find/.map). Returns { data, hash }; data is null only when there is no
+// file at all.
+function requireTasks(brain, slug) {
+  const { data, hash } = readTasks(brain, slug);
+  if (data === null && hash === null) return { data: null, hash: null };
+  const shapeError = validateTasksShape(data, slug);
+  if (shapeError) {
+    const rel = path.relative(process.cwd(), tasksPath(brain, slug));
+    opError(`tasks.json for "${slug}" is invalid: ${shapeError}`, [
+      `Fix ${rel} by hand, or ask the coordinator to recreate it`,
+      "Run `brain check` for the full harness invariant report",
+    ]);
+  }
+  return { data, hash };
+}
+
+// Elapsed time since an ISO timestamp, coarse and human-scale — this is what
+// makes a stale claim visible in a list row without a second `view` call.
+// Returns null on an unparsable/future timestamp rather than a nonsense value.
+function formatElapsed(iso) {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  const mins = Math.floor(ms / 60000);
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h${mins % 60}m`;
+  const days = Math.floor(hours / 24);
+  return `${days}d${hours % 24}h`;
+}
+
+// Finds a task by id or opErrors naming the known ids — the same "no such
+// slug" shape cmdFeaturesView/cmdShip already use.
+function findTaskOr404(data, slug, id) {
+  const task = data.tasks.find((t) => t.id === id);
+  if (!task)
+    opError(`no task "${id}" for "${slug}"`, [
+      `known ids: ${data.tasks.map((t) => t.id).join(", ") || "(none)"}`,
+      `Run \`brain tasks ${slug}\` to list them`,
+    ]);
+  return task;
+}
+
 // progress.md: preamble, then entries separated by lines of "---".
 function parseProgress(brain) {
   const p = path.join(brain, "runs", "progress.md");
@@ -422,6 +498,23 @@ function bodyLines(label, content, { full, limit = 1200, fullCommand }) {
     lines.push(...toonList("help", [`Run \`${fullCommand}\` to see complete ${label}`]));
   }
   return lines;
+}
+
+// Same truncation contract as bodyLines (§3: preview + total-size note + a
+// --full escape hatch only when actually truncated), but as a NESTED field
+// inside a larger indented block, and WITHOUT an embedded help line — a
+// detail view with several long fields would otherwise grow one "help[1]:"
+// block per field. The caller collects `truncated` and folds a single --full
+// hint into its own one help list instead.
+function truncatedField(label, content, { full, limit = 1200, indent = 2 } = {}) {
+  const pad = " ".repeat(indent);
+  const text = String(content ?? "");
+  const truncated = !full && text.length > limit;
+  const shown = truncated ? text.slice(0, limit) : text;
+  const lines = [`${pad}${label}: |`];
+  for (const l of shown.split("\n")) lines.push(pad + "  " + l);
+  if (truncated) lines.push(`${pad}  ... (truncated, ${text.length} chars total)`);
+  return { lines, truncated };
 }
 
 // ---------------------------------------------------------------------------
@@ -641,7 +734,6 @@ function cmdFeatures(argv) {
   ]);
 }
 
-const FEATURE_FIELDS = ["id", "name", "slug", "status", "description", "dependencies", "evidence", "owners", "doc"];
 
 function cmdFeaturesList(argv) {
   const spec = {
@@ -1505,6 +1597,180 @@ function cmdVerify(argv) {
 // Ship — strict, honest flip to shipped (Addendum v6, v6.4/D4)
 // ---------------------------------------------------------------------------
 
+// The full preflight-then-commit ship operation, shared by `brain ship` and
+// gated autoship (`brain tasks done` closing the last open task). NEVER
+// prints and NEVER calls process.exit — it only reports what happened, so a
+// caller composing a bigger result (task closed, THEN a ship attempt) can
+// decide output/exit-code itself instead of two unrelated writes racing each
+// other's stdout. `brain ship` and the autoship path therefore run the
+// IDENTICAL strict preflight by construction, not by convention.
+function shipFeature(brain, slug, evidence) {
+  const list = loadFeatureList(brain);
+  const feat = list.features.find((f) => f.slug === slug || f.id === slug);
+  if (!feat) return { kind: "not-found", requestedSlug: slug, list };
+
+  if (feat.status === "shipped") return { kind: "already-shipped", feat };
+
+  const previous = feat.status;
+  const preShipChecks = brainCheck(brain).filter((c) => c.status === "fail");
+
+  // PREFLIGHT, then commit. Project the next state in memory and validate it
+  // BEFORE any write, so a failing check leaves the brain exactly as it was.
+  // This replaces the previous order (write feature_list.json, append the
+  // checkpoint, then run brainCheck and exit 1 with the flip already on disk) —
+  // that behavior was specified, not accidental, and reporting the failure
+  // honestly did not undo the fact that later reads saw a feature marked
+  // shipped on a brain that never passed its checks.
+  const projected = {
+    ...list,
+    features: list.features.map((f) =>
+      f === feat ? { ...f, status: "shipped", evidence } : f
+    ),
+  };
+
+  // strict: a ship without a PASS verification is exactly the premature "done"
+  // this harness exists to prevent.
+  // `scope` makes this a GATE, not an audit: every per-feature row (doc paths,
+  // dependency refs, verdicts, raw HTML, image links, plans, tasks) narrows to
+  // the feature being shipped. Unscoped, one stray <div> in some OTHER
+  // feature's legacy verification doc, or one moved screenshot, refused EVERY
+  // future ship — with a message naming a file the shipper never touched.
+  // That is the deadlock `strictScope` already fixed for the two strict rows,
+  // left half-fixed for the other seven — and now the tasks rows inherit the
+  // same fix for free by scoping the same way.
+  //
+  // Deliberately NOT a before/after diff: a dangling dependency on the feature
+  // being shipped is pre-existing AND disqualifying, so "did this write make it
+  // worse?" is the wrong question here. "Is this feature fit to ship?" is.
+  const checks = brainCheck(brain, { list: projected, strict: true, scope: feat.slug });
+  const failed = checks.filter((c) => c.status === "fail");
+  if (failed.length) return { kind: "refused", feat, previous, checks: failed };
+
+  feat.status = "shipped";
+  feat.evidence = evidence;
+
+  // Shipping touches TWO files (feature_list.json + runs/progress.md). Each
+  // write is atomic on its own, but the pair was not: a failure on the second
+  // left a feature marked shipped with no checkpoint recording it. Snapshot the
+  // first file's bytes and restore them if the second throws, so the pair is
+  // all-or-nothing.
+  const flPath = featureListPath(brain);
+  const flBefore = fs.existsSync(flPath) ? fs.readFileSync(flPath) : null;
+  saveFeatureList(brain, list);
+
+  const warnings = [];
+  const shots = listShots(brain, feat.slug);
+  if (shots.length === 0) warnings.push(`${feat.slug} has zero screenshots — evidence is unverified visually`);
+
+  const evidenceCapped = evidence.length > 120 ? evidence.slice(0, 120) : evidence;
+  let checkpointResult;
+  try {
+    checkpointResult = appendProgressEntry(brain, { summary: `shipped ${feat.slug}: ${evidenceCapped}` });
+  } catch (e) {
+    if (flBefore !== null) writeFileAtomic(flPath, flBefore);
+    return { kind: "checkpoint-failed", feat, previous, error: e.message };
+  }
+  // A MISSING progress.md is not a write failure — appendProgressEntry returns
+  // null by design so a brain without a cursor still ships. Warn, don't roll back.
+
+  // Regenerate the derived index so the tracker and its human-facing mirror are
+  // never out of step even for a moment. The drift check is skipped during
+  // preflight (the index describes disk, not a projection), so this is where the
+  // two are reconciled.
+  const regen = regenerateFeaturesIndex(brain);
+
+  // Re-verify AFTER the write. Preflight validated a projection; only this can
+  // assert the invariant the ship actually left behind, and it is what makes
+  // "no drift left behind" a checked claim rather than a comment.
+  const post = newFailuresAfter(preShipChecks, brainCheck(brain).filter((c) => c.status === "fail"));
+
+  return {
+    kind: post.length ? "post-check-failed" : "shipped",
+    feat,
+    previous,
+    warnings,
+    checkpointResult,
+    evidenceCapped,
+    regen,
+    post,
+  };
+}
+
+// Renders a shipFeature() result into { lines, help, exit } — everything
+// `brain ship` prints, MINUS the trailing `help:` block (returned separately)
+// so a composite caller (gated autoship) can merge it with its own help lines
+// into ONE `help:` list rather than emitting two. `exit` is 0 (caller need not
+// call process.exit) or 1 (caller should exit 1) — never called here, so the
+// same renderer works whether this is the whole command's output or half of it.
+function shipResultLines(result) {
+  if (result.kind === "not-found") {
+    return {
+      lines: [`error: no feature "${result.requestedSlug}"`],
+      help: [`known slugs: ${result.list.features.map((f) => f.slug).join(", ")}`],
+      exit: 1,
+    };
+  }
+  if (result.kind === "already-shipped") {
+    return {
+      lines: [`feature: ${result.feat.slug} already shipped (no-op)`],
+      help: [`Run \`brain features view ${result.feat.slug}\` to see the recorded evidence`],
+      exit: 0,
+    };
+  }
+  if (result.kind === "refused") {
+    return {
+      lines: [
+        `ship: refused — ${result.checks.length} harness check(s) would fail`,
+        kv("slug", result.feat.slug, 2),
+        kv("status", `${result.previous} (unchanged — nothing was written)`, 2),
+        ...toonTable("checks", result.checks, ["check", "status", "detail"]),
+      ],
+      help: [
+        `Every row above concerns ${result.feat.slug} — unrelated brain debt does not block a ship`,
+        `Fix the failing detail(s) above, then re-run \`brain ship ${result.feat.slug} --evidence "..."\``,
+        "Run `brain check` to re-verify without attempting the ship",
+      ],
+      exit: 1,
+    };
+  }
+  if (result.kind === "checkpoint-failed") {
+    return {
+      lines: [`error: checkpoint failed, ship rolled back: ${result.error}`],
+      help: [
+        `${result.feat.slug} is still "${result.previous}" — feature_list.json was restored`,
+        `Fix runs/progress.md, then re-run \`brain ship ${result.feat.slug} --evidence "..."\``,
+      ],
+      exit: 1,
+    };
+  }
+
+  // "shipped" or "post-check-failed" — the write happened.
+  const lines = ["ship:", kv("slug", result.feat.slug, 2), kv("previous", result.previous, 2), kv("status", "shipped", 2)];
+  for (const w of result.warnings) lines.push(`warning: ${w}`);
+  if (result.checkpointResult) lines.push(kv("checkpoint", `shipped ${result.feat.slug}: ${result.evidenceCapped}`, 2));
+  else lines.push("warning: runs/progress.md not found — checkpoint not recorded");
+  if (result.regen === "written") lines.push(kv("index", "features/index.md regenerated", 2));
+  else if (result.regen === "no-markers")
+    lines.push("warning: features/index.md has no brain:features-table markers — update it by hand or `brain check` will report drift");
+  else if (result.regen === "missing")
+    lines.push("warning: features/index.md absent — run `brain features index --write --create`");
+
+  if (result.kind === "post-check-failed") {
+    lines.push(...toonTable("post_ship_checks", result.post, ["check", "status", "detail"]));
+    return {
+      lines,
+      help: [`${result.feat.slug} shipped, but ${result.post.length} check(s) fail AFTER the write — fix the detail(s) above`],
+      exit: 1,
+    };
+  }
+
+  return {
+    lines,
+    help: [`Run \`brain features view ${result.feat.slug}\` to confirm`, "Run `brain check` anytime to re-verify harness invariants"],
+    exit: 0,
+  };
+}
+
 function cmdShip(argv) {
   const spec = {
     "--evidence": { value: true, desc: "evidence string proving the feature works (required)" },
@@ -1524,132 +1790,815 @@ function cmdShip(argv) {
     usageError("--evidence is required", [`brain ship ${slug} --evidence "..."`]);
 
   const brain = findBrain(flags.brain);
-  const list = loadFeatureList(brain);
-  const feat = list.features.find((f) => f.slug === slug || f.id === slug);
-  if (!feat) opError(`no feature "${slug}"`, [`known slugs: ${list.features.map((f) => f.slug).join(", ")}`]);
+  const result = shipFeature(brain, slug, flags.evidence);
+  const { lines, help, exit } = shipResultLines(result);
+  print([...lines, ...toonList("help", help)]);
+  if (exit) process.exit(exit);
+}
 
-  if (feat.status === "shipped") {
+// ---------------------------------------------------------------------------
+// Tasks — features/<slug>/tasks.json, the coordination layer BELOW a feature
+// (lib/state.js owns the schema, cycle detection, and CAS write; this is the
+// CLI surface over it). Every mutation follows the same preflight-then-commit
+// shape as cmdShip: read → project the change → validateTasksShape the
+// PROJECTION → only then writeTasksCas with the hash from the read.
+// ---------------------------------------------------------------------------
+
+function splitCsv(v) {
+  if (!v) return [];
+  return v
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+// Auto-generated ids only ever advance past ids matching the `t<N>` scheme —
+// a hand-picked id like "spike" is a leaf as far as numbering is concerned,
+// not a reason to guess at a scheme nobody declared.
+function nextTaskId(tasks) {
+  let max = 0;
+  for (const t of tasks) {
+    const m = /^t(\d+)$/.exec(t.id);
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return `t${max + 1}`;
+}
+
+const TASKS_SUBCOMMANDS = ["view", "add", "claim", "done", "release"];
+
+function cmdTasks(argv) {
+  // Unlike cmdFeatures/cmdRuns, the DEFAULT subcommand (list) itself takes a
+  // required positional (<slug>), so argv[0] can't be blindly treated as "the
+  // subcommand name unless it starts with --". Only dispatch to a named
+  // subcommand when argv[0] actually IS one of the five verbs below;
+  // otherwise the whole argv (slug included) passes through to list.
+  //
+  // A feature slugged like a verb ("release", "done") used to be unreachable:
+  // `brain tasks release` read as the verb, then failed for a missing <slug>.
+  // A verb needs a following argument to be a verb at all — every one of them
+  // takes at least a slug — so a bare `tasks <verb>` is the list form. An
+  // explicit `list` verb is the escape hatch for the remaining ambiguity, and
+  // it is documented in --help rather than working by accident.
+  // Every verb takes a positional immediately (`view <slug> <id>`,
+  // `claim <slug> <id>`, `add <slug>`), so a verb-shaped argv[0] followed by a
+  // flag — or by nothing — is a slug, not a verb.
+  const isVerb =
+    argv[0] && TASKS_SUBCOMMANDS.includes(argv[0]) && argv[1] && !argv[1].startsWith("-");
+  if (argv[0] === "list") return cmdTasksList(argv.slice(1));
+  const sub = isVerb ? argv[0] : "list";
+  const rest = isVerb ? argv.slice(1) : argv;
+  if (sub === "view") return cmdTasksView(rest);
+  if (sub === "add") return cmdTasksAdd(rest);
+  if (sub === "claim") return cmdTasksClaim(rest);
+  if (sub === "done") return cmdTasksDone(rest);
+  if (sub === "release") return cmdTasksRelease(rest);
+  return cmdTasksList(rest);
+}
+
+function cmdTasksList(argv) {
+  const spec = {
+    "--status": { value: true, desc: `filter by status (${TASK_STATUSES.join("|")})` },
+    "--limit": { value: true, desc: "max rows (default: 100)" },
+  };
+  const { flags, positionals } = parseArgs(argv, spec, "tasks");
+  if (flags.help)
+    helpBlock(
+      "tasks",
+      "List tasks for a feature from features/<slug>/tasks.json",
+      spec,
+      [
+        "brain tasks task-coordination",
+        "brain tasks task-coordination --status open",
+        "brain tasks list release   (explicit `list` — needed only when a slug is spelled like a verb)",
+      ],
+      ["<slug> — feature slug from `brain features`"]
+    );
+  const slug = positionals[0];
+  if (!slug) usageError("missing required argument <slug>", ["brain tasks <slug>  (see `brain features` for slugs)"]);
+  if (flags.status && !TASK_STATUSES.includes(flags.status))
+    usageError(`invalid --status "${flags.status}"`, [`valid statuses: ${TASK_STATUSES.join(", ")}`]);
+  const limit = flags.limit ? parseInt(flags.limit, 10) : 100;
+  if (!Number.isInteger(limit) || limit < 1)
+    usageError(`invalid --limit "${flags.limit}"`, ["--limit takes a positive integer"]);
+
+  const brain = findBrain(flags.brain);
+  const { data } = requireTasks(brain, slug);
+  const allTasks = data ? data.tasks : [];
+
+  if (allTasks.length === 0) {
     print([
-      `feature: ${feat.slug} already shipped (no-op)`,
-      ...toonList("help", [`Run \`brain features view ${feat.slug}\` to see the recorded evidence`]),
+      `tasks: no tasks for ${slug} yet`,
+      ...toonList("help", [`Run \`brain tasks add ${slug} --title "..." --acceptance "..."\` to add the first task`]),
     ]);
     return;
   }
 
-  const previous = feat.status;
-  const preShipChecks = brainCheck(brain).filter((c) => c.status === "fail");
+  // Computed over the FULL list regardless of --status, so the count line
+  // always answers "how many can I hand out right now" in one call (AXI §4) —
+  // narrowing the table to one status must not narrow this number too.
+  const unblockedIds = new Set(unblockedTasks(data).map((t) => t.id));
 
-  // PREFLIGHT, then commit. Project the next state in memory and validate it
-  // BEFORE any write, so a failing check leaves the brain exactly as it was.
-  // This replaces the previous order (write feature_list.json, append the
-  // checkpoint, then run brainCheck and exit 1 with the flip already on disk) —
-  // that behavior was specified, not accidental, and reporting the failure
-  // honestly did not undo the fact that later reads saw a feature marked
-  // shipped on a brain that never passed its checks.
+  let rows = allTasks;
+  if (flags.status) rows = rows.filter((t) => t.status === flags.status);
+  const total = rows.length;
+  rows = rows.slice(0, limit);
+
+  if (total === 0) {
+    print([
+      `tasks: 0 ${flags.status} tasks for ${slug}`,
+      ...toonList("help", [`Run \`brain tasks ${slug}\` for all tasks`]),
+    ]);
+    return;
+  }
+
+  // A claimed row is exactly where a stale claim needs to be visible without a
+  // second `view` call — folded into the owner cell rather than a 5th column
+  // so the default schema stays the 4 fields AXI §2 asks for.
+  const display = rows.map((t) => {
+    let owner = t.owner || "";
+    if (t.status === "claimed" && t.claimed_at) {
+      const elapsed = formatElapsed(t.claimed_at);
+      if (elapsed) owner = owner ? `${owner} (held ${elapsed})` : `(held ${elapsed})`;
+    }
+    return { id: t.id, title: t.title, status: t.status, owner };
+  });
+
+  const counts = {};
+  for (const t of allTasks) counts[t.status] = (counts[t.status] || 0) + 1;
+  const countParts = TASK_STATUSES.filter((s) => counts[s]).map((s) => `${counts[s]} ${s}`);
+  const countLine =
+    `${allTasks.length} task${allTasks.length === 1 ? "" : "s"} — ${countParts.join(", ")}` +
+    ` (${unblockedIds.size} unblocked)`;
+
+  const lines = [kv("count", countLine)];
+  if (rows.length < total)
+    lines.push(kv("shown", `${rows.length} of ${total}${flags.status ? ` ${flags.status}` : ""}`));
+  lines.push(...toonTable("tasks", display, ["id", "title", "status", "owner"]));
+
+  const help = [`Run \`brain tasks view ${slug} <id>\` for full details`];
+  if (rows.length < total) help.push(`Run \`brain tasks ${slug} --limit ${total}\` for all ${total}`);
+  if (unblockedIds.size) help.push(`Run \`brain tasks claim ${slug} <id> --owner <name>\` to claim an unblocked task`);
+  help.push(`Run \`brain tasks add ${slug} --title "..." --acceptance "..."\` to add another task`);
+  lines.push(...toonList("help", help));
+  print(lines);
+}
+
+function cmdTasksView(argv) {
+  const spec = { "--full": { value: false, desc: "print the complete acceptance/evidence text" } };
+  const { flags, positionals } = parseArgs(argv, spec, "tasks view");
+  if (flags.help)
+    helpBlock(
+      "tasks view",
+      "Show one task: acceptance, deps, files, owner, claimed_at, evidence, receipt, and what blocks it",
+      spec,
+      ["brain tasks view task-coordination t1", "brain tasks view task-coordination t1 --full"],
+      ["<slug> — feature slug", "<id> — task id from `brain tasks <slug>`"]
+    );
+  const [slug, id] = positionals;
+  if (!slug) usageError("missing required argument <slug>", ["brain tasks view <slug> <id>"]);
+  if (!id)
+    usageError("missing required argument <id>", [
+      `brain tasks view ${slug} <id>  (see \`brain tasks ${slug}\` for ids)`,
+    ]);
+
+  const brain = findBrain(flags.brain);
+  const { data } = requireTasks(brain, slug);
+  if (!data || data.tasks.length === 0)
+    opError(`no tasks for "${slug}" yet`, [
+      `Run \`brain tasks add ${slug} --title "..." --acceptance "..."\` to add one`,
+    ]);
+  const task = findTaskOr404(data, slug, id);
+
+  const statusById = new Map(data.tasks.map((t) => [t.id, t.status]));
+  const deps = task.depends_on || [];
+  const blockedBy = deps.filter((d) => statusById.get(d) !== "done");
+
+  const lines = ["task:"];
+  lines.push(kv("id", task.id, 2));
+  lines.push(kv("title", task.title, 2));
+  lines.push(kv("status", task.status, 2));
+  lines.push(kv("owner", task.owner || "none", 2));
+  lines.push(kv("claimed_at", task.claimed_at || "none", 2));
+  if (task.status === "claimed" && task.claimed_at) {
+    const elapsed = formatElapsed(task.claimed_at);
+    if (elapsed) lines.push(kv("held", elapsed, 2));
+  }
+  lines.push(kv("depends_on", deps.length ? deps.join(" ") : "none", 2));
+  lines.push(kv("blocked_by", blockedBy.length ? blockedBy.join(" ") : "none", 2));
+  lines.push(kv("files", (task.files || []).length ? task.files.join(" ") : "none", 2));
+
+  let truncatedAny = false;
+  const acceptance = truncatedField("acceptance", task.acceptance, { full: !!flags.full });
+  lines.push(...acceptance.lines);
+  truncatedAny = truncatedAny || acceptance.truncated;
+
+  if (task.evidence) {
+    const evidence = truncatedField("evidence", task.evidence, { full: !!flags.full });
+    lines.push(...evidence.lines);
+    truncatedAny = truncatedAny || evidence.truncated;
+  } else {
+    lines.push(kv("evidence", "none", 2));
+  }
+
+  if (task.receipt && task.receipt.commit) {
+    lines.push("  receipt:");
+    lines.push(kv("commit", task.receipt.commit, 4));
+    if (task.receipt.verified_by) lines.push(kv("verified_by", task.receipt.verified_by, 4));
+    if (task.receipt.commands) lines.push(kv("commands", task.receipt.commands, 4));
+  } else {
+    lines.push(kv("receipt", "none", 2));
+  }
+
+  const help = [];
+  if (truncatedAny) help.push(`Run \`brain tasks view ${slug} ${id} --full\` to see the untruncated text`);
+  if (task.status === "open" && blockedBy.length === 0)
+    help.push(`Run \`brain tasks claim ${slug} ${id} --owner <name>\` to claim it`);
+  if (task.status === "open" && blockedBy.length)
+    help.push(`Blocked on ${blockedBy.join(", ")} — run \`brain tasks view ${slug} <blocker-id>\` to check them`);
+  if (task.status === "claimed") {
+    help.push(`Run \`brain tasks done ${slug} ${id} --evidence "..."\` once it is demonstrably done`);
+    help.push(`Run \`brain tasks release ${slug} ${id}\` to drop a stale claim`);
+  }
+  help.push(`Run \`brain tasks ${slug}\` to see all tasks`);
+  lines.push(...toonList("help", help));
+  print(lines);
+}
+
+function cmdTasksAdd(argv) {
+  const spec = {
+    "--title": { value: true, desc: "task title (required)" },
+    "--acceptance": { value: true, desc: "what makes this task checkably done (required)" },
+    "--depends-on": { value: true, desc: "comma-separated task ids this depends on" },
+    "--files": { value: true, desc: "comma-separated file paths this task touches" },
+    "--id": { value: true, desc: "task id (default: auto-generated t1, t2, ... from the current max)" },
+  };
+  const { flags, positionals } = parseArgs(argv, spec, "tasks add");
+  if (flags.help)
+    helpBlock(
+      "tasks add",
+      "Add a task to features/<slug>/tasks.json (creates the file on the first task)",
+      spec,
+      [
+        'brain tasks add task-coordination --title "The record" --acceptance "lib/state.js schema + CAS write, green"',
+        'brain tasks add task-coordination --title "The gate" --acceptance "..." --depends-on t1 --files lib/state.js,bin/brain.js',
+      ],
+      ["<slug> — feature slug from `brain features`"]
+    );
+  const slug = positionals[0];
+  if (!slug)
+    usageError("missing required argument <slug>", ['brain tasks add <slug> --title "..." --acceptance "..."']);
+  if (!flags.title || !flags.title.trim())
+    usageError("--title is required", [`brain tasks add ${slug} --title "..." --acceptance "..."`]);
+  if (!flags.acceptance || !flags.acceptance.trim())
+    usageError("--acceptance is required", [`brain tasks add ${slug} --title "${flags.title}" --acceptance "..."`]);
+
+  const brain = findBrain(flags.brain);
+  const { data, hash } = requireTasks(brain, slug);
+  const existing = data ? data.tasks : [];
+
+  let id = flags.id;
+  if (id) {
+    if (existing.some((t) => t.id === id))
+      opError(`task id "${id}" already exists for "${slug}"`, [
+        `known ids: ${existing.map((t) => t.id).join(", ")}`,
+        "Omit --id to auto-generate the next one",
+      ]);
+  } else {
+    id = nextTaskId(existing);
+  }
+
+  const dependsOn = splitCsv(flags["depends-on"]);
+  const files = splitCsv(flags.files);
+
+  const newTask = { id, title: flags.title, status: "open", acceptance: flags.acceptance };
+  if (dependsOn.length) newTask.depends_on = dependsOn;
+  if (files.length) newTask.files = files;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const projected = { ...(data || {}), feature: slug, updated: today, tasks: [...existing, newTask] };
+
+  // PREFLIGHT, then commit — the same order cmdShip enforces: validate the
+  // PROJECTED state before any write, so a bad --depends-on or a cycle leaves
+  // the file exactly as it was rather than writing first and reporting after.
+  const shapeError = validateTasksShape(projected, slug);
+  if (shapeError)
+    opError(`refused — ${shapeError}`, [
+      "Nothing was written",
+      `Run \`brain tasks ${slug}\` to see existing ids before retrying`,
+    ]);
+
+  const result = writeTasksCas(brain, slug, projected, hash);
+  if (!result.ok)
+    opError(result.message, [`Run \`brain tasks ${slug}\` to re-read the current state, then retry`]);
+
+  print([
+    "task:",
+    kv("slug", slug, 2),
+    kv("id", id, 2),
+    kv("title", flags.title, 2),
+    kv("status", "open", 2),
+    ...(dependsOn.length ? [kv("depends_on", dependsOn.join(" "), 2)] : []),
+    ...toonList("help", [
+      `Run \`brain tasks view ${slug} ${id}\` to see it in full`,
+      `Run \`brain tasks claim ${slug} ${id} --owner <name>\` to claim it`,
+      `Run \`brain tasks add ${slug} --title "..." --acceptance "..."\` to add another`,
+    ]),
+  ]);
+}
+
+function cmdTasksClaim(argv) {
+  const spec = { "--owner": { value: true, desc: "who is claiming this task (required)" } };
+  const { flags, positionals } = parseArgs(argv, spec, "tasks claim");
+  if (flags.help)
+    helpBlock(
+      "tasks claim",
+      "Claim an open task (compare-and-swap — refuses if held by someone else or blocked by an unfinished dependency)",
+      spec,
+      ["brain tasks claim task-coordination t2 --owner worker-a"],
+      ["<slug> — feature slug", "<id> — task id from `brain tasks <slug>`"]
+    );
+  const [slug, id] = positionals;
+  if (!slug) usageError("missing required argument <slug>", ["brain tasks claim <slug> <id> --owner <name>"]);
+  if (!id) usageError("missing required argument <id>", [`brain tasks claim ${slug} <id> --owner <name>`]);
+  if (!flags.owner || !flags.owner.trim())
+    usageError("--owner is required", [`brain tasks claim ${slug} ${id} --owner <name>`]);
+
+  const brain = findBrain(flags.brain);
+  const { data, hash } = requireTasks(brain, slug);
+  if (!data || data.tasks.length === 0)
+    opError(`no tasks for "${slug}" yet`, [
+      `Run \`brain tasks add ${slug} --title "..." --acceptance "..."\` to add one`,
+    ]);
+  const task = findTaskOr404(data, slug, id);
+
+  if (task.status === "claimed") {
+    // Idempotent no-op when the caller already holds it (AXI §6) — a worker
+    // re-asserting its own claim (e.g. after a retry) is not an error.
+    if (task.owner === flags.owner) {
+      print([
+        `task: ${slug}/${id} already claimed by ${flags.owner} (no-op)`,
+        ...toonList("help", [
+          `Run \`brain tasks done ${slug} ${id} --evidence "..."\` once it is demonstrably done`,
+        ]),
+      ]);
+      return;
+    }
+    opError(`${slug}/${id} is already claimed by "${task.owner}"`, [
+      `Run \`brain tasks ${slug}\` to re-list and claim a different task`,
+    ]);
+  }
+  if (task.status === "done")
+    opError(`${slug}/${id} is already done`, [`Run \`brain tasks view ${slug} ${id}\` to see its evidence`]);
+  if (task.status === "cut")
+    opError(`${slug}/${id} is cut — not claimable`, [`Run \`brain tasks ${slug}\` to see claimable tasks`]);
+  if (task.status === "blocked")
+    opError(`${slug}/${id} is marked blocked — not claimable`, [
+      `Run \`brain tasks view ${slug} ${id}\` for details`,
+    ]);
+
+  const statusById = new Map(data.tasks.map((t) => [t.id, t.status]));
+  const deps = task.depends_on || [];
+  const unmet = deps.filter((d) => statusById.get(d) !== "done");
+  if (unmet.length)
+    opError(`${slug}/${id} is blocked on ${unmet.join(", ")}`, [
+      `Run \`brain tasks ${slug}\` to see what is unblocked right now`,
+    ]);
+
+  const claimedAt = new Date().toISOString();
+  const today = claimedAt.slice(0, 10);
   const projected = {
-    ...list,
-    features: list.features.map((f) =>
-      f === feat ? { ...f, status: "shipped", evidence: flags.evidence } : f
+    ...data,
+    feature: slug,
+    updated: today,
+    tasks: data.tasks.map((t) =>
+      t.id === id ? { ...t, status: "claimed", owner: flags.owner, claimed_at: claimedAt } : t
     ),
   };
+  const shapeError = validateTasksShape(projected, slug);
+  if (shapeError) opError(`refused — ${shapeError}`, ["Nothing was written"]);
 
-  // strict: a ship without a PASS verification is exactly the premature "done"
-  // this harness exists to prevent.
-  // `scope` makes this a GATE, not an audit: every per-feature row (doc paths,
-  // dependency refs, verdicts, raw HTML, image links, plans) narrows to the
-  // feature being shipped. Unscoped, one stray <div> in some OTHER feature's
-  // legacy verification doc, or one moved screenshot, refused EVERY future ship
-  // — with a message naming a file the shipper never touched. That is the
-  // deadlock `strictScope` already fixed for the two strict rows, left
-  // half-fixed for the other seven.
-  //
-  // Deliberately NOT a before/after diff: a dangling dependency on the feature
-  // being shipped is pre-existing AND disqualifying, so "did this write make it
-  // worse?" is the wrong question here. "Is this feature fit to ship?" is.
-  const checks = brainCheck(brain, { list: projected, strict: true, scope: feat.slug });
-  const failed = checks.filter((c) => c.status === "fail");
-  if (failed.length) {
-    print([
-      `ship: refused — ${failed.length} harness check(s) would fail`,
-      kv("slug", feat.slug, 2),
-      kv("status", `${previous} (unchanged — nothing was written)`, 2),
-      ...toonTable("checks", failed, ["check", "status", "detail"]),
-      ...toonList("help", [
-        `Every row above concerns ${feat.slug} — unrelated brain debt does not block a ship`,
-        `Fix the failing detail(s) above, then re-run \`brain ship ${feat.slug} --evidence "..."\``,
-        "Run `brain check` to re-verify without attempting the ship",
-      ]),
-    ]);
-    process.exit(1);
-    return;
-  }
+  const result = writeTasksCas(brain, slug, projected, hash);
+  if (!result.ok)
+    opError(result.message, [`Run \`brain tasks ${slug}\` to re-read the current state, then retry`]);
 
-  feat.status = "shipped";
-  feat.evidence = flags.evidence;
-
-  // Shipping touches TWO files (feature_list.json + runs/progress.md). Each
-  // write is atomic on its own, but the pair was not: a failure on the second
-  // left a feature marked shipped with no checkpoint recording it. Snapshot the
-  // first file's bytes and restore them if the second throws, so the pair is
-  // all-or-nothing.
-  const flPath = featureListPath(brain);
-  const flBefore = fs.existsSync(flPath) ? fs.readFileSync(flPath) : null;
-  saveFeatureList(brain, list);
-
-  const lines = ["ship:", kv("slug", feat.slug, 2), kv("previous", previous, 2), kv("status", "shipped", 2)];
-
-  const shots = listShots(brain, feat.slug);
-  if (shots.length === 0) lines.push(`warning: ${feat.slug} has zero screenshots — evidence is unverified visually`);
-
-  const evidenceCapped = flags.evidence.length > 120 ? flags.evidence.slice(0, 120) : flags.evidence;
-  let checkpointResult;
-  try {
-    checkpointResult = appendProgressEntry(brain, { summary: `shipped ${feat.slug}: ${evidenceCapped}` });
-  } catch (e) {
-    if (flBefore !== null) writeFileAtomic(flPath, flBefore);
-    opError(`checkpoint failed, ship rolled back: ${e.message}`, [
-      `${feat.slug} is still "${previous}" — feature_list.json was restored`,
-      `Fix runs/progress.md, then re-run \`brain ship ${feat.slug} --evidence "..."\``,
-    ]);
-  }
-  // A MISSING progress.md is not a write failure — appendProgressEntry returns
-  // null by design so a brain without a cursor still ships. Warn, don't roll back.
-  if (checkpointResult) lines.push(kv("checkpoint", `shipped ${feat.slug}: ${evidenceCapped}`, 2));
-  else lines.push("warning: runs/progress.md not found — checkpoint not recorded");
-
-  // Regenerate the derived index so the tracker and its human-facing mirror are
-  // never out of step even for a moment. The drift check is skipped during
-  // preflight (the index describes disk, not a projection), so this is where the
-  // two are reconciled.
-  const regen = regenerateFeaturesIndex(brain);
-  if (regen === "written") lines.push(kv("index", "features/index.md regenerated", 2));
-  else if (regen === "no-markers")
-    lines.push("warning: features/index.md has no brain:features-table markers — update it by hand or `brain check` will report drift");
-  else if (regen === "missing")
-    lines.push("warning: features/index.md absent — run `brain features index --write --create`");
-
-  // Re-verify AFTER the write. Preflight validated a projection; only this can
-  // assert the invariant the ship actually left behind, and it is what makes
-  // "no drift left behind" a checked claim rather than a comment.
-  const post = newFailuresAfter(preShipChecks, brainCheck(brain).filter((c) => c.status === "fail"));
-  if (post.length) {
-    lines.push(...toonTable("post_ship_checks", post, ["check", "status", "detail"]));
-    lines.push(
-      ...toonList("help", [
-        `${feat.slug} shipped, but ${post.length} check(s) fail AFTER the write — fix the detail(s) above`,
-      ])
-    );
-    print(lines);
-    process.exit(1);
-    return;
-  }
-
-  lines.push(
+  print([
+    "task:",
+    kv("slug", slug, 2),
+    kv("id", id, 2),
+    kv("status", "claimed", 2),
+    kv("owner", flags.owner, 2),
+    kv("claimed_at", claimedAt, 2),
     ...toonList("help", [
-      `Run \`brain features view ${feat.slug}\` to confirm`,
-      "Run `brain check` anytime to re-verify harness invariants",
-    ])
+      `Run \`brain tasks done ${slug} ${id} --evidence "..."\` once it is demonstrably done`,
+      `Run \`brain tasks release ${slug} ${id}\` to drop the claim without closing it`,
+    ]),
+  ]);
+}
+
+function cmdTasksDone(argv) {
+  const spec = {
+    "--evidence": { value: true, desc: "evidence this task is actually done (required)" },
+    "--no-autoship": {
+      value: false,
+      desc: "skip the automatic `brain ship` this would otherwise trigger by closing the last open task",
+    },
+  };
+  const { flags, positionals } = parseArgs(argv, spec, "tasks done");
+  if (flags.help)
+    helpBlock(
+      "tasks done",
+      "Close a task: evidence required — mirrors `brain ship`'s evidence gate. Closing the LAST open task " +
+        "runs the ship path automatically through the identical strict preflight (--no-autoship opts out)",
+      spec,
+      [
+        'brain tasks done task-coordination t2 --evidence "check-state-invariants green, 306 assertions"',
+        'brain tasks done task-coordination t3 --evidence "..." --no-autoship',
+      ],
+      ["<slug> — feature slug", "<id> — task id from `brain tasks <slug>`"]
+    );
+  const [slug, id] = positionals;
+  if (!slug) usageError("missing required argument <slug>", ['brain tasks done <slug> <id> --evidence "..."']);
+  if (!id) usageError("missing required argument <id>", [`brain tasks done ${slug} <id> --evidence "..."`]);
+  if (!flags.evidence || !flags.evidence.trim())
+    usageError("--evidence is required", [`brain tasks done ${slug} ${id} --evidence "..."`]);
+
+  const brain = findBrain(flags.brain);
+  const { data, hash } = requireTasks(brain, slug);
+  if (!data || data.tasks.length === 0)
+    opError(`no tasks for "${slug}" yet`, [
+      `Run \`brain tasks add ${slug} --title "..." --acceptance "..."\` to add one`,
+    ]);
+  const task = findTaskOr404(data, slug, id);
+
+  if (task.status === "done") {
+    print([
+      `task: ${slug}/${id} already done (no-op)`,
+      ...toonList("help", [`Run \`brain tasks view ${slug} ${id}\` to see the recorded evidence`]),
+    ]);
+    return;
+  }
+  if (task.status === "cut")
+    opError(`${slug}/${id} is cut — cannot be marked done`, [`Run \`brain tasks view ${slug} ${id}\` for details`]);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const projected = {
+    ...data,
+    feature: slug,
+    updated: today,
+    tasks: data.tasks.map((t) => (t.id === id ? { ...t, status: "done", evidence: flags.evidence } : t)),
+  };
+  const shapeError = validateTasksShape(projected, slug);
+  if (shapeError) opError(`refused — ${shapeError}`, ["Nothing was written"]);
+
+  const casResult = writeTasksCas(brain, slug, projected, hash);
+  if (!casResult.ok)
+    opError(casResult.message, [`Run \`brain tasks ${slug}\` to re-read the current state, then retry`]);
+
+  // The task-close write is already durable at this point — everything below
+  // only decides what to REPORT (and, for autoship, whether to ALSO attempt a
+  // second, independent operation). Nothing here can undo the task closing.
+  const remaining = projected.tasks.filter((t) => !["done", "cut"].includes(t.status)).length;
+  const lines = [
+    "task:",
+    kv("slug", slug, 2),
+    kv("id", id, 2),
+    kv("status", "done", 2),
+    kv("evidence", flags.evidence.length > 120 ? flags.evidence.slice(0, 120) + "…" : flags.evidence, 2),
+  ];
+  const help = [];
+  let exitCode = 0;
+
+  if (remaining === 0 && !flags["no-autoship"]) {
+    // Gated autoship: the LAST open task just closed, so attempt the same
+    // strict preflight-then-commit ship `brain ship` would run — never a
+    // parallel or looser gate. A refusal here is the gate working as
+    // designed, not a failure of the task close that already succeeded above.
+    const autoEvidence = `autoship: last open task ${id} closed — ${flags.evidence}`;
+    const shipRes = shipFeature(brain, slug, autoEvidence);
+    const rendered = shipResultLines(shipRes);
+    lines.push(...rendered.lines);
+    help.push(...rendered.help);
+    // The task close is the primary, already-committed operation of THIS
+    // command; autoship is a bonus attempt this command makes on top of it.
+    // A "refused" ship is the gate correctly declining to ship unverified
+    // work — that is success for `tasks done`, so it must not turn an
+    // already-successful task close into a nonzero exit (a coordinator
+    // script checking `$?` would otherwise have to special-case "refused"
+    // out of every other real failure). A "checkpoint-failed" or
+    // "post-check-failed" ship result IS a genuine problem with the autoship
+    // attempt itself (an I/O error, or new harness debt introduced by a
+    // write that did land) and stays non-zero so it is not missed.
+    if (shipRes.kind === "checkpoint-failed" || shipRes.kind === "post-check-failed") exitCode = rendered.exit;
+    help.push(`Run \`brain tasks view ${slug} ${id}\` to see the recorded evidence`);
+  } else if (remaining === 0) {
+    help.push(`Run \`brain tasks ${slug}\` — every task is done or cut; autoship skipped (--no-autoship)`);
+    help.push(`Run \`brain ship ${slug} --evidence "..."\` to ship manually`);
+  } else {
+    help.push(`Run \`brain tasks ${slug}\` — ${remaining} task(s) still open/claimed`);
+  }
+  help.push('Run `brain progress add --summary "..."` to checkpoint this change');
+
+  print([...lines, ...toonList("help", help)]);
+  if (exitCode) process.exit(exitCode);
+}
+
+function cmdTasksRelease(argv) {
+  const spec = {};
+  const { flags, positionals } = parseArgs(argv, spec, "tasks release");
+  if (flags.help)
+    helpBlock(
+      "tasks release",
+      "Clear a claim back to open — the stale-claim escape hatch (no TTL, always explicit)",
+      spec,
+      ["brain tasks release task-coordination t2"],
+      ["<slug> — feature slug", "<id> — task id from `brain tasks <slug>`"]
+    );
+  const [slug, id] = positionals;
+  if (!slug) usageError("missing required argument <slug>", ["brain tasks release <slug> <id>"]);
+  if (!id) usageError("missing required argument <id>", [`brain tasks release ${slug} <id>`]);
+
+  const brain = findBrain(flags.brain);
+  const { data, hash } = requireTasks(brain, slug);
+  if (!data || data.tasks.length === 0)
+    opError(`no tasks for "${slug}" yet`, [
+      `Run \`brain tasks add ${slug} --title "..." --acceptance "..."\` to add one`,
+    ]);
+  const task = findTaskOr404(data, slug, id);
+
+  if (task.status === "open") {
+    print([
+      `task: ${slug}/${id} already open (no-op)`,
+      ...toonList("help", [`Run \`brain tasks claim ${slug} ${id} --owner <name>\` to claim it`]),
+    ]);
+    return;
+  }
+  if (task.status !== "claimed")
+    opError(`${slug}/${id} is "${task.status}" — only a claimed task can be released`, [
+      `Run \`brain tasks view ${slug} ${id}\` for details`,
+    ]);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const projected = {
+    ...data,
+    feature: slug,
+    updated: today,
+    tasks: data.tasks.map((t) => {
+      if (t.id !== id) return t;
+      const { owner, claimed_at, ...rest } = t;
+      return { ...rest, status: "open" };
+    }),
+  };
+  const shapeError = validateTasksShape(projected, slug);
+  if (shapeError) opError(`refused — ${shapeError}`, ["Nothing was written"]);
+
+  const result = writeTasksCas(brain, slug, projected, hash);
+  if (!result.ok)
+    opError(result.message, [`Run \`brain tasks ${slug}\` to re-read the current state, then retry`]);
+
+  print([
+    "task:",
+    kv("slug", slug, 2),
+    kv("id", id, 2),
+    kv("status", "open", 2),
+    kv("previous_owner", task.owner || "unknown", 2),
+    ...toonList("help", [
+      `Run \`brain tasks claim ${slug} ${id} --owner <name>\` to claim it`,
+      `Run \`brain tasks ${slug}\` to see all tasks`,
+    ]),
+  ]);
+}
+
+// ---------------------------------------------------------------------------
+// brain brief — one composed handoff payload for a COLD worker: the task
+// itself, the plan decisions that already settled its shape, and the rules
+// docs that own the files it touches. Everything below already exists
+// elsewhere (tasks.json, plans/<slug>/reviews.jsonl, rules/index.md) — brief
+// composes it, it does not introduce a new source of truth.
+// ---------------------------------------------------------------------------
+
+// Expand one "{a,b}" brace group inside a backtick token into N literal
+// tokens: `chrome.{html,js}` -> ["chrome.html", "chrome.js"]. A token with no
+// brace group passes through unchanged.
+function expandBraceToken(tok) {
+  const m = /^(.*)\{([^}]+)\}(.*)$/.exec(tok);
+  if (!m) return [tok];
+  const [, pre, alts, post] = m;
+  return alts.split(",").map((a) => pre + a.trim() + post);
+}
+
+const RULE_FILE_EXT = /\.(js|mjs|ts|tsx|jsx|json|html|md|css)$/;
+
+// Pull file-path-looking tokens out of one `rules/index.md` "Touches" cell.
+// A bare filename (no "/") inherits the directory of the last slash-bearing
+// token seen earlier IN THE SAME CELL — exactly the shorthand the table
+// already uses ("`lib/review/server.js`, `store.js`, `brain-data.js`" are all
+// lib/review/*). Non-path tokens (`help:`, `skillContent()`) have no
+// recognized extension and are dropped rather than guessed at.
+function extractPathTokens(cellText) {
+  const raw = [...cellText.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+  const expanded = raw.flatMap(expandBraceToken);
+  let dir = null;
+  const paths = [];
+  for (const t of expanded) {
+    if (!RULE_FILE_EXT.test(t)) continue;
+    if (t.includes("/")) {
+      paths.push(t);
+      dir = path.posix.dirname(t);
+    } else if (dir) {
+      paths.push(path.posix.join(dir, t));
+    } else {
+      paths.push(t);
+    }
+  }
+  return paths;
+}
+
+// Parse rules/index.md's "| # | Rule | Touches | Read when |" table into
+// [{rule: "cli-commands.md", files: ["bin/brain.js"]}, ...]. Returns [] on a
+// missing/unrecognized table — callers must report that as a definitive "no
+// map available", never silently skip ownership.
+function parseRulesTouchesTable(text) {
+  const rows = [];
+  for (const line of text.split("\n")) {
+    if (!/^\|\s*\d+\s*\|/.test(line)) continue;
+    const cells = line.split("|").slice(1, -1).map((c) => c.trim());
+    if (cells.length < 3) continue;
+    const ruleMatch = /`([^`]+\.md)`/.exec(cells[1]);
+    if (!ruleMatch) continue;
+    rows.push({ rule: ruleMatch[1], files: extractPathTokens(cells[2]) });
+  }
+  return rows;
+}
+
+const RULES_SOURCE_NOTE =
+  "derived from rules/index.md's Touches column: exact backtick path match; a bare filename inherits the directory of the previous path token in the same table cell";
+
+// There is no files->rules map in this repo today — rules/index.md's own
+// "Touches" column is the only place that already declares, per rule, which
+// files it governs (and the doc's own "Update triggers" section is what
+// keeps it current), so this reads THAT rather than inventing a second
+// registry that could drift from it. Returns { available, byFile } where
+// byFile maps a brain-repo-relative file path to the rule doc name(s) whose
+// Touches column names it (0, 1, or occasionally 2 — e.g.
+// lib/review/playbooks.js is declared by both ai-work.md and planning-ux.md).
+function ruleOwnership(brain) {
+  const indexPath = path.join(brain, "rules", "index.md");
+  if (!fs.existsSync(indexPath)) return { available: false, byFile: new Map() };
+  let text;
+  try {
+    text = fs.readFileSync(indexPath, "utf8");
+  } catch {
+    return { available: false, byFile: new Map() };
+  }
+  const rows = parseRulesTouchesTable(text);
+  const byFile = new Map();
+  for (const { rule, files } of rows) {
+    for (const f of files) {
+      if (!byFile.has(f)) byFile.set(f, []);
+      byFile.get(f).push(rule);
+    }
+  }
+  return { available: rows.length > 0, byFile };
+}
+
+function cmdBrief(argv) {
+  const spec = { "--full": { value: false, desc: "print untruncated acceptance text and decision prompts" } };
+  const { flags, positionals } = parseArgs(argv, spec, "brief");
+  if (flags.help)
+    helpBlock(
+      "brief",
+      "One composed payload for a cold worker: task + acceptance + approved plan decisions + owning rules docs + feature purpose",
+      spec,
+      ["brain brief task-coordination t2", "brain brief task-coordination t2 --full"],
+      ["<slug> — feature slug", "<id> — task id from `brain tasks <slug>`"]
+    );
+  const [slug, id] = positionals;
+  if (!slug) usageError("missing required argument <slug>", ["brain brief <slug> <task-id>"]);
+  if (!id)
+    usageError("missing required argument <task-id>", [
+      `brain brief ${slug} <task-id>  (see \`brain tasks ${slug}\` for ids)`,
+    ]);
+
+  const brain = findBrain(flags.brain);
+  const { data } = requireTasks(brain, slug);
+  if (!data || data.tasks.length === 0)
+    opError(`no tasks for "${slug}" yet`, [
+      `Run \`brain tasks add ${slug} --title "..." --acceptance "..."\` to add one`,
+    ]);
+  const task = findTaskOr404(data, slug, id);
+
+  const statusById = new Map(data.tasks.map((t) => [t.id, t.status]));
+  const deps = (task.depends_on || []).map((d) => ({ id: d, status: statusById.get(d) || "unknown" }));
+  const files = task.files || [];
+
+  const flist = safeLoadFeatureList(brain);
+  const feat = flist ? flist.features.find((f) => f.slug === slug || f.id === slug) : null;
+  const purpose = feat
+    ? feat.description && feat.description.trim()
+      ? feat.description
+      : `(feature "${slug}" has no description recorded)`
+    : `(feature "${slug}" not found in feature_list.json)`;
+
+  let anyTruncated = false;
+
+  // --- task block -----------------------------------------------------
+  const lines = ["task:"];
+  lines.push(kv("slug", slug, 2));
+  lines.push(kv("id", task.id, 2));
+  lines.push(kv("title", task.title, 2));
+  lines.push(kv("status", task.status, 2));
+  lines.push(kv("owner", task.owner || "none", 2));
+  if (deps.length) lines.push(...toonTable("depends_on", deps, ["id", "status"], 2));
+  else lines.push(kv("depends_on", "none", 2));
+
+  const { available: rulesAvailable, byFile } = ruleOwnership(brain);
+  if (files.length) {
+    const fileRows = files.map((f) => {
+      const owners = byFile.get(f) || [];
+      return { path: f, rules: owners.length ? owners.join(" ") : "(none)" };
+    });
+    lines.push(...toonTable("files", fileRows, ["path", "rules"], 2));
+  } else {
+    lines.push(kv("files", "none", 2));
+  }
+
+  const acceptance = truncatedField("acceptance", task.acceptance, { full: !!flags.full, indent: 2 });
+  lines.push(...acceptance.lines);
+  anyTruncated = anyTruncated || acceptance.truncated;
+
+  // --- feature purpose + rules-derivation note (not per-task fields, so
+  // these sit outside the `task:` block rather than nested under it) -------
+  lines.push(kv("purpose", purpose));
+  lines.push(
+    kv(
+      "rules_source",
+      rulesAvailable
+        ? RULES_SOURCE_NOTE
+        : "rules/index.md not found (or has no parseable Touches column) in this brain — ownership cannot be derived"
+    )
   );
+
+  // --- decisions --------------------------------------------------------
+  // A plan "belongs to" this feature two ways: explicitly bound
+  // (`brain review <file> --feature <slug>`, `plan.feature === slug`), or —
+  // the common case for a plan reviewed before that flag existed, or authored
+  // without it — a LEGACY (unbound) plan whose own slug is exactly the
+  // feature's slug, which is the prevailing naming convention in this brain
+  // (this very feature's plan, "task-coordination", is one). Both are
+  // included; a feature with neither has nothing to cite, stated plainly.
+  const allPlans = listPlans(brain);
+  const planSlugsForFeature = new Set(allPlans.filter((p) => p.feature === slug).map((p) => p.slug));
+  if (!planSlugsForFeature.has(slug) && allPlans.some((p) => p.slug === slug && !p.feature)) {
+    planSlugsForFeature.add(slug);
+  }
+  if (planSlugsForFeature.size === 0) {
+    lines.push(`decisions: no plans bound to feature "${slug}" — nothing to cite`);
+  } else {
+    const perPlan = [...planSlugsForFeature].map((planSlug) => {
+      const plan = getPlan(brain, planSlug);
+      const rounds = (plan && plan.reviews) || [];
+      // The round that CONCLUDED review (has ended_by), most recent one —
+      // same "approved round" definition `cmdPlansView`'s snapshot pointer
+      // uses. A reopened-then-reapproved plan's earlier decisions are
+      // superseded by the final approved round, not accumulated.
+      const endedRound = [...rounds].reverse().find((r) => r.ended_by);
+      const decisions = endedRound ? (endedRound.prompts || []).filter((pr) => pr.tag === "decision") : [];
+      return { slug: planSlug, endedRound, decisions };
+    });
+    const withDecisions = perPlan.filter((p) => p.decisions.length > 0);
+    const totalDecisions = withDecisions.reduce((n, p) => n + p.decisions.length, 0);
+
+    if (totalDecisions === 0) {
+      const reasons = perPlan.map(
+        (p) => `${p.slug} (${p.endedRound ? "its approved round has no decision-tagged prompts" : "not yet approved"})`
+      );
+      lines.push(`decisions: 0 approved decisions — ${reasons.join("; ")}`);
+    } else {
+      lines.push("decisions:");
+      const showPlanColumn = withDecisions.length > 1;
+      if (!showPlanColumn) lines.push(kv("plan", withDecisions[0].slug, 2));
+      lines.push(kv("count", totalDecisions, 2));
+      const rows = [];
+      for (const p of withDecisions) {
+        for (const pr of p.decisions) {
+          const full = pr.prompt || "";
+          if (!flags.full && full.length > 200) anyTruncated = true;
+          const shown = flags.full ? full : truncateField(full, 200);
+          rows.push(showPlanColumn ? { plan: p.slug, tag: pr.tag, prompt: shown } : { tag: pr.tag, prompt: shown });
+        }
+      }
+      lines.push(...toonTable("prompts", rows, showPlanColumn ? ["plan", "tag", "prompt"] : ["tag", "prompt"], 2));
+    }
+  }
+
+  // --- help --------------------------------------------------------------
+  const help = [`Run \`brain tasks claim ${slug} ${id} --owner <name>\` to claim it`];
+  if (anyTruncated) help.push(`Run \`brain brief ${slug} ${id} --full\` to see the untruncated text`);
+  const blockedBy = deps.filter((d) => d.status !== "done").map((d) => d.id);
+  if (blockedBy.length) help.push(`Blocked on ${blockedBy.join(", ")} — run \`brain tasks view ${slug} <blocker-id>\` to check them`);
+  help.push(`Run \`brain tasks view ${slug} ${id}\` for evidence/receipt (not repeated here)`);
+  help.push(`Run \`brain tasks ${slug}\` to see all tasks`);
+  lines.push(...toonList("help", help));
   print(lines);
 }
 
@@ -1843,7 +2792,7 @@ function appendProgressEntry(brain, { summary, branch, feature, runNote, next, e
 
 function cmdProgressAdd(argv) {
   const spec = {
-    "--summary": { value: true, desc: "one-line checkpoint summary (required)" },
+    "--summary": { value: true, desc: `one-line checkpoint summary, max ${SUMMARY_MAX_CHARS} chars (required)` },
     "--branch": { value: true, desc: "current branch (default: from git)" },
     "--feature": { value: true, desc: "in-progress feature id/slug (default: none)" },
     "--run-note": { value: true, desc: "path to the run note (default: none)" },
@@ -1858,6 +2807,32 @@ function cmdProgressAdd(argv) {
     ]);
   if (!flags.summary)
     usageError("--summary is required", ['brain progress add --summary "..." [--branch ...] [--next ...]']);
+
+  // progress.md is a rolling CURSOR, and its own documented format has always
+  // been a one-line summary — but nothing enforced it, so entries grew into
+  // five-sentence paragraphs sitting inside a heading. Refuse at the write
+  // boundary (the same shape `brain ship` uses for missing evidence) rather
+  // than warning: a warning nothing acts on is the status quo with extra
+  // output. Internal callers (ship, pr) compose their own summaries and cap at
+  // 120 before calling appendProgressEntry, so this gate is scoped to the flag
+  // a human or agent actually types.
+  // Count CODE POINTS, not UTF-16 code units: `"...".length` charges two units
+  // for every astral character, so a summary of 101 emoji reported as 202 and
+  // was refused at half the advertised cap. Spread-then-count is the honest
+  // reading of "chars" here. It still charges a ZWJ sequence per component
+  // code point — grapheme segmentation would need Intl.Segmenter, and the cap
+  // is a guardrail against paragraphs, not a typographic measurement.
+  const summaryChars = [...flags.summary].length;
+  if (summaryChars > SUMMARY_MAX_CHARS)
+    usageError(
+      `--summary is ${summaryChars} chars; the cap is ${SUMMARY_MAX_CHARS}`,
+      [
+        "progress.md is a rolling cursor — one line. Verbatim output belongs in the run note.",
+        'Headline only: brain progress add --summary "<what changed, one line>" --next "<next concrete action>"',
+        'Detail goes to: brain runs append <slug> --step "..." --observed "<verbatim output>"',
+        "Run `brain playbook write` section 4 for the slots per artifact",
+      ]
+    );
 
   const brain = findBrain(flags.brain);
 
@@ -1914,6 +2889,23 @@ function cmdProgressAdd(argv) {
   ]);
 }
 
+// Every place a run note can live: the legacy flat pool (feature: null) plus
+// each feature's own runs/ dir, when it exists. Same read-compat problem
+// `listPlans`/`planRoots` already solved for plans (legacy pool + one root
+// per feature, merged) — `runs append <feature>` has ALWAYS written into the
+// per-feature dir via `appendRunStep`, but `runs list`/`view` only ever read
+// the legacy pool, so a note written by `runs append` was invisible to `runs
+// view` from day one. Fixed here rather than worked around, since --task/
+// --author are worthless if the note that carries them can't be viewed.
+function runNoteSources(brain) {
+  const sources = [{ feature: null, dir: path.join(brain, "runs") }];
+  for (const slug of safeFeatureSlugs(brain)) {
+    const dir = path.join(brain, "features", slug, "runs");
+    if (fs.existsSync(dir)) sources.push({ feature: slug, dir });
+  }
+  return sources;
+}
+
 function cmdRuns(argv) {
   const sub = argv[0] && !argv[0].startsWith("--") ? argv[0] : "list";
   const rest = sub === argv[0] ? argv.slice(1) : argv;
@@ -1921,42 +2913,93 @@ function cmdRuns(argv) {
   if (sub === "list") {
     const { flags } = parseArgs(rest, {}, "runs");
     if (flags.help)
-      helpBlock("runs", "List per-task run notes (deep task state)", {},
-        ["brain runs", "brain runs view 2026-07-10-preview-deployments"]);
+      helpBlock("runs", "List run notes: the legacy flat pool plus every feature's own runs/", {},
+        ["brain runs", "brain runs view 2026-07-10-preview-deployments", "brain runs view 2026-08-06-progress --feature task-coordination"]);
     const brain = findBrain(flags.brain);
-    const notes = listMd(path.join(brain, "runs")).filter((n) => n.name !== "progress");
-    if (!notes.length) {
-      print(["runs: 0 run notes in this brain", ...toonList("help", ["Run notes live at runs/<YYYY-MM-DD>-<slug>.md"])]);
+    const rows = [];
+    for (const { feature, dir } of runNoteSources(brain)) {
+      for (const n of listMd(dir).filter((n) => n.name !== "progress")) {
+        rows.push({ name: n.name, title: firstHeading(n.file), feature: feature || "" });
+      }
+    }
+    rows.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    if (!rows.length) {
+      print([
+        "runs: 0 run notes in this brain",
+        ...toonList("help", ["Run notes live at runs/<YYYY-MM-DD>-<slug>.md or features/<slug>/runs/<name>.md"]),
+      ]);
       return;
     }
-    const rows = notes.map((n) => ({ name: n.name, title: firstHeading(n.file) }));
+    const hasFeature = rows.some((r) => r.feature);
+    const fields = hasFeature ? ["name", "title", "feature"] : ["name", "title"];
     print([
-      ...toonTable("runs", rows, ["name", "title"]),
-      ...toonList("help", ["Run `brain runs view <name>` for the full run note"]),
+      ...toonTable("runs", rows, fields),
+      ...toonList("help", [
+        `Run \`brain runs view <name>\` for the full run note` +
+          (hasFeature ? " (pass --feature <slug> if the name exists in more than one place)" : ""),
+      ]),
     ]);
     return;
   }
   if (sub === "view") {
-    const spec = { "--full": { value: false, desc: "print the complete run note" } };
+    const spec = {
+      "--full": { value: false, desc: "print the complete run note" },
+      "--feature": { value: true, desc: "feature slug — disambiguates a name that exists in more than one place" },
+    };
     const { flags, positionals } = parseArgs(rest, spec, "runs view");
     if (flags.help)
-      helpBlock("runs view", "Show one run note", spec,
-        ["brain runs view 2026-07-10-preview-deployments --full"], ["<name> — run note name from `brain runs`"]);
+      helpBlock(
+        "runs view",
+        "Show one run note — the legacy flat pool or a feature's own runs/",
+        spec,
+        ["brain runs view 2026-07-10-preview-deployments --full", "brain runs view 2026-08-06-progress --feature task-coordination"],
+        ["<name> — run note name from `brain runs`"]
+      );
     const name = positionals[0];
     if (!name) usageError("missing required argument <name>", ["brain runs view <name>  (see `brain runs`)"]);
     const brain = findBrain(flags.brain);
-    const file = path.join(brain, "runs", name.replace(/\.md$/, "") + ".md");
-    if (!fs.existsSync(file)) {
-      const known = listMd(path.join(brain, "runs")).filter((n) => n.name !== "progress").map((n) => n.name);
-      opError(`no run note "${name}"`, [`known run notes: ${known.join(", ") || "(none)"}`]);
+    const cleanName = name.replace(/\.md$/, "");
+
+    let matches;
+    if (flags.feature) {
+      const file = path.join(brain, "features", flags.feature, "runs", cleanName + ".md");
+      matches = fs.existsSync(file) ? [{ feature: flags.feature, file }] : [];
+    } else {
+      matches = runNoteSources(brain)
+        .map(({ feature, dir }) => ({ feature, file: path.join(dir, cleanName + ".md") }))
+        .filter((m) => fs.existsSync(m.file));
     }
+
+    if (matches.length === 0) {
+      const known = runNoteSources(brain).flatMap(({ feature, dir }) =>
+        listMd(dir)
+          .filter((n) => n.name !== "progress")
+          .map((n) => (feature ? `${n.name} (${feature})` : n.name))
+      );
+      opError(`no run note "${name}"${flags.feature ? ` for feature "${flags.feature}"` : ""}`, [
+        `known run notes: ${known.join(", ") || "(none)"}`,
+      ]);
+    }
+    if (matches.length > 1) {
+      opError(
+        `"${name}" exists in more than one place — pass --feature to pick one`,
+        matches.map((m) =>
+          m.feature
+            ? `Run \`brain runs view ${name} --feature ${m.feature}\``
+            : `The legacy \`.brain/runs/${name}.md\` note also matches — rename one of these notes to disambiguate`
+        )
+      );
+    }
+
+    const { file, feature } = matches[0];
     print([
       "run:",
       kv("name", name, 2),
+      ...(feature ? [kv("feature", feature, 2)] : []),
       kv("title", firstHeading(file), 2),
       ...bodyLines("body", fs.readFileSync(file, "utf8").trim(), {
         full: !!flags.full,
-        fullCommand: `brain runs view ${name} --full`,
+        fullCommand: `brain runs view ${name}${feature ? ` --feature ${feature}` : ""} --full`,
       }),
     ]);
     return;
@@ -1970,6 +3013,8 @@ function cmdRunsAppend(argv) {
     "--step": { value: true, desc: "step name/title (required)" },
     "--observed": { value: true, desc: "verbatim observed output for this step (required)" },
     "--note": { value: true, desc: "run note filename, no extension (default: YYYY-MM-DD-progress)" },
+    "--task": { value: true, desc: "task id this step is for (optional; validated against tasks.json when one exists)" },
+    "--author": { value: true, desc: "who ran this step (optional, free text)" },
   };
   const { flags, positionals } = parseArgs(argv, spec, "runs append");
   if (flags.help)
@@ -1977,7 +3022,10 @@ function cmdRunsAppend(argv) {
       "runs append",
       "Append a verbatim step to a feature's run note (deep execution state, not the rolling progress.md cursor)",
       spec,
-      ['brain runs append authentication --step "ran playwright golden path" --observed "$(cat out.txt)"'],
+      [
+        'brain runs append authentication --step "ran playwright golden path" --observed "$(cat out.txt)"',
+        'brain runs append task-coordination --task t2 --author worker-brief --step "..." --observed "..."',
+      ],
       ["<feature> — feature slug"]
     );
   const feature = positionals[0];
@@ -1992,16 +3040,35 @@ function cmdRunsAppend(argv) {
   const feat = list.features.find((f) => f.slug === feature || f.id === feature);
   if (!feat) opError(`no feature "${feature}"`, [`known slugs: ${list.features.map((f) => f.slug).join(", ")}`]);
 
+  // --task is validated when tasks.json already exists (a typo'd id would
+  // otherwise silently attribute a step to a task that doesn't exist) but
+  // never REQUIRES tasks.json to exist — a feature that hasn't adopted task
+  // coordination yet must still be able to pass --task freely.
+  if (flags.task) {
+    const { data } = requireTasks(brain, feat.slug);
+    if (data && !data.tasks.some((t) => t.id === flags.task))
+      opError(`no task "${flags.task}" for "${feat.slug}"`, [
+        `known ids: ${data.tasks.map((t) => t.id).join(", ") || "(none)"}`,
+        `Run \`brain tasks ${feat.slug}\` to list them`,
+      ]);
+  }
+
   const { file, stepNumber } = appendRunStep(brain, feat.slug, {
     note: flags.note,
     step: flags.step,
     observed: flags.observed,
+    task: flags.task,
+    author: flags.author,
   });
+  const noteName = path.basename(file, ".md");
   print([
     "run-step:",
     kv("file", file, 2),
     kv("step", stepNumber, 2),
+    ...(flags.task ? [kv("task", flags.task, 2)] : []),
+    ...(flags.author ? [kv("author", flags.author, 2)] : []),
     ...toonList("help", [
+      `Run \`brain runs view ${noteName} --feature ${feat.slug}\` to see it rendered`,
       `If this step produced a visual test, run \`brain shots add <img> --feature ${feat.slug} --step <NN-name>\` (pass or fail)`,
       `Run \`brain ship ${feat.slug} --evidence "..."\` once the feature is demonstrably working`,
     ]),
@@ -4156,9 +5223,10 @@ All commands print TOON-structured output. Run from anywhere inside the repo; th
 
 ## Playbooks (\`brain playbook <id>\`)
 
-Eight standing playbooks — each a full text standard printed by \`brain playbook <id>\`, meant to be followed step by step while doing the thing it names:
+Ten standing playbooks — each a full text standard printed by \`brain playbook <id>\`, meant to be followed step by step while doing the thing it names:
 
 - \`start\` — starting any non-trivial task — frame it, read the brain, baseline, open state
+- \`grill\` — before writing a plan that will carry any decision — interview the human, memory-checked
 - \`plan\` — writing any plan/proposal/design artifact for human review
 - \`product\` — any plan for user-facing work — the product case before the technical one
 - \`ux\` — any plan that adds or changes a screen — wireframes, screen states, user flows
@@ -4166,6 +5234,7 @@ Eight standing playbooks — each a full text standard printed by \`brain playbo
 - \`verify\` — verifying a user-visible feature works — browser walk with screenshot evidence
 - \`execute\` — implementing an approved plan / working a feature to shipped
 - \`done\` — before declaring any task complete — full verify, harness invariants, coherence
+- \`write\` — writing anything into the brain — checkpoints, run notes, feature docs, verdicts, commit bodies
 
 Run \`brain playbook\` for the live id/use_when index; \`brain playbook <id>\` for the full text. Referenced inline below at the point each one applies.
 
@@ -4194,16 +5263,17 @@ Run \`brain playbook\` for the live id/use_when index; \`brain playbook <id>\` f
 - \`brain docs\` — doc sections; \`brain docs rules\` — list; \`brain docs view rules/errors\` — read
 - \`brain search "<query>"\` — find text anywhere in the brain (\`--section rules\` to narrow)
 - \`brain features view <slug>\` — tracker fields + feature doc
-- \`brain runs view <name>\` — deep per-task state (baselines, dead ends, decisions)
+- \`brain runs view <name>\` — deep per-task state (baselines, dead ends, decisions); merges the legacy flat pool with every feature's own \`runs/\` (pass \`--feature <slug>\` if the name exists in more than one place)
 - \`npx -y brain-axi playbook plan\` — the plan artifact standard (structure, decision cards, diagrams)
 - \`npx -y brain-axi playbook product\` — the product case: problem + evidence, user + job, success metric, non-goals, scope tiers, prior art, product decision cards (plan sections 3 and 7)
 - \`npx -y brain-axi playbook ux\` — wireframes, screen-state matrix, user-journey flow, layout variant cards (plan section 6)
 
 ## Record state (end of task / checkpoint)
 
-- \`brain progress add --summary "..." --next "..."\` — append a session checkpoint
+- \`npx -y brain-axi playbook write\` — HOW to write any of it: the record is reference, not release notes. Slots per artifact (checkpoint, run-note step, feature doc, verification doc, commit body), the register rules, and three prune tests. Read it before writing a checkpoint or a feature doc, not after
+- \`brain progress add --summary "..." --next "..."\` — append a session checkpoint. The summary is the rolling CURSOR and is capped at 200 chars (exit 2 over it, nothing written) — a headline, not the story; verbatim output goes to \`runs append --observed\`
 - \`brain features set-status <slug> --status <planned|in-progress|shipped|blocked|cut>\` — flip feature state (enforces one-in-progress policy; \`--status shipped\` requires \`--evidence\` **and passes the same preflight as \`brain ship\` — it refuses and writes nothing if any check would fail**. Transitions *out* of a state are never gated, so a broken record stays repairable)
-- \`brain check\` — deterministic harness invariants (feature-list **schema** validity — duplicate ids/slugs, unknown status, shipped-without-evidence all fail — one-in-progress per declared policy, doc paths, dependency refs, \`features/index.md\` agreeing with the tracker, plan/review file integrity, verification docs having a **readable** verdict with resolvable image links, verify.json shape when present); exit 1 on any failure, CI-usable
+- \`brain check\` — deterministic harness invariants (feature-list **schema** validity — duplicate ids/slugs, unknown status, shipped-without-evidence all fail — one-in-progress per declared policy, doc paths, dependency refs, \`features/index.md\` agreeing with the tracker, plan/review file integrity, verification docs having a **readable** verdict with resolvable image links, \`tasks.json\` schema validity, no \`shipped\` feature with an open task, verify.json shape when present); exit 1 on any failure, CI-usable
 - \`brain features index [--write]\` — GENERATE the \`features/index.md\` status table from \`feature_list.json\` (bounded by \`<!-- brain:features-table -->\` markers so surrounding prose survives). Hand-maintaining that mirror is how a tracker and its human-facing index end up disagreeing
 - \`brain receipt <feature> [--date <d>] [--verified-by <who>] [--allow-dirty]\` — stamp a commit-bound provenance receipt into a verification doc, written BY THE TOOL: HEAD at stamp time plus the actual gate results for that feature from \`runs/gates.jsonl\`. Refuses on a dirty tree (a receipt naming HEAD while the tree differs describes code in no commit) and refuses to stamp a doc whose verdict is unreadable — a hand-written receipt is a claim about provenance, not provenance
 - \`brain check --strict\` — adds two: every \`shipped\` feature must have a verification doc whose verdict parses to PASS, **and** that doc must carry a \`brain:verification\` receipt naming a commit that is an ancestor of HEAD. Opt-in here so brains predating the invariants do not go red on upgrade; \`brain ship\` and \`set-status --status shipped\` **always** enforce both, since shipping is the moment the claim is made
@@ -4299,19 +5369,86 @@ doc at \`.brain/features/<slug>/verifications/<date>.md\` following
 \`brain playbook verify\` — this is how "it works" becomes checkable evidence
 instead of a claim.
 
+## Tasks — coordination BELOW a feature (\`brain tasks\`)
+
+A task is the unit a coordinator hands to a worker: smaller than a feature,
+tracked in \`features/<slug>/tasks.json\`, so the phase list survives a
+compaction or a handoff instead of living only in one agent's context window.
+Claims are compare-and-swap (a content hash from the read that must still
+match at write time), so two workers claiming at once cannot silently lose
+each other's write — the loser gets exit 1 and a \`help:\` line to re-list and
+retry, never a corrupted file.
+
+- \`brain tasks <slug>\` — list: \`id,title,status,owner\` plus a \`count:\` line
+  that already includes how many are unblocked (open, every \`depends_on\`
+  done) — no second call needed. A claimed row shows how long it has been
+  held (\`held 41m\`) right there, so a stale claim is visible without \`view\`.
+- \`brain tasks view <slug> <id>\` — full detail: acceptance, \`depends_on\`,
+  files, owner, \`claimed_at\`, evidence, receipt, and what it is **blocked
+  by** right now (computed from the other tasks' current status, not just
+  the declared list).
+- \`brain tasks add <slug> --title "..." --acceptance "..." [--depends-on
+  t1,t2] [--files a,b] [--id <id>]\` — creates \`tasks.json\` on the first
+  task; \`--id\` auto-generates (\`t1\`, \`t2\`, ...) from the current max when
+  omitted. \`--title\`/\`--acceptance\` are required — a task with no checkable
+  acceptance is the same premature-"done" shape the feature-level evidence
+  rule exists to prevent, one level further down.
+- \`brain tasks claim <slug> <id> --owner <name>\` — refuses (exit 1, naming
+  the current owner) if held by someone else; refuses (naming the unmet
+  dependency) if any \`depends_on\` is not \`done\`; re-claiming your OWN
+  claim is an idempotent no-op at exit 0.
+- \`brain tasks done <slug> <id> --evidence "..." [--no-autoship]\` —
+  \`--evidence\` is required (mirrors \`brain ship\`'s gate) and refuses on
+  missing/blank (exit 2). Already-done is an idempotent no-op at exit 0 and
+  never overwrites the recorded evidence. **Closing the LAST open/claimed task
+  on a feature runs \`brain ship\`'s identical strict preflight automatically**
+  (gated autoship) — on a verified feature it ships; on an unverified one it
+  refuses, but the task stays closed and the feature stays untouched (nothing
+  is written by the refused ship), reported together in one result, still exit
+  0 — the task close is the primary operation here and it succeeded; the ship
+  refusal is the gate working as designed, not a failure of this command.
+  \`--no-autoship\` skips the automatic ship attempt entirely.
+- \`brain tasks release <slug> <id>\` — the stale-claim escape hatch: clears
+  owner/\`claimed_at\` back to \`open\`. No TTL by design — any fixed timeout is
+  wrong for some task, so release is always an explicit act.
+- \`brain brief <slug> <task-id> [--full]\` — the handoff: one payload a COLD
+  worker can act on without reading the plan artifact or being told anything
+  else. Composes the task (acceptance, \`depends_on\` with their current
+  statuses, declared \`files\`), the **approved** decision prompts read verbatim
+  from that feature's bound plan(s) (\`plans/<slug>/reviews.jsonl\` — the round
+  that concluded review, filtered to \`tag: decision\`; names which plan they
+  came from when more than one is bound), the rules docs that own each
+  declared file (derived from \`rules/index.md\`'s own Touches column — see
+  \`rules_source\` in the output for exactly how), and the feature's one-line
+  \`description\` for orientation. A task with no decisions or no owning rules
+  still gets a definitive line saying so, never a silently empty section. Run
+  this FIRST on a claimed task, before reading anything else.
+
+Every mutation preflights: read → project the change → validate the
+projection → only then write with the hash from the read (the same
+preflight-then-commit order \`brain ship\` already uses) — a bad write never
+lands partially. Two more \`brain check\` rows exist just for this layer:
+\`tasks.json files parse\` and \`no shipped feature has an open task\` — both
+scoped exactly like every other per-feature row (an unrelated feature's open
+task never blocks THIS feature's ship), and both PASS vacuously when a feature
+has no \`tasks.json\` at all (read-compat).
+
 ## Execution loop — implementing an approved plan / working a feature to shipped
 
 Run \`npx -y brain-axi playbook execute\` and follow it. Short version: \`features
 set-status <slug> --status in-progress\` → per step \`runs append <slug> --step
-"..." --observed "..."\` (verbatim command output, not a paraphrase) → \`shots add
---feature <slug> --step NN-name\` on every visual test, pass AND fail → a
-verification doc per \`playbook verify\` → \`brain ship <slug> --evidence "..."\`
-(requires evidence; no-ops if already shipped; **preflights \`brain check\`
-against the projected state and refuses the ship if anything would fail —
-nothing is written, the feature keeps its previous status, exit 1**; on pass it
-writes atomically, warns — does not block — on zero screenshots, and
-checkpoints). \`runs/progress.md\` stays a rolling cursor;
-\`features/<slug>/runs/*.md\` is the deep, verbatim record.
+"..." --observed "..." [--task <id>] [--author <name>]\` (verbatim command
+output, not a paraphrase — \`--task\`/\`--author\` are both optional and additive,
+so a step on a coordinated task no longer has to be folded into \`--step\` text
+by hand; both are visible via \`runs view\`) → \`shots add --feature <slug>
+--step NN-name\` on every visual test, pass AND fail → a verification doc per
+\`playbook verify\` → \`brain ship <slug> --evidence "..."\` (requires evidence;
+no-ops if already shipped; **preflights \`brain check\` against the projected
+state and refuses the ship if anything would fail — nothing is written, the
+feature keeps its previous status, exit 1**; on pass it writes atomically,
+warns — does not block — on zero screenshots, and checkpoints).
+\`runs/progress.md\` stays a rolling cursor; \`features/<slug>/runs/*.md\` is the
+deep, verbatim record.
 
 - \`npx -y brain-axi watch <feature>\` — opens the live execution dashboard in
   the browser (feature status, harness health, checkpoints, run-step logs,
@@ -4392,9 +5529,18 @@ in order, in the current turn:
 1. **Read the brain first** — \`brain progress\`, \`brain features\`, \`brain plans\`,
    \`brain timeline\`. Weave what you find into the plan (cite prior plans, decisions,
    in-progress feature, relevant rules).
+1b. **Grill before you write, if the plan will carry any decision.** Run
+   \`npx -y brain-axi playbook grill\` and follow it: check every past plan's recorded
+   decision rounds for an already-settled answer FIRST (cite those, never re-ask them),
+   then put the remaining open questions to the user in one numbered round, each with a
+   recommendation, and wait. Settled answers become pre-answered decision cards in step 2;
+   a question asked after the artifact exists cannot change the design it is asking about.
 2. **Run \`npx -y brain-axi playbook plan\` and follow it** to write the plan as ONE
    standalone HTML file (inline CSS, system fonts, no build step — it must render
-   opened directly). The playbook covers the 17-section structure (0-16), decision cards,
+   opened directly). Pick a TIER first — \`small\` (header, TL;DR, context, decisions,
+   plan of record, files) or \`full\` (every applicable section) — and state it in the
+   header strip; decisions are never cut, and a conditional section still fires in small.
+   The playbook covers the 17-section structure (0-16), decision cards,
    and diagram options (a CDN-based Mermaid snippet that degrades to readable text
    offline, or hand-rolled inline SVG for zero network dependency). Any path works;
    \`<repo>/plans/<topic>.html\` is a good default.
@@ -4497,6 +5643,8 @@ function cmdSkill(argv) {
 const COMMANDS = {
   init: cmdInit,
   features: cmdFeatures,
+  tasks: cmdTasks,
+  brief: cmdBrief,
   progress: cmdProgress,
   runs: cmdRuns,
   docs: cmdDocs,

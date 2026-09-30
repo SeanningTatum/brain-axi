@@ -41,7 +41,9 @@ Per-feature memory. **One MD per shipped or in-progress feature** — captures p
 | harness-mode — AGENTS.md parity (verify runner + bookend playbooks + init) | [`harness-mode/harness-mode.md`](harness-mode/harness-mode.md) | shipped | — |
 | ai-work — AI-aware harness (evals, golden sets, prompt review) | [`ai-work/ai-work.md`](ai-work/ai-work.md) | blocked | — |
 | planning-ux — product-grade planning (mockups, UX flows, product playbook) | [`planning-ux/planning-ux.md`](planning-ux/planning-ux.md) | shipped | [2026-07-30 PASS](planning-ux/verifications/2026-07-30.md) |
-| state-integrity — enforceable state, commit-bound evidence, gate telemetry | [`state-integrity/state-integrity.md`](state-integrity/state-integrity.md) | in-progress | — |
+| state-integrity — enforceable state, commit-bound evidence, gate telemetry | [`state-integrity/state-integrity.md`](state-integrity/state-integrity.md) | shipped | [2026-08-06 PASS](state-integrity/verifications/2026-08-06.md) |
+| task-coordination — a unit of work below the feature | [`task-coordination/task-coordination.md`](task-coordination/task-coordination.md) | shipped | [2026-08-06 PASS](task-coordination/verifications/2026-08-06.md) |
+| plan-phase — grill before the artifact, register for the record | [`plan-phase/plan-phase.md`](plan-phase/plan-phase.md) | shipped | [2026-08-10 PASS](plan-phase/verifications/2026-08-10.md) |
 <!-- /brain:features-table -->
 
 ## Important things to look at

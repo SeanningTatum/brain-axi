@@ -1,0 +1,1149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Task coordination — a unit of work below the feature</title>
+<style>
+  :root {
+    --bg: #faf9f5; --surface: #ffffff; --fg: #141413; --fg-secondary: #3d3d3a;
+    --muted: #73726c; --border: #dedcd1; --highlight: #fff7ca; --accent: #d97757;
+    --space-2: 8px; --space-3: 16px; --space-4: 24px; --space-6: 40px;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+      Helvetica, Arial, sans-serif;
+    font-size: 16px; background: var(--bg); color: var(--fg); line-height: 1.6;
+    max-width: 72ch; margin: 0 auto; padding: var(--space-6) var(--space-4);
+  }
+  h1, h2, h3 {
+    font-family: Charter, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    font-weight: 600; line-height: 1.25; color: var(--fg);
+  }
+  h1 { font-size: 1.75em; }
+  h2 { font-size: 1.3em; font-weight: 500; margin-top: var(--space-6);
+    border-bottom: 1px solid var(--border); padding-bottom: var(--space-2); }
+  h3 { font-size: 1.05em; font-weight: 500; }
+  p, li { color: var(--fg-secondary); }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.9em; }
+  code { background: var(--surface); border: 1px solid var(--border);
+    border-radius: 4px; padding: 0 4px; }
+  mark, .highlight { background: var(--highlight); color: var(--fg); padding: 0 2px; }
+  .chip { display: inline-block; padding: 2px 10px; border-radius: 999px;
+    font-size: 0.8em; font-weight: 600; border: 1px solid var(--border); }
+  .chip-status-draft { background: var(--surface); color: var(--muted); }
+  .chip-status-in-review { background: var(--highlight); color: var(--fg);
+    border-color: var(--highlight); }
+  .chip-status-reviewed { background: var(--fg); color: #fff; border-color: var(--fg); }
+  .chip-high { color: var(--accent); border-color: var(--accent); }
+  .chip-med { color: var(--fg-secondary); }
+  .chip-low { color: var(--muted); }
+  .decision-card { background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: var(--space-4); margin: var(--space-4) 0; }
+  table { width: 100%; border-collapse: collapse; margin: var(--space-3) 0;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    overflow: hidden; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid
+    var(--border); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  .tag-recommended { color: var(--accent); font-weight: 600; }
+  .btn-queue, .btn-approve, .btn-request-changes {
+    border: none; border-radius: 10px; padding: 8px 16px; font-weight: 600;
+    cursor: pointer; font-size: 0.95em;
+  }
+  .btn-queue, .btn-approve { background: var(--fg); color: #fff; }
+  .btn-request-changes { background: transparent; color: var(--fg);
+    border: 1px solid var(--border); }
+  .queue-ack { margin-left: var(--space-3); font-size: 0.9em; color: var(--muted); }
+  .checklist { list-style: none; padding: 0; }
+  .checklist li { margin: var(--space-2) 0; }
+  pre.mermaid { text-align: center; }
+  pre.mermaid svg { display: block; margin: 0 auto; }
+  .tier { background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: var(--space-3) var(--space-4); margin: var(--space-3) 0; }
+  .tier p { margin: 4px 0; }
+  .item-x, .item-restore, .list-add-btn { cursor: pointer; border: 1px solid var(--border);
+    background: var(--surface); border-radius: 6px; font-size: 0.85em; padding: 1px 8px;
+    color: var(--fg-secondary); }
+  /* item-x and item-restore are told apart by their label text ("x" vs
+     "restore"), not by color — this palette keeps color-coding to a single
+     accent reserved for recommended/emphasis. */
+  /* Do not add "display: none" to .item-restore: the template's hidden
+     attribute already hides it via the UA stylesheet, and JS only ever
+     toggles the hidden PROPERTY. */
+  [data-item-text] { cursor: text; }
+  .item-removed { opacity: 0.5; }
+  .item-removed [data-item-text] { text-decoration: line-through; }
+  .item-edited [data-item-text] { border-bottom: 2px dotted var(--accent); }
+  .item-badge { font-size: 0.75em; color: var(--muted); margin-left: 6px; font-style: italic; }
+  .item-badge-proposed { color: var(--accent); }
+  .item-proposed { border-left: 2px dashed var(--accent); padding-left: 6px; }
+  .list-add-row { display: flex; gap: 8px; margin-top: var(--space-2); }
+  .list-add-input { flex: 1; padding: 6px 10px; border: 1px solid var(--border);
+    border-radius: 6px; background: var(--surface); color: var(--fg); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Task coordination — a unit of work below the feature</h1>
+  <div>
+    <span>2026-08-06</span> &middot;
+    <span>feature: task-coordination (proposed feat-009)</span> &middot;
+    <span class="chip chip-status-draft">draft</span> &middot;
+    <span>round 0</span>
+  </div>
+</header>
+
+<section id="tldr">
+  <h2>TL;DR</h2>
+  <p>brain-axi tracks features and checkpoints, but has no unit of work between
+  them — so a plan's phases live only as prose inside its HTML artifact, and a
+  coordinator handing phases to sub-agents has to hold that list in its own
+  context, which is exactly the thing that does not survive compaction or a
+  fresh session. This adds <code>tasks</code> as first-class, gate-checked
+  state under each feature: a coordinator seeds them from an approved plan,
+  workers claim them race-safely, closing one requires evidence the same way
+  <code>brain ship</code> does, and <code>brain check</code> refuses to call a
+  feature shipped while a task is still open. Doing it now because
+  <mark>state-integrity just ran seven phases whose only record is CHANGELOG
+  prose</mark>, and the feature is still marked in-progress days after its code
+  merged and released.</p>
+</section>
+
+<section id="product-brief">
+  <h2>Product brief</h2>
+
+  <h3>Problem + evidence</h3>
+  <p>An agent asked to continue multi-phase work cannot find out from the
+  harness what the phases are, which are done, or which one it should take
+  next. Four pieces of live evidence, all re-runnable:</p>
+  <ul>
+    <li><strong>Seven phases, zero queryable records.</strong>
+    <code>grep "state-integrity phase" .brain/CHANGELOG.md</code> returns 6 rows
+    (phases 2&ndash;7; phase 1 is worded differently), and
+    <code>grep -c state-integrity .brain/runs/progress.md</code> returns 8
+    mentions. No command answers &ldquo;which phases exist and which are
+    done&rdquo; &mdash; a fresh session reconstructs it by reading prose.</li>
+    <li><strong>The state is drifting right now.</strong> The latest checkpoint
+    (<code>brain progress</code>, 2026-07-31) says &ldquo;in-progress feature:
+    <em>none</em>&rdquo; while <code>features/feature_list.json</code> has
+    <code>feat-008</code> at <code>in-progress</code> with
+    <code>evidence: ""</code>. <code>brain check</code> reports
+    <mark>16/16 pass</mark> anyway, because a checkpoint is prose and prose is
+    not checked. The feature's code merged as <code>f6d9410</code> (PR #18) and
+    released as <code>bbab2cc</code> (v0.2.0) &mdash; the harness still does not
+    know it is done.</li>
+    <li><strong>No prior art, so nothing to reuse.</strong>
+    <code>brain search "delegate"</code> &rarr; <em>0 matches</em>.
+    <code>brain search "coordinator"</code> &rarr; 1 incidental hit in
+    <code>runs/progress.md:243</code> about a lightbox. The harness has never
+    modelled handoff.</li>
+    <li><strong>Parallel agents already happened, unattributed.</strong>
+    <code>features/planning-ux/verifications/2026-07-30.md:49</code>:
+    &ldquo;Three runs, dispatched in parallel, each driving the app with its own
+    script.&rdquo; All three landed in one prose doc.
+    <code>runs append</code> takes <code>--step</code>,
+    <code>--observed</code>, <code>--note</code> and no author
+    (<code>bin/brain.js:1968</code>) &mdash; there is no way to tell which agent
+    wrote which step.</li>
+  </ul>
+
+  <h3>User + job to be done</h3>
+  <p>Two agents, one job each.</p>
+  <p><strong>The coordinator</strong> has just had a plan approved and holds its
+  phase list in context. Its job is to get those phases done by other agents
+  without becoming the only place the phase list exists &mdash; so that when its
+  context is compacted, or the session ends and a different coordinator picks
+  up, the work is still enumerable. Today its only durable options are a
+  free-text checkpoint and a run note it must remember to write.</p>
+  <p><strong>The worker</strong> is spawned cold with a one-paragraph prompt. Its
+  job is to do exactly one phase and hand back something the coordinator can
+  verify, without re-deriving the whole plan. Today it either gets
+  <code>brain playbook start</code> (read the entire brain, ~4 commands, no idea
+  which slice is its own) or whatever the coordinator remembered to paste into
+  the prompt &mdash; and if the coordinator paraphrased an approved decision
+  wrong, the worker has no way to notice.</p>
+
+  <h3>Success metric</h3>
+  <p>Tier 2, countable proxy. <strong>Baseline (measured today):</strong>
+  answering &ldquo;which phases of <code>state-integrity</code> exist, which are
+  done, and is the feature closeable&rdquo; took 7 CHANGELOG rows + 8
+  <code>progress.md</code> mentions + <code>git log</code> + a feature doc read,
+  and produced the wrong answer from the harness itself
+  (<code>check</code> 16/16 while the tracker and the latest checkpoint
+  contradict each other). <strong>Target:</strong> for the next multi-phase
+  feature, one command &mdash; <code>brain tasks &lt;slug&gt;</code> &mdash;
+  answers all three, and <code>brain check</code> emits a
+  <em>failing</em> row when a feature is <code>shipped</code> with an open task.
+  <strong>Observed by:</strong> running both commands at that feature's close;
+  the check row is a pass/fail, not a judgment.</p>
+
+  <h3>Non-goals</h3>
+  <ul>
+    <li><strong>Spawning agents.</strong> A reader seeing the word
+    &ldquo;coordination&rdquo; will reasonably expect orchestration. brain-axi
+    will not launch, schedule, or supervise a sub-agent &mdash; the harness
+    (Claude Code, Codex, opencode) owns spawning, and a CLI that shelled out to
+    one would bind this tool to one vendor's agent runner. brain holds the state
+    the agents coordinate <em>through</em>; the prompt is still the
+    coordinator's job.</li>
+    <li><strong>Relaxing <code>one_in_progress_at_a_time</code>.</strong> Features
+    stay strictly serial (<code>bin/brain.js:785</code>). Parallelism arrives
+    one level down, inside the single in-progress feature. Letting two features
+    run at once is a scope-discipline change this plan is not making.</li>
+    <li><strong>Parsing phases out of the plan HTML.</strong> Tempting &mdash;
+    the phases are right there in section 10 of every plan artifact &mdash; and
+    declined: an HTML scrape would silently mis-seed on any plan whose markup
+    drifts, and a wrong task list is worse than no task list. The coordinator
+    types the tasks; the approved <em>decisions</em> are read from
+    <code>reviews.jsonl</code>, which is already structured.</li>
+  </ul>
+
+  <h3>Scope tiers</h3>
+  <div class="tier">
+    <p><strong>Thin</strong> &mdash; the record and the gate.</p>
+    <p><em>Ships:</em> <code>tasks</code> schema in <code>lib/state.js</code>,
+    per-feature <code>tasks.json</code>, <code>brain tasks</code>
+    (list / add / claim / done / release), compare-and-swap claiming, 2 new
+    <code>brain check</code> rows, ship preflight refusing on an open task.</p>
+    <p><em>Costs:</em> phases 1&ndash;2.</p>
+    <p><em>Leaves on the table:</em> no handoff brief (workers still get a
+    hand-written prompt), no author attribution on run steps, no playbook
+    telling anyone this exists.</p>
+  </div>
+  <div class="tier">
+    <p><strong>Complete</strong> &mdash; the handoff.</p>
+    <p><em>Ships:</em> thin, plus <code>brain brief &lt;slug&gt; &lt;task&gt;</code>
+    (the task, its acceptance criteria, the approved decisions from
+    <code>reviews.jsonl</code>, and the rules that own the files it touches, in
+    one TOON payload a cold worker can act on), <code>runs append --task
+    --author</code>, the <code>execute</code> playbook rewritten as a
+    coordinator/worker loop, and a regenerated skill.</p>
+    <p><em>Costs:</em> phases 1&ndash;4.</p>
+    <p><em>Leaves on the table:</em> <code>brain watch</code>'s dashboard shows
+    feature status but not task status, so the human still reads the CLI to see
+    fan-out progress; no telemetry on task duration or rework.</p>
+  </div>
+  <div class="tier">
+    <p><strong>Gold</strong> &mdash; the human's view and the numbers.</p>
+    <p><em>Ships:</em> complete, plus a tasks panel in <code>brain watch</code>
+    (per-task status, owner, elapsed, evidence) and task lifecycle events
+    appended to <code>runs/gates.jsonl</code> so <code>brain metrics</code>
+    reports tasks-per-feature and reclaim rate.</p>
+    <p><em>Costs:</em> phases 1&ndash;6.</p>
+    <p><em>Leaves on the table:</em> nothing this plan identified. Note that the
+    dashboard panel is a <strong>screen</strong> &mdash; approving gold means
+    phase 5 opens a <code>brain playbook ux</code> round for wireframes and
+    screen states before it is built. This plan deliberately does not mock a
+    screen it may not be authorized to add.</p>
+  </div>
+
+  <h3>Prior art</h3>
+  <p>Inside this repo: <code>brain plans</code> lists 9 plans, none of which
+  proposed a sub-feature work unit &mdash; the closest is
+  <code>2026-07-31-harness-hardening</code>, which produced today's
+  <code>lib/state.js</code> schema and atomic-write path, and which this plan
+  extends rather than rebuilds. <code>brain search "delegate"</code> returns 0
+  matches and <code>"coordinator"</code> returns 1 unrelated hit, so there is no
+  existing convention to honor or contradict. <code>brain features</code> shows
+  no cut feature covering this ground; <code>feat-004 annotation-watch</code>
+  (planned) is a post-ship feedback runner, adjacent but not overlapping.</p>
+  <p>The mechanism being borrowed is <code>lib/state.js</code>'s own contract, as
+  documented in <code>rules/state.md</code>: one definition per invariant,
+  validators returning <code>null</code> or one message naming the exact bad
+  field (<code>tasks[2].status</code>), never throwing, all durable writes
+  through <code>writeFileAtomic</code>, and read-compat/write-new for new
+  required fields. A task record that did not follow that contract would
+  reintroduce the exact class of defect feat-008 just closed.</p>
+</section>
+
+<section id="context">
+  <h2>Context</h2>
+  <p>Per <code>brain features</code>, <code>feat-008 state-integrity</code> is
+  the current in-progress feature and the immediate blocker: its slot must be
+  freed before <code>feat-009</code> can be claimed, because
+  <code>policy.one_in_progress_at_a_time</code> is in force. Its code is already
+  merged (<code>f6d9410</code>) and released (<code>bbab2cc</code>, v0.2.0);
+  what is missing is the closing paperwork, which is being produced in parallel
+  with this plan &mdash; a verification doc and an evidence string, after which
+  <code>brain ship state-integrity</code> frees the slot.</p>
+  <p>The 2026-07-31 checkpoint closes with &ldquo;STOP auditing &mdash;
+  reviewer's own call&rdquo; and names cutting a release as the highest-value
+  next action. That release is cut. This plan is the next thing, and it is
+  deliberately <em>not</em> more auditing: it adds a missing state layer rather
+  than hardening an existing one.</p>
+  <p>One unrelated fact worth surfacing because it affects every
+  <code>npx</code> path this plan's skill regeneration would emit:
+  <code>npm view brain-axi</code> still returns <strong>404</strong>. v0.2.0 is
+  tagged but unpublished. That is launch-readiness territory, not in this plan's
+  scope, but any doc this plan writes using <code>npx -y brain-axi</code> is
+  currently aspirational.</p>
+</section>
+
+<section id="big-picture">
+  <h2>Big picture</h2>
+  <p>What changes is the middle box: today the phase list exists only in the
+  coordinator's context window and in prose. After this, it is a file both
+  agents read and write, and a gate reads too.</p>
+  <pre class="mermaid">
+flowchart TD
+  P["Approved plan<br/>(plans/&lt;slug&gt;/reviews.jsonl)"] --> C["Coordinator agent"]
+  C -->|"brain tasks add"| T[("features/&lt;slug&gt;/tasks.json<br/>the new state")]
+  C -->|"brain tasks (list)"| T
+  T -->|"brain brief &lt;slug&gt; &lt;task&gt;"| W1["Worker A"]
+  T -->|"brain brief &lt;slug&gt; &lt;task&gt;"| W2["Worker B"]
+  W1 -->|"claim / done --evidence"| T
+  W2 -->|"claim / done --evidence"| T
+  W1 -->|"runs append --task --author"| R[("features/&lt;slug&gt;/runs/&lt;note&gt;.md")]
+  W2 -->|"runs append --task --author"| R
+  T --> G{"brain check<br/>brain ship preflight"}
+  G -->|"open task blocks ship"| C
+  </pre>
+</section>
+
+<section id="agent-topology">
+  <h2>Agent topology</h2>
+  <p>This plan introduces no prompt, no model call, and no eval &mdash; the CLI
+  stays deterministic, so the prompt-contract and eval-plan sections of
+  <code>brain playbook ai</code> do not apply. The topology table does, because
+  the feature's whole purpose is a handoff contract between roles, and every
+  phase below names the role that owns it.</p>
+  <table>
+    <thead><tr><th>Role</th><th>Model</th><th>Owns</th><th>Handoff contract</th><th>Escalation rule</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Coordinator</td>
+        <td>the session's own model (Opus-class)</td>
+        <td>Seeding tasks from the approved plan; deciding fan-out; the final <code>brain ship</code></td>
+        <td><em>Out:</em> a <code>brain brief</code> payload per worker. <em>In:</em> each worker's evidence string</td>
+        <td>Never edits a file a worker holds a claim on; if two workers' evidence conflicts, re-opens the task rather than picking a winner</td>
+      </tr>
+      <tr>
+        <td>Worker</td>
+        <td>Sonnet-class</td>
+        <td>Exactly one task, start to evidence</td>
+        <td><em>In:</em> <code>brain brief</code>. <em>Out:</em> <code>brain tasks done --evidence</code> composed only from observed output</td>
+        <td>On a CAS conflict: re-list and take another task, never force. On acceptance criteria it cannot meet: report back, do not redefine the task</td>
+      </tr>
+      <tr>
+        <td>Auditor <span class="chip chip-low">optional</span></td>
+        <td>Sonnet-class, read-only tools</td>
+        <td>Adversarially checking one completed task's evidence against its acceptance criteria</td>
+        <td><em>In:</em> task id + evidence. <em>Out:</em> confirmed / refuted with a <code>file:line</code> citation</td>
+        <td>Refutes by default when it cannot reproduce the evidence</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="product-decisions">
+  <h2>Product decisions</h2>
+
+  <div class="decision-card" id="decision-who-owns-phases" data-brain-action>
+    <p><strong>P1. Can a fresh agent ask the CLI which phase to work next, or
+    must it read the plan artifact?</strong></p>
+    <p>This is the whole feature stated as one question. Everything below it is
+    mechanism.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-who-owns-phases" id="wop-cli"
+            value="The CLI answers it — phases become tracked tasks" checked data-brain-action></td>
+          <td><label for="wop-cli">The CLI answers it
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Survives compaction and session death; a gate can read it; the answer is one command</td>
+          <td>A second place the phase list lives, which can drift from the plan artifact unless seeding is deliberate</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-who-owns-phases" id="wop-plan"
+            value="The plan artifact stays the only source; agents read the HTML" data-brain-action></td>
+          <td><label for="wop-plan">The plan artifact stays the only source</label></td>
+          <td>One source of truth, zero new state, zero new commands</td>
+          <td>Exactly today's failure: the phase list is prose, unqueryable and ungateable &mdash; the 7-phase state-integrity record is the evidence</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-who-owns-phases',
+        'Can a fresh agent ask the CLI which phase to work next, or must it read the plan?')">
+      Queue answer
+    </button>
+    <span class="queue-ack" id="ack-decision-who-owns-phases"></span>
+  </div>
+
+  <div class="decision-card" id="decision-parallelism" data-brain-action>
+    <p><strong>P2. Should two agents be able to hold work at the same time?</strong></p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-parallelism" id="par-tasks"
+            value="Yes, at task level; features stay one-in-progress" checked data-brain-action></td>
+          <td><label for="par-tasks">Yes, at task level
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Matches how the work already happens (three parallel verification runs, 2026-07-30); scope discipline is preserved one level up</td>
+          <td>Needs race-safe claiming &mdash; without it two workers silently overwrite each other's task record</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-parallelism" id="par-serial"
+            value="No, strictly one task at a time" data-brain-action></td>
+          <td><label for="par-serial">No, strictly serial</label></td>
+          <td>No concurrency to get wrong; claiming becomes trivial</td>
+          <td>Gives up the main reason to coordinate at all; a 7-phase feature stays a 7-session feature</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-parallelism',
+        'Should two agents be able to hold work at the same time?')">
+      Queue answer
+    </button>
+    <span class="queue-ack" id="ack-decision-parallelism"></span>
+  </div>
+
+  <div class="decision-card" id="decision-task-evidence" data-brain-action>
+    <p><strong>P3. Should closing a task require evidence, the way
+    <code>brain ship</code> requires it for a feature?</strong></p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-task-evidence" id="te-required"
+            value="Yes — --evidence required, refuses without it" checked data-brain-action></td>
+          <td><label for="te-required">Required
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>A worker's report becomes checkable instead of a claim; consistent with the rule the ship gate already enforces</td>
+          <td>A worker with nothing observable to quote is blocked &mdash; arguably correct, but it is friction</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-task-evidence" id="te-optional"
+            value="Optional — a task can close with a bare status flip" data-brain-action></td>
+          <td><label for="te-optional">Optional</label></td>
+          <td>Lighter for mechanical tasks (a rename, a doc edit)</td>
+          <td>Reproduces the shape feat-008 existed to kill: a status that says done with nothing behind it</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-task-evidence',
+        'Should closing a task require evidence like brain ship does?')">
+      Queue answer
+    </button>
+    <span class="queue-ack" id="ack-decision-task-evidence"></span>
+  </div>
+
+  <div class="decision-card" id="decision-tier" data-brain-action>
+    <p><strong>P4. Which scope tier ships?</strong></p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-tier" id="tier-complete"
+            value="Complete — phases 1-4 (record, gate, brief, playbook)" checked data-brain-action></td>
+          <td><label for="tier-complete">Complete
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>The brief is what makes a cold worker cheap; without it the record exists but nobody uses it</td>
+          <td>4 phases; the human still reads the CLI rather than the dashboard to watch fan-out</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-tier" id="tier-thin"
+            value="Thin — phases 1-2 only (record + gate)" data-brain-action></td>
+          <td><label for="tier-thin">Thin</label></td>
+          <td>Smallest thing that fixes the drift; shippable alone</td>
+          <td>No playbook mentions tasks, so agents will not find them</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-tier" id="tier-gold"
+            value="Gold — phases 1-6 (adds dashboard panel + metrics)" data-brain-action></td>
+          <td><label for="tier-gold">Gold</label></td>
+          <td>The human sees fan-out live; reclaim rate becomes a number</td>
+          <td>Phase 5 is a screen &mdash; needs its own UX round before it can be built</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-tier', 'Which scope tier ships?')">
+      Queue answer
+    </button>
+    <span class="queue-ack" id="ack-decision-tier"></span>
+  </div>
+</section>
+
+<section id="decisions">
+  <h2>Decisions needed</h2>
+
+  <div class="decision-card" id="decision-where-tasks-live" data-brain-action>
+    <p><strong>T1. Where does the task record live?</strong></p>
+    <p>This is a concurrency question disguised as a layout question:
+    <code>writeFileAtomic</code> is temp-plus-rename, which makes a write
+    all-or-nothing but still last-writer-wins. Two workers touching the same
+    file lose a write.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-where-tasks-live" id="wtl-per-feature"
+            value=".brain/features/<slug>/tasks.json — one file per feature" checked data-brain-action></td>
+          <td><label for="wtl-per-feature"><code>features/&lt;slug&gt;/tasks.json</code>
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Blast radius is one feature; keeps <code>feature_list.json</code> &mdash; the hottest file in the brain, read by every command &mdash; out of the concurrent write path; sits next to the feature's runs and verifications</td>
+          <td>A second schema and a second validator to keep coherent with <code>feature_list.json</code>; <code>brain check</code> must walk features to find them</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-where-tasks-live" id="wtl-inline"
+            value="tasks[] inline inside each feature_list.json entry" data-brain-action></td>
+          <td><label for="wtl-inline"><code>tasks[]</code> inside <code>feature_list.json</code></label></td>
+          <td>One file, one schema, one atomic write path already validated by <code>brain check</code>'s first row</td>
+          <td>Every parallel worker writes the file every other command reads; a lost write there corrupts the feature tracker itself, not just a task list</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-where-tasks-live" id="wtl-per-task"
+            value="One file per task under features/<slug>/tasks/" data-brain-action></td>
+          <td><label for="wtl-per-task">One file per task</label></td>
+          <td>Writes never collide at all &mdash; each worker owns its own file</td>
+          <td>Ordering and dependencies have nowhere to live; listing means a directory walk plus N parses; no single place to validate</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-where-tasks-live', 'Where does the task record live?')">
+      Queue answer
+    </button>
+    <span class="queue-ack" id="ack-decision-where-tasks-live"></span>
+  </div>
+
+  <div class="decision-card" id="decision-claim-safety" data-brain-action>
+    <p><strong>T2. How is a claim made race-safe with zero dependencies?</strong></p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-claim-safety" id="cs-cas"
+            value="Compare-and-swap on a content hash; loser retries" checked data-brain-action></td>
+          <td><label for="cs-cas">Compare-and-swap on a content hash
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>No stale state to clean up &mdash; the file is always the truth; the loser gets exit 1 and a <code>help:</code> line telling it to re-list and retry; ~20 lines using <code>node:crypto</code></td>
+          <td>A losing worker burns one command round-trip; the read-modify-write window is small but nonzero (no OS-level guarantee)</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-claim-safety" id="cs-lock"
+            value="mkdir-based lockfile per feature" data-brain-action></td>
+          <td><label for="cs-lock"><code>mkdir</code> lockfile</label></td>
+          <td><code>mkdirSync</code> failing <code>EEXIST</code> is genuinely atomic on every POSIX filesystem</td>
+          <td>A worker that dies holding the lock wedges the feature until someone deletes a directory; a TTL means guessing how long a task takes</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-claim-safety" id="cs-none"
+            value="No locking — last writer wins" data-brain-action></td>
+          <td><label for="cs-none">No locking</label></td>
+          <td>Nothing to build</td>
+          <td>Two workers both believe they own the task and both do the work; silent, and the failure surfaces as a confusing double commit</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-claim-safety', 'How is a claim made race-safe?')">
+      Queue answer
+    </button>
+    <span class="queue-ack" id="ack-decision-claim-safety"></span>
+  </div>
+
+  <div class="decision-card" id="decision-check-strictness" data-brain-action>
+    <p><strong>T3. How hard does <code>brain check</code> gate on tasks?</strong></p>
+    <p><code>rules/state.md</code> sets the precedent: read-compat first, strict a
+    release later, and <code>--strict</code> is always on at the ship gate.</p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-check-strictness" id="cst-readcompat"
+            value="Two rows: schema always; shipped-with-open-task always; absent tasks.json passes" checked data-brain-action></td>
+          <td><label for="cst-readcompat">Schema + shipped-with-open-task, absent file passes
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Follows the read-compat/write-new rule &mdash; every existing brain and every consuming repo keeps passing; the one invariant that actually matters (a feature cannot be done while its work is not) is a hard gate from day one</td>
+          <td>A feature can still ship with an empty task list, i.e. nobody is forced to use the feature</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-check-strictness" id="cst-strict"
+            value="Also require every in-progress feature to have at least one task, behind --strict" data-brain-action></td>
+          <td><label for="cst-strict">Add a <code>--strict</code> row requiring tasks to exist</label></td>
+          <td>Makes the feature real rather than optional</td>
+          <td>Turns a one-commit feature into a ceremony; <code>--strict</code> is the ship gate, so this would block trivial features on inventing a task</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-check-strictness" id="cst-advisory"
+            value="Advisory only — report, never fail" data-brain-action></td>
+          <td><label for="cst-advisory">Advisory only</label></td>
+          <td>Zero risk to existing repos</td>
+          <td>An advisory nobody reads is the decaying-gate pattern <code>rules/state.md</code> names as the thing to avoid</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-check-strictness', 'How hard does brain check gate on tasks?')">
+      Queue answer
+    </button>
+    <span class="queue-ack" id="ack-decision-check-strictness"></span>
+  </div>
+
+  <div class="decision-card" id="decision-brief-source" data-brain-action>
+    <p><strong>T4. What goes into <code>brain brief</code>, and where does it come
+    from?</strong></p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-brief-source" id="bs-composed"
+            value="Composed: task + acceptance + decision prompts from reviews.jsonl + rules owning the touched files" checked data-brain-action></td>
+          <td><label for="bs-composed">Composed from existing structured state
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Every part already exists and is already parsed &mdash; <code>plans view</code> reads the decision prompts today; nothing new to maintain, nothing invented</td>
+          <td>The rules-for-touched-files mapping needs a declared <code>files</code> field per task, which is one more thing the coordinator must fill in</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-brief-source" id="bs-freetext"
+            value="A free-text brief the coordinator writes into the task record" data-brain-action></td>
+          <td><label for="bs-freetext">A free-text field the coordinator writes</label></td>
+          <td>Maximum flexibility; no derivation logic</td>
+          <td>Reintroduces the paraphrase risk this is meant to remove &mdash; the worker reads the coordinator's summary of an approved decision instead of the decision</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-brief-source" id="bs-noBrief"
+            value="No brief command; workers run brain playbook start" data-brain-action></td>
+          <td><label for="bs-noBrief">No brief command</label></td>
+          <td>Nothing to build; the existing playbook already orients an agent</td>
+          <td><code>playbook start</code> orients to the whole brain, not to one slice &mdash; the worker still has to be told what its task is by prompt</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-brief-source', 'What goes into brain brief and where does it come from?')">
+      Queue answer
+    </button>
+    <span class="queue-ack" id="ack-decision-brief-source"></span>
+  </div>
+
+  <div class="decision-card" id="decision-stale-claim" data-brain-action>
+    <p><strong>T5. What happens to a claim held by a worker that died?</strong></p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><input type="radio" name="decision-stale-claim" id="sc-manual"
+            value="Surface claimed_at + elapsed in the list; explicit brain tasks release" checked data-brain-action></td>
+          <td><label for="sc-manual">Surface it, release explicitly
+            <span class="tag-recommended">(recommended)</span></label></td>
+          <td>No guess about how long a task should take; the coordinator sees &ldquo;held 40m&rdquo; and decides; matches the harness's stance that state changes are deliberate</td>
+          <td>A dead worker's task stays held until someone looks</td>
+        </tr>
+        <tr>
+          <td><input type="radio" name="decision-stale-claim" id="sc-ttl"
+            value="Auto-expire a claim after a fixed TTL" data-brain-action></td>
+          <td><label for="sc-ttl">Auto-expire on a TTL</label></td>
+          <td>Self-healing with no coordinator attention</td>
+          <td>Any TTL is wrong for some task; expiring a live worker's claim mid-edit is worse than a stuck one</td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action
+      onclick="queueDecision('decision-stale-claim', 'What happens to a claim held by a worker that died?')">
+      Queue answer
+    </button>
+    <span class="queue-ack" id="ack-decision-stale-claim"></span>
+  </div>
+</section>
+
+<section id="plan-of-record">
+  <h2>Plan of record</h2>
+  <p>Tier boundaries land on phase boundaries: thin stops after 2, complete
+  after 4, gold after 6.</p>
+  <ol data-brain-section="plan-of-record">
+    <template>
+      <li data-brain-item>
+        <span data-item-text data-brain-action></span>
+        <span class="item-controls">
+          <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+          <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+        </span>
+      </li>
+    </template>
+    <li data-brain-item="0"><strong>Phase 1 &mdash; the record.</strong>
+      <span data-item-text data-brain-action>Owner: coordinator. Add TASK_STATUSES, validateTasksShape, tasksPath and a compare-and-swap write helper to lib/state.js; add cmdTasks (list, add, claim, done, release) to bin/brain.js. Acceptance: tasks round-trip through a scratch brain; every subcommand rejects unknown flags and ends in a help: list; validateTasksShape names the exact bad field (tasks[2].status) and never throws; new assertions in scripts/check-state-invariants.mjs pass.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="1"><strong>Phase 2 &mdash; the gate.</strong>
+      <span data-item-text data-brain-action>Owner: coordinator. Two brain check rows (task schema parses; no shipped feature has an open task), ship + set-status shipped preflight refusing on an open task, absent tasks.json passing everywhere. Acceptance: a planted open task makes brain check exit 1 with the feature and task named, and makes brain ship refuse and write nothing (feature_list.json byte-identical before and after); brain check on this repo stays at 16 passing rows plus 2 new ones.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="2"><strong>Phase 3 &mdash; the handoff.</strong>
+      <span data-item-text data-brain-action>Owner: coordinator. brain brief &lt;slug&gt; &lt;task-id&gt; composing task + acceptance + the approved decision prompts from plans/&lt;slug&gt;/reviews.jsonl + the rules docs owning the task's declared files; runs append gains --task and --author. Acceptance: brief output for a real task fits in one screen, cites at least one decision verbatim from reviews.jsonl, and a run step written with --task --author shows both in runs view.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="3"><strong>Phase 4 &mdash; teach it.</strong>
+      <span data-item-text data-brain-action>Owner: coordinator. Rewrite the execute playbook as a coordinator/worker loop with the topology table; add tasks + brief to skillContent(); update rules/state.md and rules/cli-commands.md; regenerate the skill. Acceptance: brain skill --check exits 0, brain verify 4/4 including skill-sync and playbook-refs, and the execute playbook names which role runs each command.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="4"><strong>Phase 5 &mdash; the human's view.</strong>
+      <span data-item-text data-brain-action>Gold tier only, and gated: a tasks panel in brain watch is a screen, so this phase opens a brain playbook ux round for wireframes and screen states (empty, one task, fan-out in flight, stale claim) before any code. Acceptance: the approved wireframe exists as a plan artifact section, then the panel matches it in a screenshot.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="5"><strong>Phase 6 &mdash; the numbers.</strong>
+      <span data-item-text data-brain-action>Gold tier only. Append task lifecycle events to runs/gates.jsonl; brain metrics reports tasks per feature, median hold time, and reclaim rate. Acceptance: metrics reads real events written by a real fan-out, not synthesized rows.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+  </ol>
+  <div class="list-add-row" data-brain-section-add="plan-of-record">
+    <input type="text" class="list-add-input" data-brain-action placeholder="Add a phase..." />
+    <button type="button" class="list-add-btn" data-brain-action>+ Add item</button>
+  </div>
+  <details>
+    <summary>Why not build the brief first and the record second?</summary>
+    <p>A brief with nothing to brief about is a prompt template. The record is
+    what makes the brief derivable rather than authored, so it has to exist
+    first &mdash; and the gate has to exist before anyone relies on the record,
+    or the first drift goes unnoticed exactly the way feat-008's did.</p>
+  </details>
+</section>
+
+<section id="files-changed">
+  <h2>Files that change</h2>
+  <table>
+    <thead><tr><th>Path</th><th>Change</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td><code>lib/state.js</code></td><td>edit (phase 1)</td>
+        <td>Task schema, statuses, path helper, CAS write. One definition per invariant &mdash; it cannot live in <code>bin/</code>, because <code>brain check</code> and the review server both need it</td></tr>
+      <tr><td><code>bin/brain.js</code></td><td>edit (phases 1&ndash;4)</td>
+        <td><code>cmdTasks</code>, <code>cmdBrief</code>, two <code>COMMANDS</code> entries, <code>runs append --task --author</code>, ship preflight row, two <code>brainCheck</code> rows, <code>skillContent()</code></td></tr>
+      <tr><td><code>scripts/check-state-invariants.mjs</code></td><td>edit (phases 1&ndash;3)</td>
+        <td>The repo's only automated test surface &mdash; every new invariant gets assertions here or it is untested</td></tr>
+      <tr><td><code>lib/review/playbooks.js</code></td><td>edit (phase 4)</td>
+        <td><code>execute</code> becomes a coordinator/worker loop; the topology table moves in</td></tr>
+      <tr><td><code>.brain/rules/state.md</code>, <code>.brain/rules/cli-commands.md</code></td><td>edit (phase 4)</td>
+        <td>The task schema and the CAS contract are invariants this repo must obey, not just features it offers</td></tr>
+      <tr><td><code>.brain/features/task-coordination/</code></td><td>new</td>
+        <td>Feature doc + <code>feat-009</code> entry in <code>feature_list.json</code>, plus this plan's own <code>tasks.json</code> once phase 1 lands (dogfooding: this feature's phases become its own first task list)</td></tr>
+      <tr><td><code>lib/review/dashboard.js</code></td><td>edit (phase 5, gold)</td>
+        <td>Tasks panel &mdash; blocked on a UX round</td></tr>
+      <tr><td><code>.github/workflows/ci.yml</code></td><td>no change expected</td>
+        <td>It already runs the invariants script plus <code>check</code> and <code>verify</code>; new assertions are picked up for free</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="golden-path">
+  <h2>Golden path</h2>
+  <pre class="mermaid">
+sequenceDiagram
+  participant C as Coordinator
+  participant B as brain CLI
+  participant T as tasks.json
+  participant W as Worker
+  C->>B: brain tasks add task-coordination --title "Phase 1" --acceptance "..." --files lib/state.js
+  B->>T: CAS write (hash matched)
+  C->>B: brain tasks task-coordination
+  B-->>C: 6 tasks, 4 unblocked
+  C->>W: spawn with "run brain brief task-coordination t1"
+  W->>B: brain brief task-coordination t1
+  B-->>W: task + acceptance + approved decisions + owning rules
+  W->>B: brain tasks claim task-coordination t1 --owner worker-a
+  B->>T: CAS write (hash matched) -> claimed
+  W->>B: brain runs append task-coordination --task t1 --author worker-a --step "..." --observed "..."
+  W->>B: brain tasks done task-coordination t1 --evidence "186 assertions pass, check 18/18"
+  B->>T: CAS write -> done
+  W-->>C: evidence string
+  C->>B: brain ship task-coordination --evidence "..."
+  B-->>C: preflight: no open tasks -> shipped
+  </pre>
+</section>
+
+<section id="error-paths">
+  <h2>Error paths</h2>
+  <table>
+    <thead><tr><th>Failure</th><th>Detected by</th><th>Handled by</th><th>Agent sees</th></tr></thead>
+    <tbody data-brain-section="error-paths">
+      <template>
+        <tr data-brain-item>
+          <td colspan="4"><span data-item-text data-brain-action></span>
+            <span class="item-controls">
+              <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+              <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+            </span>
+          </td>
+        </tr>
+      </template>
+      <tr data-brain-item="0">
+        <td><span data-item-text data-brain-action>Two workers claim the same task</span></td>
+        <td>Content hash read before the write no longer matches</td>
+        <td>Second write refused; nothing mutated</td>
+        <td>exit 1, <code>error:</code> naming the current owner, <code>help:</code> line: re-run <code>brain tasks &lt;slug&gt;</code> and claim another
+          <span class="item-controls">
+            <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+            <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+          </span></td>
+      </tr>
+      <tr data-brain-item="1">
+        <td><span data-item-text data-brain-action>Task closed with no evidence</span></td>
+        <td>Missing/blank <code>--evidence</code></td>
+        <td>Refused before any write (same rule as <code>ship</code>)</td>
+        <td>exit 2 usage error naming the flag and quoting the corrected command</td>
+      </tr>
+      <tr data-brain-item="2">
+        <td><span data-item-text data-brain-action>tasks.json malformed or hand-edited badly</span></td>
+        <td><code>validateTasksShape</code> in <code>brain check</code></td>
+        <td>Failing check row; no coercion into a valid-looking shape</td>
+        <td><code>tasks[2].status must be one of ...</code> &mdash; the exact index and field</td>
+      </tr>
+      <tr data-brain-item="3">
+        <td><span data-item-text data-brain-action>Worker dies holding a claim</span></td>
+        <td><code>brain tasks &lt;slug&gt;</code> showing <code>claimed_at</code> + elapsed</td>
+        <td>Coordinator calls <code>brain tasks release</code>; no auto-expiry (T5)</td>
+        <td>The task listed as <code>claimed</code> by a named owner with an elapsed time</td>
+      </tr>
+      <tr data-brain-item="4">
+        <td><span data-item-text data-brain-action>Feature shipped while a task is open</span></td>
+        <td>Ship preflight, scoped to that feature</td>
+        <td>Refused, nothing written &mdash; matches the existing preflight-then-commit contract</td>
+        <td>exit 1 naming the open task ids; status unchanged</td>
+      </tr>
+      <tr data-brain-item="5">
+        <td><span data-item-text data-brain-action>An older brain with no tasks.json runs a new CLI</span></td>
+        <td>Absent file</td>
+        <td>Read-compat: every task check passes vacuously</td>
+        <td>No new failures &mdash; existing repos and CI stay green</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="list-add-row" data-brain-section-add="error-paths">
+    <input type="text" class="list-add-input" data-brain-action placeholder="Add a failure mode..." />
+    <button type="button" class="list-add-btn" data-brain-action>+ Add item</button>
+  </div>
+</section>
+
+<section id="testing-plan">
+  <h2>Testing plan</h2>
+  <p>This repo has no test framework by policy; the test surface is
+  <code>scripts/check-state-invariants.mjs</code> (a plain assertion script,
+  already at ~186 assertions and already wired into CI). Every box below is an
+  assertion there unless it says otherwise.</p>
+  <ul class="checklist" data-brain-section="testing-plan">
+    <template>
+      <li data-brain-item><label><input type="checkbox">
+        <span data-item-text data-brain-action></span></label>
+        <span class="item-controls">
+          <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+          <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+        </span>
+      </li>
+    </template>
+    <li data-brain-item="0"><label><input type="checkbox">
+      <!-- dblclick on label text toggles the checkbox twice on the way into edit
+           mode; it nets back to its original state. Do not "fix" this with a
+           preventDefault — that would break click-to-check. -->
+      <span data-item-text data-brain-action>Golden path: add 3 tasks, claim one, append a step, close with evidence, list shows 1 done / 2 open</span></label>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="1"><label><input type="checkbox">
+      <span data-item-text data-brain-action>Error path: simulate a concurrent write (mutate the file between read and write), assert the CAS refuses and the file is byte-identical</span></label>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="2"><label><input type="checkbox">
+      <span data-item-text data-brain-action>Error path: close without --evidence exits 2 and writes nothing</span></label>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="3"><label><input type="checkbox">
+      <span data-item-text data-brain-action>Error path: each malformed shape (tasks not an array, duplicate id, unknown status, missing acceptance) produces one message naming the exact index and field</span></label>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="4"><label><input type="checkbox">
+      <span data-item-text data-brain-action>Error path: brain ship with an open task refuses; feature_list.json byte-identical before and after (the preflight-then-commit property)</span></label>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="5"><label><input type="checkbox">
+      <span data-item-text data-brain-action>Read-compat: a brain with no tasks.json passes brain check and brain check --strict unchanged</span></label>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="6"><label><input type="checkbox">
+      <span data-item-text data-brain-action>Regression: brain check on this repo still passes every pre-existing row; brain verify 4/4; brain skill --check exits 0; stdout stays TOON-only and stderr diagnostics-only for every new command</span></label>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="7"><label><input type="checkbox">
+      <span data-item-text data-brain-action>Dogfood (manual, not an assertion): this feature's own six phases are seeded as its tasks and worked through the new commands — if the loop is awkward for us it is awkward for every consumer</span></label>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+  </ul>
+  <div class="list-add-row" data-brain-section-add="testing-plan">
+    <input type="text" class="list-add-input" data-brain-action placeholder="Add a test..." />
+    <button type="button" class="list-add-btn" data-brain-action>+ Add item</button>
+  </div>
+</section>
+
+<section id="open-questions" data-brain-section="open-questions">
+  <h2>Open questions</h2>
+  <ul>
+    <template>
+      <li data-brain-item>
+        <span data-item-text data-brain-action></span>
+        <span class="item-controls">
+          <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+          <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+        </span>
+      </li>
+    </template>
+    <li data-brain-item="0">
+      <span data-item-text data-brain-action>Should a task be able to depend on another task, or is a flat ordered list enough? Feature-level dependencies already exist and are checked; task-level ones would need their own cycle detection.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="1">
+      <span data-item-text data-brain-action>Does a worker's claim need to record the git branch or worktree it is operating in? Parallel workers editing the same repo is the real hazard, and brain has no view of that today.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="2">
+      <span data-item-text data-brain-action>Should closing the last task auto-run brain ship, or stay explicit? Auto would be convenient and would also let a worker ship a feature the coordinator has not reviewed.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+    <li data-brain-item="3">
+      <span data-item-text data-brain-action>Does a task's evidence deserve a commit receipt, the way a strict verification verdict now does? That would bind a worker's claim to code that actually landed.</span>
+      <span class="item-controls">
+        <button type="button" class="item-x" data-brain-action title="Remove">x</button>
+        <button type="button" class="item-restore" data-brain-action hidden title="Restore">restore</button>
+      </span>
+    </li>
+  </ul>
+  <div class="list-add-row" data-brain-section-add="open-questions">
+    <input type="text" class="list-add-input" data-brain-action placeholder="Add an open question..." />
+    <button type="button" class="list-add-btn" data-brain-action>+ Add item</button>
+  </div>
+</section>
+
+<section id="verdict">
+  <h2>Verdict</h2>
+  <div>
+    <button type="button" class="btn-approve" data-brain-action
+      onclick="queueVerdict('approve')">Approve plan</button>
+    <button type="button" class="btn-request-changes" data-brain-action
+      onclick="queueVerdict('request-changes')">Request changes</button>
+  </div>
+</section>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "neutral" });
+</script>
+
+<script>
+  function queueDecision(cardId, question) {
+    var card = document.getElementById(cardId);
+    var checked = card.querySelector('input[type="radio"]:checked');
+    if (!checked) return;
+    var choice = checked.value;
+    if (window.brain && typeof window.brain.queuePrompt === "function") {
+      window.brain.queuePrompt({
+        tag: "decision",
+        queueKey: cardId,
+        prompt: question + ": " + choice,
+        target: { type: "decision", question: question, choice: choice }
+      });
+    }
+    var ack = document.getElementById("ack-" + cardId);
+    if (ack) ack.textContent = "Queued: " + choice;
+  }
+
+  function queueVerdict(verdict) {
+    if (!(window.brain && typeof window.brain.queuePrompt === "function")) return;
+    window.brain.queuePrompt({
+      tag: "message",
+      queueKey: "verdict",
+      prompt: verdict === "approve"
+        ? "Plan approved as written."
+        : "Requesting changes — see annotations."
+    });
+  }
+</script>
+
+<script>
+  (function () {
+    function queueList(section, queueKey, prompt, action, item, index) {
+      if (window.brain && typeof window.brain.queuePrompt === "function") {
+        window.brain.queuePrompt({
+          tag: "list-edit",
+          queueKey: queueKey,
+          prompt: prompt,
+          target: { type: "list-edit", section: section, action: action, item: item, index: index }
+        });
+      }
+    }
+
+    function slugify(s) {
+      return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "").slice(0, 60) || "item";
+    }
+
+    function itemText(el) {
+      var t = el.querySelector("[data-item-text]");
+      return (t || el).textContent.trim();
+    }
+
+    function addBadge(el, cls, label) {
+      var badge = el.querySelector("." + cls);
+      if (!badge) {
+        badge = document.createElement("span");
+        badge.className = "item-badge " + cls;
+        el.appendChild(badge);
+      }
+      badge.textContent = label;
+    }
+
+    function toggleRemoved(item, section) {
+      var index = Number(item.getAttribute("data-brain-item"));
+      var text = itemText(item);
+      var removed = item.classList.toggle("item-removed");
+      var xBtn = item.querySelector(".item-x");
+      var restoreBtn = item.querySelector(".item-restore");
+      if (xBtn) xBtn.hidden = removed;
+      if (restoreBtn) restoreBtn.hidden = !removed;
+      var key = section + ":remove:" + index;
+      if (removed) {
+        queueList(section, key, "Remove from " + section + ": \"" + text + "\"", "remove", text, index);
+      } else {
+        queueList(section, key, "Cancelled: keep \"" + text + "\" in " + section, "edit", text, index);
+      }
+    }
+
+    function startEdit(item, section) {
+      if (item.classList.contains("item-removed")) return;
+      var span = item.querySelector("[data-item-text]");
+      if (!span || span.isContentEditable) return;
+      var before = span.textContent;
+      span.setAttribute("contenteditable", "true");
+      span.focus();
+
+      function commit() {
+        span.removeAttribute("contenteditable");
+        span.removeEventListener("blur", commit);
+        span.removeEventListener("keydown", onKey);
+        var text = span.textContent.trim();
+        if (!text || text === before.trim()) { span.textContent = before; return; }
+        var index = Number(item.getAttribute("data-brain-item"));
+        addBadge(item, "item-badge-edited", "edited");
+        queueList(section, section + ":edit:" + index,
+          "Edit " + section + " item " + index + ": \"" + text + "\"", "edit", text, index);
+      }
+      function onKey(ev) {
+        if (ev.key === "Enter") { ev.preventDefault(); span.blur(); }
+        else if (ev.key === "Escape") { span.textContent = before; ev.preventDefault(); span.blur(); }
+      }
+      span.addEventListener("blur", commit);
+      span.addEventListener("keydown", onKey);
+    }
+
+    function commitAdd(addRow) {
+      var section = addRow.getAttribute("data-brain-section-add");
+      var input = addRow.querySelector(".list-add-input");
+      var text = input.value.trim();
+      if (!text) return;
+      var list = document.querySelector("[data-brain-section=\"" + section + "\"]");
+      var tpl = list && list.querySelector("template");
+      if (!list || !tpl) return;
+      var node = document.importNode(tpl.content, true);
+      var item = node.querySelector("[data-brain-item]") || node.firstElementChild;
+      item.setAttribute("data-brain-item", "new");
+      var span = item.querySelector("[data-item-text]");
+      if (span) span.textContent = text;
+      item.classList.add("item-proposed");
+      addBadge(item, "item-badge-proposed", "proposed");
+      list.insertBefore(node, tpl.nextSibling);
+      input.value = "";
+      queueList(section, section + ":add:" + slugify(text),
+        "Add to " + section + ": \"" + text + "\"", "add", text, null);
+    }
+
+    document.addEventListener("click", function (ev) {
+      var xBtn = ev.target.closest(".item-x");
+      var restoreBtn = ev.target.closest(".item-restore");
+      if (xBtn || restoreBtn) {
+        var item = ev.target.closest("[data-brain-item]");
+        var section = ev.target.closest("[data-brain-section]");
+        if (item && section) toggleRemoved(item, section.getAttribute("data-brain-section"));
+        return;
+      }
+      var addBtn = ev.target.closest(".list-add-btn");
+      if (addBtn) {
+        var addRow = ev.target.closest("[data-brain-section-add]");
+        if (addRow) commitAdd(addRow);
+      }
+    });
+
+    document.addEventListener("dblclick", function (ev) {
+      var item = ev.target.closest("[data-brain-item]");
+      if (!item) return;
+      var section = item.closest("[data-brain-section]");
+      if (section) startEdit(item, section.getAttribute("data-brain-section"));
+    });
+
+    document.addEventListener("keydown", function (ev) {
+      if (ev.key !== "Enter") return;
+      var addRow = ev.target.closest("[data-brain-section-add]");
+      if (addRow && ev.target.classList.contains("list-add-input")) {
+        ev.preventDefault();
+        commitAdd(addRow);
+      }
+    });
+  })();
+</script>
+
+</body>
+</html>

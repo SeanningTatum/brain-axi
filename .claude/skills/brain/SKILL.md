@@ -9,9 +9,10 @@ All commands print TOON-structured output. Run from anywhere inside the repo; th
 
 ## Playbooks (`brain playbook <id>`)
 
-Eight standing playbooks — each a full text standard printed by `brain playbook <id>`, meant to be followed step by step while doing the thing it names:
+Ten standing playbooks — each a full text standard printed by `brain playbook <id>`, meant to be followed step by step while doing the thing it names:
 
 - `start` — starting any non-trivial task — frame it, read the brain, baseline, open state
+- `grill` — before writing a plan that will carry any decision — interview the human, memory-checked
 - `plan` — writing any plan/proposal/design artifact for human review
 - `product` — any plan for user-facing work — the product case before the technical one
 - `ux` — any plan that adds or changes a screen — wireframes, screen states, user flows
@@ -19,6 +20,7 @@ Eight standing playbooks — each a full text standard printed by `brain playboo
 - `verify` — verifying a user-visible feature works — browser walk with screenshot evidence
 - `execute` — implementing an approved plan / working a feature to shipped
 - `done` — before declaring any task complete — full verify, harness invariants, coherence
+- `write` — writing anything into the brain — checkpoints, run notes, feature docs, verdicts, commit bodies
 
 Run `brain playbook` for the live id/use_when index; `brain playbook <id>` for the full text. Referenced inline below at the point each one applies.
 
@@ -47,16 +49,17 @@ Run `brain playbook` for the live id/use_when index; `brain playbook <id>` for t
 - `brain docs` — doc sections; `brain docs rules` — list; `brain docs view rules/errors` — read
 - `brain search "<query>"` — find text anywhere in the brain (`--section rules` to narrow)
 - `brain features view <slug>` — tracker fields + feature doc
-- `brain runs view <name>` — deep per-task state (baselines, dead ends, decisions)
+- `brain runs view <name>` — deep per-task state (baselines, dead ends, decisions); merges the legacy flat pool with every feature's own `runs/` (pass `--feature <slug>` if the name exists in more than one place)
 - `npx -y brain-axi playbook plan` — the plan artifact standard (structure, decision cards, diagrams)
 - `npx -y brain-axi playbook product` — the product case: problem + evidence, user + job, success metric, non-goals, scope tiers, prior art, product decision cards (plan sections 3 and 7)
 - `npx -y brain-axi playbook ux` — wireframes, screen-state matrix, user-journey flow, layout variant cards (plan section 6)
 
 ## Record state (end of task / checkpoint)
 
-- `brain progress add --summary "..." --next "..."` — append a session checkpoint
+- `npx -y brain-axi playbook write` — HOW to write any of it: the record is reference, not release notes. Slots per artifact (checkpoint, run-note step, feature doc, verification doc, commit body), the register rules, and three prune tests. Read it before writing a checkpoint or a feature doc, not after
+- `brain progress add --summary "..." --next "..."` — append a session checkpoint. The summary is the rolling CURSOR and is capped at 200 chars (exit 2 over it, nothing written) — a headline, not the story; verbatim output goes to `runs append --observed`
 - `brain features set-status <slug> --status <planned|in-progress|shipped|blocked|cut>` — flip feature state (enforces one-in-progress policy; `--status shipped` requires `--evidence` **and passes the same preflight as `brain ship` — it refuses and writes nothing if any check would fail**. Transitions *out* of a state are never gated, so a broken record stays repairable)
-- `brain check` — deterministic harness invariants (feature-list **schema** validity — duplicate ids/slugs, unknown status, shipped-without-evidence all fail — one-in-progress per declared policy, doc paths, dependency refs, `features/index.md` agreeing with the tracker, plan/review file integrity, verification docs having a **readable** verdict with resolvable image links, verify.json shape when present); exit 1 on any failure, CI-usable
+- `brain check` — deterministic harness invariants (feature-list **schema** validity — duplicate ids/slugs, unknown status, shipped-without-evidence all fail — one-in-progress per declared policy, doc paths, dependency refs, `features/index.md` agreeing with the tracker, plan/review file integrity, verification docs having a **readable** verdict with resolvable image links, `tasks.json` schema validity, no `shipped` feature with an open task, verify.json shape when present); exit 1 on any failure, CI-usable
 - `brain features index [--write]` — GENERATE the `features/index.md` status table from `feature_list.json` (bounded by `<!-- brain:features-table -->` markers so surrounding prose survives). Hand-maintaining that mirror is how a tracker and its human-facing index end up disagreeing
 - `brain receipt <feature> [--date <d>] [--verified-by <who>] [--allow-dirty]` — stamp a commit-bound provenance receipt into a verification doc, written BY THE TOOL: HEAD at stamp time plus the actual gate results for that feature from `runs/gates.jsonl`. Refuses on a dirty tree (a receipt naming HEAD while the tree differs describes code in no commit) and refuses to stamp a doc whose verdict is unreadable — a hand-written receipt is a claim about provenance, not provenance
 - `brain check --strict` — adds two: every `shipped` feature must have a verification doc whose verdict parses to PASS, **and** that doc must carry a `brain:verification` receipt naming a commit that is an ancestor of HEAD. Opt-in here so brains predating the invariants do not go red on upgrade; `brain ship` and `set-status --status shipped` **always** enforce both, since shipping is the moment the claim is made
@@ -152,19 +155,86 @@ doc at `.brain/features/<slug>/verifications/<date>.md` following
 `brain playbook verify` — this is how "it works" becomes checkable evidence
 instead of a claim.
 
+## Tasks — coordination BELOW a feature (`brain tasks`)
+
+A task is the unit a coordinator hands to a worker: smaller than a feature,
+tracked in `features/<slug>/tasks.json`, so the phase list survives a
+compaction or a handoff instead of living only in one agent's context window.
+Claims are compare-and-swap (a content hash from the read that must still
+match at write time), so two workers claiming at once cannot silently lose
+each other's write — the loser gets exit 1 and a `help:` line to re-list and
+retry, never a corrupted file.
+
+- `brain tasks <slug>` — list: `id,title,status,owner` plus a `count:` line
+  that already includes how many are unblocked (open, every `depends_on`
+  done) — no second call needed. A claimed row shows how long it has been
+  held (`held 41m`) right there, so a stale claim is visible without `view`.
+- `brain tasks view <slug> <id>` — full detail: acceptance, `depends_on`,
+  files, owner, `claimed_at`, evidence, receipt, and what it is **blocked
+  by** right now (computed from the other tasks' current status, not just
+  the declared list).
+- `brain tasks add <slug> --title "..." --acceptance "..." [--depends-on
+  t1,t2] [--files a,b] [--id <id>]` — creates `tasks.json` on the first
+  task; `--id` auto-generates (`t1`, `t2`, ...) from the current max when
+  omitted. `--title`/`--acceptance` are required — a task with no checkable
+  acceptance is the same premature-"done" shape the feature-level evidence
+  rule exists to prevent, one level further down.
+- `brain tasks claim <slug> <id> --owner <name>` — refuses (exit 1, naming
+  the current owner) if held by someone else; refuses (naming the unmet
+  dependency) if any `depends_on` is not `done`; re-claiming your OWN
+  claim is an idempotent no-op at exit 0.
+- `brain tasks done <slug> <id> --evidence "..." [--no-autoship]` —
+  `--evidence` is required (mirrors `brain ship`'s gate) and refuses on
+  missing/blank (exit 2). Already-done is an idempotent no-op at exit 0 and
+  never overwrites the recorded evidence. **Closing the LAST open/claimed task
+  on a feature runs `brain ship`'s identical strict preflight automatically**
+  (gated autoship) — on a verified feature it ships; on an unverified one it
+  refuses, but the task stays closed and the feature stays untouched (nothing
+  is written by the refused ship), reported together in one result, still exit
+  0 — the task close is the primary operation here and it succeeded; the ship
+  refusal is the gate working as designed, not a failure of this command.
+  `--no-autoship` skips the automatic ship attempt entirely.
+- `brain tasks release <slug> <id>` — the stale-claim escape hatch: clears
+  owner/`claimed_at` back to `open`. No TTL by design — any fixed timeout is
+  wrong for some task, so release is always an explicit act.
+- `brain brief <slug> <task-id> [--full]` — the handoff: one payload a COLD
+  worker can act on without reading the plan artifact or being told anything
+  else. Composes the task (acceptance, `depends_on` with their current
+  statuses, declared `files`), the **approved** decision prompts read verbatim
+  from that feature's bound plan(s) (`plans/<slug>/reviews.jsonl` — the round
+  that concluded review, filtered to `tag: decision`; names which plan they
+  came from when more than one is bound), the rules docs that own each
+  declared file (derived from `rules/index.md`'s own Touches column — see
+  `rules_source` in the output for exactly how), and the feature's one-line
+  `description` for orientation. A task with no decisions or no owning rules
+  still gets a definitive line saying so, never a silently empty section. Run
+  this FIRST on a claimed task, before reading anything else.
+
+Every mutation preflights: read → project the change → validate the
+projection → only then write with the hash from the read (the same
+preflight-then-commit order `brain ship` already uses) — a bad write never
+lands partially. Two more `brain check` rows exist just for this layer:
+`tasks.json files parse` and `no shipped feature has an open task` — both
+scoped exactly like every other per-feature row (an unrelated feature's open
+task never blocks THIS feature's ship), and both PASS vacuously when a feature
+has no `tasks.json` at all (read-compat).
+
 ## Execution loop — implementing an approved plan / working a feature to shipped
 
 Run `npx -y brain-axi playbook execute` and follow it. Short version: `features
 set-status <slug> --status in-progress` → per step `runs append <slug> --step
-"..." --observed "..."` (verbatim command output, not a paraphrase) → `shots add
---feature <slug> --step NN-name` on every visual test, pass AND fail → a
-verification doc per `playbook verify` → `brain ship <slug> --evidence "..."`
-(requires evidence; no-ops if already shipped; **preflights `brain check`
-against the projected state and refuses the ship if anything would fail —
-nothing is written, the feature keeps its previous status, exit 1**; on pass it
-writes atomically, warns — does not block — on zero screenshots, and
-checkpoints). `runs/progress.md` stays a rolling cursor;
-`features/<slug>/runs/*.md` is the deep, verbatim record.
+"..." --observed "..." [--task <id>] [--author <name>]` (verbatim command
+output, not a paraphrase — `--task`/`--author` are both optional and additive,
+so a step on a coordinated task no longer has to be folded into `--step` text
+by hand; both are visible via `runs view`) → `shots add --feature <slug>
+--step NN-name` on every visual test, pass AND fail → a verification doc per
+`playbook verify` → `brain ship <slug> --evidence "..."` (requires evidence;
+no-ops if already shipped; **preflights `brain check` against the projected
+state and refuses the ship if anything would fail — nothing is written, the
+feature keeps its previous status, exit 1**; on pass it writes atomically,
+warns — does not block — on zero screenshots, and checkpoints).
+`runs/progress.md` stays a rolling cursor; `features/<slug>/runs/*.md` is the
+deep, verbatim record.
 
 - `npx -y brain-axi watch <feature>` — opens the live execution dashboard in
   the browser (feature status, harness health, checkpoints, run-step logs,
@@ -245,9 +315,18 @@ in order, in the current turn:
 1. **Read the brain first** — `brain progress`, `brain features`, `brain plans`,
    `brain timeline`. Weave what you find into the plan (cite prior plans, decisions,
    in-progress feature, relevant rules).
+1b. **Grill before you write, if the plan will carry any decision.** Run
+   `npx -y brain-axi playbook grill` and follow it: check every past plan's recorded
+   decision rounds for an already-settled answer FIRST (cite those, never re-ask them),
+   then put the remaining open questions to the user in one numbered round, each with a
+   recommendation, and wait. Settled answers become pre-answered decision cards in step 2;
+   a question asked after the artifact exists cannot change the design it is asking about.
 2. **Run `npx -y brain-axi playbook plan` and follow it** to write the plan as ONE
    standalone HTML file (inline CSS, system fonts, no build step — it must render
-   opened directly). The playbook covers the 17-section structure (0-16), decision cards,
+   opened directly). Pick a TIER first — `small` (header, TL;DR, context, decisions,
+   plan of record, files) or `full` (every applicable section) — and state it in the
+   header strip; decisions are never cut, and a conditional section still fires in small.
+   The playbook covers the 17-section structure (0-16), decision cards,
    and diagram options (a CDN-based Mermaid snippet that degrades to readable text
    offline, or hand-rolled inline SVG for zero network dependency). Any path works;
    `<repo>/plans/<topic>.html` is a good default.
