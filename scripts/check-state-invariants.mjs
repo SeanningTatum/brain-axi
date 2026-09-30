@@ -38,7 +38,7 @@ import {
   readTasks,
   writeTasksCas,
 } from "../lib/state.js";
-import { brainCheck, listVerifications } from "../lib/review/brain-data.js";
+import { brainCheck, healthChecks, listVerifications } from "../lib/review/brain-data.js";
 
 const failures = [];
 let assertions = 0;
@@ -1039,14 +1039,48 @@ const SCHEMA_CHECK = "feature_list.json is valid";
     ["legacy", /1 receipt\(s\) predate implemented_by: a7/],
   ])
     ok(`table: mix names the ${bucket} bucket`, re.test(indOf(mixAll)?.detail || ""), indOf(mixAll)?.detail);
-  // The browser health strips (/watch dashboard.js, review chrome.js) call
-  // NON-strict brainCheck and render only fail rows. That is safe only while
-  // no non-strict row can warn — pin it, so a future non-strict warn forces
-  // those surfaces to learn to show advisories (Greptile round 6).
+  // Non-strict brainCheck emits no warn row and no independence row: those are
+  // strict-only, which is why the browser health strips now go through
+  // healthChecks() (strict, strict-only rows tagged advisory) — Greptile round 6/7.
   const nonStrict = brainCheck(mixAll);
-  ok("non-strict brainCheck emits no warn row (health strips hide warns)",
+  ok("non-strict brainCheck emits no warn row (warns are strict-only)",
     !nonStrict.some((row) => row.status === "warn"), nonStrict.filter((row) => row.status === "warn").map((row) => row.check).join(", "));
   ok("non-strict brainCheck omits the independence row", !nonStrict.some((row) => row.check === IND_ROW));
+
+  // ---- healthChecks(): the payload behind both health strips (/session/<key>/health
+  // and /watch/context). Contract: strict rows reach the strip, but a strict-only
+  // row is ALWAYS advisory, so enabling strict never turns a green strip red; a
+  // non-strict row passes through untouched (a real fail stays red).
+  const HEALTH_KEYS = new Set(["check", "status", "detail", "advisory"]);
+  const healthContract = (label, brain) => {
+    const base = brainCheck(brain);
+    const health = healthChecks(brain);
+    const baseNames = new Set(base.map((r) => r.check));
+    ok(`health ${label}: every row is {check,status,detail[,advisory]}`,
+      health.every((r) => Object.keys(r).every((k) => HEALTH_KEYS.has(k)) && typeof r.check === "string"),
+      JSON.stringify(health.find((r) => !Object.keys(r).every((k) => HEALTH_KEYS.has(k)))));
+    ok(`health ${label}: every non-strict row passes through, same status, not advisory`,
+      base.every((b) => health.some((h) => h.check === b.check && h.status === b.status && !h.advisory)));
+    ok(`health ${label}: every strict-only row is advisory`,
+      health.filter((h) => !baseNames.has(h.check)).every((h) => h.advisory === true));
+    const redHealth = health.filter((h) => h.status === "fail" && !h.advisory).map((h) => h.check).sort();
+    const redBase = base.filter((b) => b.status === "fail").map((b) => b.check).sort();
+    ok(`health ${label}: red rows == non-strict fails (strict never adds red)`,
+      JSON.stringify(redHealth) === JSON.stringify(redBase), `${redHealth} vs ${redBase}`);
+    return health;
+  };
+  const mixHealth = healthContract("mix", mixAll);
+  const mixInd = mixHealth.find((r) => r.check === IND_ROW);
+  ok("health: the independence warn reaches the strip as an advisory",
+    mixInd?.status === "warn" && mixInd?.advisory === true, mixInd && JSON.stringify(mixInd));
+  const t1Health = healthContract("no-docs", t1);
+  const t1Pass = t1Health.find((r) => r.check === "every shipped feature has a PASS verification");
+  ok("health: a strict-only FAIL is advisory, not red",
+    t1Pass?.status === "fail" && t1Pass?.advisory === true, t1Pass && JSON.stringify(t1Pass));
+  const cleanHealth = healthContract("independent", indep);
+  ok("health: an all-independent brain has no advisory warn/fail",
+    !cleanHealth.some((r) => r.advisory && (r.status === "warn" || r.status === "fail")),
+    cleanHealth.filter((r) => r.advisory && r.status !== "pass" && r.status !== "skip").map((r) => r.check).join(", "));
   expectRow("mix: a single warn among independents", multi("tbl-mix-onewarn", {
     alpha: one(PASS_H + R_INDEP), beta: one(PASS_H + R_INDEP), gamma: one(PASS_H + R_SELF),
   }), "warn", /unacknowledged: gamma.*2 verified independently/);
@@ -1090,6 +1124,9 @@ const SCHEMA_CHECK = "feature_list.json is valid";
   const row = brainCheck(brain).find((r) => r.check === "tasks.json files parse");
   ok("malformed tasks.json FAILS the parse row", row?.status === "fail", row && `${row.status}: ${row.detail}`);
   ok("...and names the file", /alpha\/tasks\.json/.test(row?.detail || ""), row?.detail);
+  // A NON-strict fail must stay red on the health strips (not demoted to advisory).
+  const hrow = healthChecks(brain).find((r) => r.check === "tasks.json files parse");
+  ok("health: a non-strict FAIL stays red (not advisory)", hrow?.status === "fail" && !hrow?.advisory, hrow && JSON.stringify(hrow));
 }
 
 {

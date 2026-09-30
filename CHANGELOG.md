@@ -97,7 +97,14 @@ against hard floors, and re-walks in capped fix rounds.
   quoted TOON string. Before, it was an unquoted `warning: recorded with dirty: true …`
   line. **Potentially breaking** for parsers matching the old line.
 - **CLI — review dashboard and chrome health strip** (`lib/review/dashboard.js`,
-  `lib/review/chrome.js`): `warn` rows are not counted as failing.
+  `lib/review/chrome.js`): both health endpoints (`/session/<key>/health`, `/watch/context`)
+  now go through `healthChecks()`, which runs **strict** `brainCheck` and tags every
+  strict-only row `advisory: true`. The strips still show non-strict fails in red. `warn`
+  rows, and strict-only rows that fail, go on an amber advisory line below, with the
+  detail shown inline and on hover. When advisories exist the ok line reads
+  `harness ok · N advisory`, never a plain `harness ok`. Strict-only fails are advisory by
+  design, so turning strict on here never turns a green strip red. `skip` rows stay
+  hidden and are no longer counted in the ok-line total.
 - **Playbooks — `verify`**: `use_when` is now "independent, skeptical browser walk of
   every acceptance criterion: golden + error paths, quality floors, screenshot evidence".
   The same text is used in `brain playbook` and in the generated skill.

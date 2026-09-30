@@ -16,6 +16,7 @@
     --border: #dedcd1;
     --highlight: #fff7ca;
     --accent: #d97757;
+    --warn: #a9791f; /* advisory — same token as chrome.html */
   }
   * { box-sizing: border-box; }
   body {
@@ -99,6 +100,8 @@
   .health-line.fail { color: var(--accent); }
   .health-line.fail .cross { margin-right: 4px; }
   .health-line .detail { color: var(--muted); }
+  .health-line.advisory { color: var(--warn); }
+  .health-line.advisory .bang { margin-right: 4px; font-weight: 600; }
 
   /* run steps */
   .run-note { margin: 16px 0 24px; }

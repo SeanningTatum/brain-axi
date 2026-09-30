@@ -15,6 +15,7 @@ Plain ES2020, no frameworks. Binding contract: [`docs/REVIEW-ARCHITECTURE.md`](.
 - **Never mutate artifact styles.** Highlights/overlays live in a shadow-DOM `[data-brain-ui]` host. Annotation click-interception skips native controls, `[data-brain-action]`, and `[data-brain-ui]` subtrees.
 - **Persist the composer queue in `sessionStorage`** keyed by session; remove items only after a 2xx.
 - **The conversation is the product** — chat + annotation queue + composer must always be visible in the session sidebar (v3 scope correction; no in-sidebar plans browsing).
+- **Health strips classify rows from `healthChecks()` the same way in `dashboard.js` and `chrome.js`:** red = `status: "fail"` without `advisory`; amber advisory line = any `warn`, plus any `fail` tagged `advisory` (strict-only rows, see `rules/review-server.md`); `skip` hidden and not counted. With any advisory present the ok line reads `harness ok · N advisory`, never plain `harness ok`.
 - **Snapshots are compact outlines**, not raw outerHTML (v6.1) — one line per significant element, uid from a WeakMap, capped 20k chars.
 
 ## Don't
