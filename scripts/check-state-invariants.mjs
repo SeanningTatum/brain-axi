@@ -3275,6 +3275,28 @@ function writeTasksFile(brain, slug, tasks) {
   ok("fix rounds: strict sees the round-2 receipt", rowStatus(checks, "every PASS verification is bound to a commit") === "pass", JSON.stringify(checks));
 }
 
+// ---------------------------------------------------------------------------
+// The verify playbook must be walkable for a feature with no browser surface
+// at all (Greptile round 8): no mandatory dev server / browser for CLI-only work,
+// and the golden + error + edge layers still bind, via commands.
+// ---------------------------------------------------------------------------
+{
+  const { PLAYBOOKS } = await import("../lib/review/playbooks.js");
+  const v = PLAYBOOKS.verify.content;
+  ok("verify playbook: has a CLI-ONLY FEATURES clause", /CLI-ONLY FEATURES\./.test(v));
+  ok("verify playbook: the app-reachable step is skipped for CLI-only features",
+    /Confirm the app is reachable[\s\S]{0,200}Skip this for a CLI-only feature/.test(v));
+  ok("verify playbook: CLI-only still walks golden + error + edge via commands",
+    /CLI-ONLY FEATURES\.[\s\S]{0,700}golden path[\s\S]{0,200}error path[\s\S]{0,200}edge probes/.test(v));
+  ok("verify playbook: the header allows a CLI-only Base URL", /\*\*Base URL\*\*:.*n\/a — CLI-only/.test(v));
+  ok("verify playbook: screenshot rule names the CLI-only evidence", /Every asserted state gets a screenshot \(for a CLI-only feature/.test(v));
+  for (const id of ["execute", "done"]) {
+    const c = PLAYBOOKS[id]?.content || "";
+    ok(`${id} playbook: 'driven in a real browser' carries the CLI-only alternative`,
+      !/driven in a[\s\n]+real browser(?![\s\S]{0,20}\((?:or )?run as commands)/.test(c), id);
+  }
+}
+
 fs.rmSync(tmpRoot, { recursive: true, force: true });
 
 // ---------------------------------------------------------------------------
