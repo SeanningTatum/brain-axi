@@ -106,6 +106,15 @@ for (const id of ids) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Verify rounds must not reuse screenshot step names. `shots add` overwrites a
+// step's file, so a round-2 walk under round 1's names replaced the images the
+// round-1 FAIL doc cites (Greptile round 7). The verify playbook must keep
+// telling round N >= 2 to prefix steps with rN-.
+// ---------------------------------------------------------------------------
+if (PLAYBOOKS.verify && !/Round N >= 2: prefix every --step with rN-/.test(PLAYBOOKS.verify.content))
+  failures.push("verify: section 6 no longer tells round N >= 2 to prefix screenshot --step names with rN- (rounds would overwrite each other's evidence)");
+
 if (failures.length) {
   console.error(`playbook-refs: ${failures.length} problem(s)`);
   for (const f of failures) console.error(`  ${f}`);

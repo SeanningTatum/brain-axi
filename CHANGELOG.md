@@ -127,6 +127,10 @@ against hard floors, and re-walks in capped fix rounds.
 
 ### Fixed
 
+- **Playbooks — `verify` §6**: round N >= 2 now prefixes every screenshot `--step` with
+  `rN-` (for example `r2-01-signup`). `shots add` overwrites a step's file, so reusing
+  round 1's step names replaced the images the round-1 FAIL doc cites. The rule is
+  pinned by `scripts/check-playbook-refs.mjs`.
 - **CLI — `brain tasks <verb> --help`**, for example `brain tasks add --help`, now prints
   that verb's help. Before, it printed the list help, which hid every `add` flag.
 - **CLI — `brain tasks add --verify ""`** or a whitespace-only value is a usage error
