@@ -5346,8 +5346,11 @@ function cmdSetup(argv) {
     if (app === "claude" && !r.plugin) claudeNoPlugin = true;
     rows.push({ app, action: r.action, file: collapseHome(r.path), note: r.note || "" });
   }
+  // With the plugin installed, claude's context comes from the plugin's own
+  // hooks/hooks.json — the settings hook command is irrelevant to that row.
+  const pluginOnly = targets.length === 1 && targets[0] === "claude" && !claudeNoPlugin;
   print([
-    kv("hook-command", command),
+    ...(pluginOnly ? [] : [kv("hook-command", command)]),
     ...toonTable("setup", rows, ["app", "action", "file", "note"]),
     ...toonList("help", [
       "New sessions in this repo now start with compact brain context",
