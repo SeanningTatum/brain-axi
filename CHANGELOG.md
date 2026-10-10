@@ -57,6 +57,8 @@ each other; a database gives those for free. Plan: `plans/2026-10-10-axi-archite
 - Review feedback is delivered at-least-once: a polled batch stays in flight on the server
   until the CLI has recorded it and acks it (`POST /api/ack`), so a poll killed mid-flight
   re-delivers the same batch; the batch id (schema migration `002`) keeps it to one round.
+- `verify` runs each check in its own process group: a timeout (or Ctrl-C) kills the whole
+  tree, so a timed-out suite cannot keep running into the next check.
 - `check` is rewritten: SQLite integrity, foreign keys, search index, cross-entity rules
   (shipped features verified or grandfathered, no open tasks), plan/shot file hashes.
 - Eval suites are repo-dev tooling in `evals/` and `evals-plugin/`, run by standalone

@@ -243,7 +243,7 @@ const init = {
       const cp = L.progress.add(made.db, {
         summary: "brain initialized",
         next: "declare real checks with `brain verify add`, then add the first feature with `brain features add`",
-        root: made.root,
+        root: loc.root, // the caller's checkout: a worktree records its own branch
       });
       print([
         ...group("init", { brain: rel(made.brainDir), db: rel(made.dbPath), branch: cp.branch,
@@ -296,10 +296,24 @@ const exportCmd = {
   },
   examples: ["brain export", "brain export --out backup.toon", "brain export --stdout > backup.toon"],
   run(ctx) {
-    const { db, brainDir } = ctx.brain();
+    const { db, brainDir, dbPath } = ctx.brain();
     const dump = L.io.exportAll(db);
     if (ctx.flags.stdout) return void process.stdout.write(dump);
     const out = path.resolve(ctx.flags.out || path.join(brainDir, "export.toon"));
+    // Never write the dump over the live database or its WAL/SHM (symlinks included).
+    const real = (p) => {
+      try {
+        return fs.realpathSync(p);
+      } catch {
+        try {
+          return path.join(fs.realpathSync(path.dirname(p)), path.basename(p));
+        } catch {
+          return p;
+        }
+      }
+    };
+    if (["", "-wal", "-shm"].some((s) => real(out) === real(dbPath + s)))
+      usage(`--out ${ctx.flags.out} is the live database; pick another file`, ["brain export --out backup.toon"]);
     fs.writeFileSync(out, dump);
     const counts = L.io.TABLES.map((t) => ({ table: t, rows: (dump.match(new RegExp(`^${t}\\[(\\d+)\\]`, "m")) || [0, 0])[1] * 1 }));
     print([
@@ -331,8 +345,11 @@ const importCmd = {
     try {
       res = L.io.importAll(b.db, text);
     } catch (e) {
+      // Drop the brain.db this command created — unless another process has
+      // written to it meanwhile (that is how IMPORT_NOT_EMPTY can happen here).
+      const untouched = created && L.io.TABLES.every((t) => !b.db.prepare(`SELECT 1 FROM ${t} LIMIT 1`).get());
       L.close(b.db);
-      if (created) for (const s of ["", "-wal", "-shm"]) fs.rmSync(b.dbPath + s, { force: true });
+      if (untouched) for (const s of ["", "-wal", "-shm"]) fs.rmSync(b.dbPath + s, { force: true });
       throw e;
     }
     L.close(b.db);
@@ -733,7 +750,11 @@ const runs = {
 // --- docs ---------------------------------------------------------------------
 
 const docTarget = (pos) => {
-  if (pos.length === 1 && pos[0].includes("/")) return pos[0].split("/", 2);
+  if (pos.length === 1 && pos[0].includes("/")) {
+    const parts = pos[0].split("/");
+    if (parts.length !== 2) usage(`expected <section>/<name>, got ${pos[0]}`, ["brain docs view rules/toon-axi", "brain docs list"]);
+    return parts;
+  }
   if (pos.length !== 2) usage("expected <section> <name> (or <section>/<name>)", ["brain docs view rules toon-axi", "brain docs list"]);
   return pos;
 };

@@ -307,6 +307,18 @@ test("worktree: --shot lands in the main checkout's .brain/shots/; check passes 
   ok(brain(main, ["check"]), /^ok: true$/m);
 });
 
+test("init from a worktree records the worktree's branch, not the main checkout's", (t) => {
+  const base = tmp(t);
+  const main = path.join(base, "main");
+  fs.mkdirSync(main);
+  gitRepo(main);
+  const wt = path.join(base, "wt");
+  git(main, "worktree", "add", "-q", wt, "-b", "wt-branch");
+  ok(brain(wt, ["init"]), /^ {2}branch: wt-branch$/m);
+  ok(brain(main, ["progress", "list"]), /wt-branch/);
+  git(main, "worktree", "remove", "--force", wt);
+});
+
 test("progress add --run links a run note; list shows it (#9)", (t) => {
   const dir = repoWithBrain(t);
   ok(brain(dir, ["features", "add", "auth", "--name", "Auth"]));
@@ -330,6 +342,9 @@ test("docs + search: set from file and stdin, view, rm, FTS hit", (t) => {
   ok(brain(dir, ["docs"]), /^docs\[2\]/m);
   ok(brain(dir, ["search", "zebra"]), /doc,rules\/testing/);
   ok(brain(dir, ["search", "nothing", "matches", "this"]), /^results\[0\]/m);
+  // Extra path parts are refused, never truncated onto another doc.
+  failsWith(brain(dir, ["docs", "rm", "rules/testing/extra"]), 2, "USAGE");
+  ok(brain(dir, ["docs", "view", "rules/testing"]), /zebra/);
   ok(brain(dir, ["docs", "rm", "rules", "testing"]), /removed: true/);
   failsWith(brain(dir, ["docs", "view", "rules", "testing"]), 1, "NOT_FOUND");
 });
@@ -355,6 +370,13 @@ test("export → import → export is byte-identical; import refuses a non-empty
   ok(brain(src, ["features", "add", "auth", "--name", "Auth, with \"quotes\"", "--description", "multi\nline"]));
   ok(brain(src, ["docs", "set", "rules", "r"], { input: "# R\n\nbody: with, punctuation\n" }));
   ok(brain(src, ["runs", "append", "auth", "--step", "s", "--observed", "tab\there"]));
+  // The dump never overwrites the live database or its WAL/SHM.
+  const live = fs.readFileSync(path.join(src, ".brain", "brain.db"));
+  failsWith(brain(src, ["export", "--out", ".brain/brain.db"]), 2, "USAGE");
+  failsWith(brain(src, ["export", "--out", ".brain/brain.db-wal"]), 2, "USAGE");
+  fs.symlinkSync(path.join(src, ".brain", "brain.db"), path.join(src, "alias.db"));
+  failsWith(brain(src, ["export", "--out", "alias.db"]), 2, "USAGE");
+  assert.ok(fs.readFileSync(path.join(src, ".brain", "brain.db")).subarray(0, 16).equals(live.subarray(0, 16)), "brain.db untouched");
   const ex = ok(brain(src, ["export"]), /file: .brain\/export\.toon/);
   assert.match(ex.out, /features,1/);
   const d1 = brain(src, ["export", "--stdout"]);

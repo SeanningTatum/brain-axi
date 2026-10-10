@@ -89,4 +89,5 @@ The correct response to that refusal is always the same: `brain tasks list
 retry the identical claim expecting a different result, never work around
 the system to force it, and never treat "someone else has it" as license to
 just start editing the same files outside the task system anyway. To give a
-task back, release it with `brain tasks set <slug> <task-id> --status open`.
+task back, release it with `brain tasks set <slug> <task-id> --status open --by <name>`
+(or `--token <claim-token>`).

@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { features, verify } from "../../lib/brain/index.js";
 import { freshBrain, throwsCode, rejectsRaw } from "./helpers.js";
 
@@ -65,6 +67,19 @@ test("run executes sequentially in root, reports pass/fail/timeout with tails an
   const only = verify.run(db, { only: ["boot"], root });
   assert.deepEqual([only.ok, only.stage, only.results.length], [true, null, 1]);
   assert.equal(verify.gateRuns(db, { check: "boot" }).length, 1);
+});
+
+test("a timed-out check takes its whole process tree with it; a check's own SIGALRM is a plain failure", async (t) => {
+  const { db, root } = freshBrain(t);
+  const marker = path.join(root, "leaked");
+  verify.addCheck(db, { name: "hang", run: `node -e "setTimeout(() => require('fs').writeFileSync('leaked', 'x'), 2500)" & wait`, timeout: 1 });
+  verify.addCheck(db, { name: "alrm", run: "kill -ALRM $$" });
+  const [hang, alrm] = verify.run(db, { root }).results;
+  assert.equal(hang.status, "timeout");
+  assert.ok(hang.seconds < 5, `took ${hang.seconds}s`);
+  assert.equal(alrm.status, "fail");
+  await new Promise((r) => setTimeout(r, 3000));
+  assert.ok(!fs.existsSync(marker), "the timed-out check's child kept running");
 });
 
 test("shipHint names the declared checks, never a hardcoded runner", (t) => {

@@ -46,7 +46,8 @@ The server opens brain.db read-only in practice (one cached handle per brain dir
 reopened if the file is replaced). A round is recorded when the agent's poll receives it,
 so the round history is exactly what the agent saw; prompts wait in the server until then
 (Ctrl-C on a poll loses nothing). Delivery is at-least-once with an ack: a poll moves the
-queued prompts into `inflight` `{batch, prompts, session_ended, ended_by, deliveries}`
+queued prompts (and the DOM outline sent with them) into `inflight`
+`{batch, prompts, dom_snapshot, session_ended, ended_by, deliveries}`
 instead of deleting them; the CLI records the round with that `batch` id, then
 `POST /api/ack`s it, and only the ack deletes the batch. A poll killed before the ack gets
 the same batch again (`redelivered: true`); `plans.addRound({batchId})` skips a batch id
@@ -59,7 +60,9 @@ flags a missing or changed plan.
 ## Constants
 
 - Port **4517** (`--port`, `BRAIN_AXI_PORT`). Bind `127.0.0.1` only.
-- State dir `~/.brain-axi/` (`BRAIN_AXI_STATE_DIR`): `sessions.json`, `server.log`.
+- State dir `~/.brain-axi/` (`BRAIN_AXI_STATE_DIR`): `sessions.json`, `server.log`. Until
+  `sessions.json` exists, a pre-0.3 `state.json` (same session shape) is read, so queued
+  prompts and the user-end latch survive the upgrade.
 - Session key: first 16 hex of `sha256(realpath(file))` — `sessionKey()` in server.js,
   imported by the CLI.
 - Idle shutdown: 30 min with no SSE client and no in-flight poll
@@ -138,7 +141,8 @@ Poll payloads (wire contract unchanged; `batch` and `redelivered` are additive):
   `PRAGMA data_version` of the server's handle (bumped by any other connection's commit —
   the CLI's writes) and sends `context-update`. The baseline is taken at bind time, and
   every new stream gets one `context-update` so a page that fetched before connecting
-  catches up. Pin writes broadcast directly (they are not in brain.db).
+  catches up. Pin writes broadcast directly (they are not in brain.db) — to the feature's
+  dashboard and to every review tab on the same brain.
 
 ## Payloads (context.js)
 

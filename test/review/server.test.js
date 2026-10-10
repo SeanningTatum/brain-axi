@@ -70,7 +70,7 @@ async function setup(t) {
   t.after(() => fetch(`${base}/shutdown`, { method: "POST" }).catch(() => {}));
   const post = (p, body, headers = {}) =>
     fetch(base + p, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
-  return { dir, port, base, brain, ok, post, brainDir: path.join(dir, ".brain") };
+  return { dir, port, base, brain, ok, post, state, brainDir: path.join(dir, ".brain") };
 }
 
 test("review round trip: open → feedback → poll records a round → reply → end --approved-by", async (t) => {
@@ -238,6 +238,18 @@ test("watch: context, recorded shots only, pins, and a context-update when the C
   // CLI's writes (FTS5 structure cache).
   const checks = (await (await fetch(`${base}/watch/auth/context${qs}`)).json()).checks;
   assert.deepEqual(checks.filter((c) => c.status !== "pass"), []);
+
+  // A review tab on the same brain shows the pins too: a pin write nudges it.
+  const rkey = urlOf(ok(brain(["review", "open", "plans/auth.html", "--feature", "auth", "--no-open"])).out).split("/").pop();
+  const revEvents = [];
+  const rreq = http.get(`${base}/events/${rkey}`, (res) => res.on("data", (c) => revEvents.push(String(c))));
+  t.after(() => rreq.destroy());
+  await new Promise((r) => setTimeout(r, 500));
+  const rbefore = revEvents.join("").split("event: context-update").length;
+  assert.equal((await post(`/watch/auth/annotate${qs}`, { shot: ".brain/shots/01-login.png", x: 5, y: 5, note: "again" })).status, 200);
+  const rdeadline = Date.now() + 3000;
+  while (revEvents.join("").split("event: context-update").length <= rbefore && Date.now() < rdeadline) await new Promise((r) => setTimeout(r, 50));
+  assert.ok(revEvents.join("").split("event: context-update").length > rbefore, "no context-update on the review tab after a pin write");
 });
 
 test("watch: a brain.db replaced on disk (restore) sends context-update and serves the new file", async (t) => {
@@ -272,6 +284,8 @@ test("review: a poll that dies before the ack gets the same batch re-delivered; 
 
   // A poll that fetched the batch and died before recording/acking it.
   const lost = await (await fetch(`${base}/api/poll?key=${key}`)).json();
+  // A newer batch's DOM outline must not ride out with the re-delivered one.
+  assert.equal((await post("/api/feedback", { key, prompts: [{ tag: "message", prompt: "later" }], dom_snapshot: "NEWER OUTLINE" }, { origin: base })).status, 200);
   assert.equal(lost.status, "feedback");
   assert.match(lost.batch, /^[0-9a-f-]{36}$/);
   assert.equal(lost.redelivered, undefined);
@@ -281,12 +295,17 @@ test("review: a poll that dies before the ack gets the same batch re-delivered; 
   const poll = ok(brain(["review", "poll", "plans/auth.html", "--timeout-ms", "5000"]), /^status: feedback$/m);
   assert.match(poll.out, /tighten the intro/);
   assert.match(poll.out, /^redelivered: true$/m);
+  assert.match(poll.out, /^snapshot_chars: 0$/m);
+  assert.doesNotMatch(poll.out, /later/);
   let view = ok(brain(["plans", "view", "auth"]), /^status: in-review$/m);
   assert.match(view.out, /^rounds\[1\]/m);
 
-  // Acked: nothing left to deliver, so the next poll waits (and times out).
+  // Acked: the batch queued meanwhile comes next, with its own outline.
+  const later = ok(brain(["review", "poll", "plans/auth.html", "--timeout-ms", "5000"]), /later/);
+  assert.match(later.out, /^snapshot_chars: 13$/m);
+  assert.doesNotMatch(later.out, /^redelivered:/m);
   ok(brain(["review", "poll", "plans/auth.html", "--timeout-ms", "1200"]), /^status: timeout$/m);
-  view = ok(brain(["plans", "view", "auth"]), /^rounds\[1\]/m);
+  view = ok(brain(["plans", "view", "auth"]), /^rounds\[2\]/m);
 
   // Recorded-but-unacked (killed between record and ack): the re-delivery is
   // deduplicated by batch id, then acked. A stale/unknown ack is a no-op.
@@ -294,7 +313,7 @@ test("review: a poll that dies before the ack gets the same batch re-delivered; 
   ok(brain(["review", "poll", "plans/auth.html", "--timeout-ms", "5000"]), /second pass/);
   assert.deepEqual(await (await post("/api/ack", { key, batch: lost.batch })).json(), { ok: true, acked: false });
   assert.equal((await post("/api/ack", { key })).status, 400);
-  view = ok(brain(["plans", "view", "auth"]), /^rounds\[2\]/m);
+  view = ok(brain(["plans", "view", "auth"]), /^rounds\[3\]/m);
   ok(brain(["check"]), /^ok: true$/m);
 });
 
@@ -313,4 +332,16 @@ test("review: the CLI records a re-delivered batch once even when the first deli
   assert.match(poll.out, /only once/);
   ok(brain(["plans", "view", "auth"]), /^rounds\[1\]/m);
   ok(brain(["review", "poll", "plans/auth.html", "--timeout-ms", "1200"]), /^status: timeout$/m);
+});
+
+test("review: sessions saved by a pre-0.3 server (state.json) survive the upgrade, user-end latch included", async (t) => {
+  const { dir, state, brain, ok } = await setup(t);
+  const file = path.join(dir, "plans", "auth.html");
+  const key = (await import("node:crypto")).createHash("sha256").update(fs.realpathSync(file)).digest("hex").slice(0, 16);
+  fs.mkdirSync(state, { recursive: true });
+  fs.writeFileSync(path.join(state, "state.json"), JSON.stringify({ sessions: { [key]: {
+    key, file, brain: path.join(dir, ".brain"), status: "ended", ended_by: "user", prompts: [], chat: [], dom_snapshot: "" } } }));
+  ok(brain(["review", "open", "plans/auth.html", "--no-open"]), /^refused: /m);
+  ok(brain(["review", "open", "plans/auth.html", "--no-open", "--reopen"]), /^ {2}status: open$/m);
+  assert.ok(fs.existsSync(path.join(state, "sessions.json")));
 });

@@ -37,7 +37,7 @@ Then use the phase skill for what you are about to do (below).
 
 ## Plans: review by default
 
-A request for a plan, proposal, design, or approach review is never answered in chat. Use `brain-plan`: write ONE HTML artifact, `npx -y brain-axi review <plan.html>`, then `npx -y brain-axi review poll <plan.html>` in the foreground until the human approves (`review end` after). `plans view <slug>` prints `file:`, `sha256:`, `status:`, `approved_by:` and each round's prompts — verify shipped UI against the approved plan, the FROZEN copy the human approved (that file + hash; `check` fails if it drifts), never an edited one.
+A request for a plan, proposal, design, or approach review is never answered in chat. Use `brain-plan`: write ONE HTML artifact, `npx -y brain-axi review <plan.html>`, then `npx -y brain-axi review poll <plan.html>` in the foreground until the human approves (then `review end <plan.html> --approved-by <who>`). `plans view <slug>` prints `file:`, `sha256:`, `status:`, `approved_by:` and each round's prompts — verify shipped UI against the approved plan, the FROZEN copy the human approved (that file + hash; `check` fails if it drifts), never an edited one.
 
 ## Command map (every command; `npx -y brain-axi <cmd>`)
 
