@@ -2,6 +2,8 @@
 name: brain-write
 description: "Use whenever writing anything into the brain — progress checkpoints, run notes, feature docs, verification verdicts, commit bodies. The register: specific, verbatim, dated; what never goes in."
 ---
+> CLI note: examples below say `brain <cmd>`. If `brain` is not on PATH, run `npx -y brain-axi <cmd>` instead.
+
 WRITTEN RECORD PLAYBOOK
 =======================
 

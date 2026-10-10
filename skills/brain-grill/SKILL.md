@@ -2,6 +2,8 @@
 name: brain-grill
 description: "Use before writing any plan, proposal, or design that carries a decision — when the user says 'let's design/plan X' or 'how should we…'. Checks the brain for already-settled answers, then interviews the human in numbered rounds with recommendations."
 ---
+> CLI note: examples below say `brain <cmd>`. If `brain` is not on PATH, run `npx -y brain-axi <cmd>` instead.
+
 GRILLING PLAYBOOK
 =================
 

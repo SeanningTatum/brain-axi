@@ -2,6 +2,8 @@
 name: brain-done
 description: "Use before declaring any task complete, opening a PR, or shipping a feature — full brain verify, brain check, doc coherence for every changed path, then close state: checkpoint, ship with evidence, record the PR."
 ---
+> CLI note: examples below say `brain <cmd>`. If `brain` is not on PATH, run `npx -y brain-axi <cmd>` instead.
+
 TERMINATION CHECK PLAYBOOK
 ==========================
 

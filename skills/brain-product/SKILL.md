@@ -2,6 +2,8 @@
 name: brain-product
 description: "Use while planning user-facing work (a CLI command or flag, an output format, a screen, a workflow) — writes the product case first: problem with evidence, user and job, a numeric success metric, non-goals, scope tiers, product decision cards."
 ---
+> CLI note: examples below say `brain <cmd>`. If `brain` is not on PATH, run `npx -y brain-axi <cmd>` instead.
+
 PRODUCT CASE PLAYBOOK
 =====================
 

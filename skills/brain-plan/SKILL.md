@@ -2,6 +2,8 @@
 name: brain-plan
 description: "Use when writing any plan, proposal, design, or approach review for human approval — write it as one HTML artifact, open it with brain review, and poll for feedback in the foreground until approved. Never print the plan in chat."
 ---
+> CLI note: examples below say `brain <cmd>`. If `brain` is not on PATH, run `npx -y brain-axi <cmd>` instead.
+
 PLAN ARTIFACT PLAYBOOK
 =======================
 

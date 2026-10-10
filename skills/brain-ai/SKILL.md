@@ -2,6 +2,8 @@
 name: brain-ai
 description: "Use for any work involving prompts, models, agents, or evals — prompt contracts, golden sets, regression gates, agent topology, model and eval-kind choices; baseline with brain evals before editing any prompt."
 ---
+> CLI note: examples below say `brain <cmd>`. If `brain` is not on PATH, run `npx -y brain-axi <cmd>` instead.
+
 AI WORK PLAYBOOK
 =================
 

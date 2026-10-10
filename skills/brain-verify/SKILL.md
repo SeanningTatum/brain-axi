@@ -2,6 +2,8 @@
 name: brain-verify
 description: "Use when checking that a user-visible feature actually works — an independent, skeptical walk of every acceptance criterion (browser, or the named command): golden and error paths, edge probes, screenshot or transcript evidence, a verdict doc."
 ---
+> CLI note: examples below say `brain <cmd>`. If `brain` is not on PATH, run `npx -y brain-axi <cmd>` instead.
+
 FEATURE VERIFICATION PLAYBOOK
 ==============================
 

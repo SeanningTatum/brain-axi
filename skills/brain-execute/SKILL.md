@@ -2,6 +2,8 @@
 name: brain-execute
 description: "Use when implementing an approved plan or working a feature to shipped — 'build it', 'go', 'start phase N'. Flip the feature in-progress, open brain watch, log every step verbatim with runs append, capture screenshots, agree the verification contract first."
 ---
+> CLI note: examples below say `brain <cmd>`. If `brain` is not on PATH, run `npx -y brain-axi <cmd>` instead.
+
 EXECUTION LOOP PLAYBOOK
 ========================
 

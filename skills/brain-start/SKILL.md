@@ -2,6 +2,8 @@
 name: brain-start
 description: "Use when starting any non-trivial task, bug fix, or feature in a repo with .brain/ — before editing code: read brain state, frame intent and scope, check policy, run the baseline, claim the feature and open a checkpoint."
 ---
+> CLI note: examples below say `brain <cmd>`. If `brain` is not on PATH, run `npx -y brain-axi <cmd>` instead.
+
 TASK KICKOFF PLAYBOOK
 =====================
 

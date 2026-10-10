@@ -2,6 +2,8 @@
 name: brain-ux
 description: "Use while planning work that adds or changes a screen or UI — greyscale wireframes per screen, the empty/loading/error/success state matrix, and the user-journey flow, so the interface is approvable before it is built."
 ---
+> CLI note: examples below say `brain <cmd>`. If `brain` is not on PATH, run `npx -y brain-axi <cmd>` instead.
+
 UX ARTIFACT PLAYBOOK
 =====================
 
