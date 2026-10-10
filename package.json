@@ -7,7 +7,7 @@
     "brain": "./bin/brain.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=24"
   },
   "license": "MIT"
 }
