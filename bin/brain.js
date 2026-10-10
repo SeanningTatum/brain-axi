@@ -238,7 +238,7 @@ const init = {
   examples: ["brain init", "brain init --brain path/to/repo/.brain"],
   run(ctx) {
     const loc = L.locate(process.cwd(), { brain: ctx.flags.brain });
-    const made = L.create(path.dirname(loc.brainDir));
+    const made = L.create(path.dirname(loc.brainDir), { brain: loc.brainDir });
     try {
       const cp = L.progress.add(made.db, {
         summary: "brain initialized",
@@ -323,7 +323,8 @@ const importCmd = {
       b = L.openBrain(process.cwd(), { brain: ctx.flags.brain });
     } catch (e) {
       if (!L.isBrainError(e, "NO_DB")) throw e;
-      b = L.create(path.dirname(L.locate(process.cwd(), { brain: ctx.flags.brain }).brainDir));
+      const { brainDir } = L.locate(process.cwd(), { brain: ctx.flags.brain });
+      b = L.create(path.dirname(brainDir), { brain: brainDir });
       created = true;
     }
     let res;
@@ -973,12 +974,15 @@ function recordPoll(db, root, abs, data) {
   const prompts = data.status === "feedback" ? data.prompts || [] : [];
   if (!prompts.length && !userEnded) return;
   const plan = RV.planForFile(db, root, abs) || L.plans.upsert(db, { file: abs, root });
-  if (prompts.length || data.session_ended)
+  // The first poll after the user's End (with or without a final batch)
+  // records the closing round; the closed session makes repeat polls no-ops.
+  const closing = userEnded && !!L.plans.get(db, plan.slug).session_open;
+  if (prompts.length || closing)
     L.plans.addRound(db, plan.slug, {
       prompts: prompts.map((p) => ({ tag: p.tag, prompt: p.prompt, selector: p.selector || null, text: p.text || null, html: p.html || null, target: p.target ?? null })),
-      endedBy: data.session_ended ? data.ended_by : null,
+      endedBy: data.session_ended || closing ? data.ended_by : null,
     });
-  if (userEnded && L.plans.get(db, plan.slug).session_open) L.plans.endSession(db, plan.slug);
+  if (closing) L.plans.endSession(db, plan.slug);
 }
 
 const review = {

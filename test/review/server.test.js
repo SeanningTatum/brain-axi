@@ -159,6 +159,21 @@ test("review: a user end with feedback records the closing round; the latch refu
   assert.match(bad.out, /^code: NOT_FOUND$/m);
 });
 
+test("review: a user End with nothing queued records one closing round; repeat polls add none", async (t) => {
+  const { base, brain, ok, post } = await setup(t);
+  const open = ok(brain(["review", "open", "plans/auth.html", "--no-open"]));
+  const key = urlOf(open.out).split("/").pop();
+  assert.equal((await post("/api/end", { key, by: "user" }, { origin: base })).status, 200);
+  const poll = ok(brain(["review", "poll", "plans/auth.html", "--timeout-ms", "3000"]), /^status: ended$/m);
+  assert.match(poll.out, /^ended_by: user$/m);
+  let view = ok(brain(["plans", "view", "auth"]), /^status: reviewed$/m);
+  assert.match(view.out, /^rounds\[1\]/m);
+  assert.match(view.out, /^ {2}1,\S+,user,0$/m);
+  ok(brain(["review", "poll", "plans/auth.html", "--timeout-ms", "3000"]), /^status: ended$/m);
+  view = ok(brain(["plans", "view", "auth"]), /^rounds\[1\]/m);
+  assert.doesNotMatch(ok(brain([])).out, /review-sessions/);
+});
+
 test("watch: context, recorded shots only, pins, and a context-update when the CLI writes", async (t) => {
   const { dir, base, brain, ok, post, brainDir } = await setup(t);
   fs.mkdirSync(path.join(brainDir, "shots"), { recursive: true });
@@ -223,4 +238,28 @@ test("watch: context, recorded shots only, pins, and a context-update when the C
   // CLI's writes (FTS5 structure cache).
   const checks = (await (await fetch(`${base}/watch/auth/context${qs}`)).json()).checks;
   assert.deepEqual(checks.filter((c) => c.status !== "pass"), []);
+});
+
+test("watch: a brain.db replaced on disk (restore) sends context-update and serves the new file", async (t) => {
+  const { base, brain, ok, brainDir } = await setup(t);
+  const w = ok(brain(["watch", "auth", "--no-open"]), /^watch:$/m);
+  const url = urlOf(w.out);
+  const qs = url.slice(url.indexOf("?"));
+  assert.equal((await (await fetch(`${base}/watch/auth/context${qs}`)).json()).feature.status, "in-progress");
+
+  const events = [];
+  const req = http.get(`${base}/watch-events/auth${qs}`, (res) => res.on("data", (c) => events.push(String(c))));
+  t.after(() => req.destroy());
+  await new Promise((r) => setTimeout(r, 500));
+  const before = events.join("").split("event: context-update").length;
+
+  // Replace brain.db with a different brain: auth exists but is only planned.
+  for (const f of fs.readdirSync(brainDir)) if (f.startsWith("brain.db")) fs.rmSync(path.join(brainDir, f));
+  ok(brain(["init"]));
+  ok(brain(["features", "add", "auth", "--name", "Auth"]));
+
+  const deadline = Date.now() + 5000;
+  while (events.join("").split("event: context-update").length <= before && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
+  assert.ok(events.join("").split("event: context-update").length > before, `no context-update after replacing brain.db: ${events.join("")}`);
+  assert.equal((await (await fetch(`${base}/watch/auth/context${qs}`)).json()).feature.status, "planned");
 });

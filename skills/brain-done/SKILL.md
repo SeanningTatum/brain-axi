@@ -147,6 +147,10 @@ A task is done only when ALL of the following are true, not "mostly true":
 - [ ] User-facing work only: the plan's success metric observed (or its
       measurement date named), non-goals held, and shipped UI reconciled
       against the approved mockups — or explicitly marked N/A
+- [ ] AI work only (prompt, model, chain, retrieval, agent): the project's
+      own eval suite re-run after the last edit, no frozen case failing,
+      every fixed bug a new frozen case, human eval feedback answered (the
+      `brain-ai` skill) — or explicitly marked N/A
 - [ ] `brain check` — all harness invariants pass
 - [ ] Feature doc updated, and every changed path's owning rules/recipes/
       codebase doc updated or explicitly flagged as not

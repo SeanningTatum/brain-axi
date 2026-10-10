@@ -155,6 +155,18 @@ test("init without git seeds branch none", (t) => {
   ok(brain(dir, ["init"]), /^ {2}branch: none$/m);
 });
 
+test("init / import --brain <dir> create brain.db in that directory, whatever its name", (t) => {
+  const dir = gitRepo(tmp(t));
+  ok(brain(dir, ["init", "--brain", "custom-brain"]), /brain: custom-brain/);
+  assert.ok(fs.existsSync(path.join(dir, "custom-brain", "brain.db")));
+  assert.ok(!fs.existsSync(path.join(dir, ".brain")), "no stray .brain/");
+  ok(brain(dir, ["features", "add", "a", "--name", "A", "--brain", "custom-brain"]));
+  const dump = brain(dir, ["export", "--stdout", "--brain", "custom-brain"]).out;
+  ok(brain(dir, ["import", "-", "--brain", "other-brain"], { input: dump }), /created: true/);
+  assert.ok(fs.existsSync(path.join(dir, "other-brain", "brain.db")));
+  assert.ok(!fs.existsSync(path.join(dir, ".brain")), "no stray .brain/");
+});
+
 test("no brain.db: NO_DB exit 1 with init/import help; context silent", (t) => {
   const dir = gitRepo(tmp(t));
   const r = failsWith(brain(dir, []), 1, "NO_DB");

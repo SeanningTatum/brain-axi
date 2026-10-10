@@ -114,9 +114,12 @@ const envelope = { cases: results, usage: { tokens: 0, cost_usd: 0 } };
 process.stdout.write(JSON.stringify(envelope) + "\n");
 
 if (process.argv.includes("--record")) {
-  const { summary, gateFailed, runFile } = recordRun(repoRoot, suiteDir, envelope);
+  const { summary, gateFailed, gateReason, runFile } = recordRun(repoRoot, suiteDir, envelope);
   process.stderr.write(
     `eval-skill-coverage: ${summary.pass}/${summary.total} pass; frozen failing: ${summary.frozen_failing.join(", ") || "none"}; recorded ${runFile}\n`
   );
-  if (gateFailed) process.exitCode = 1;
+  if (gateFailed) {
+    process.stderr.write(`eval-skill-coverage: gate failed — ${gateReason}\n`);
+    process.exitCode = 1;
+  }
 }

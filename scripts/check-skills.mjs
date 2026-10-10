@@ -92,19 +92,38 @@ function cliSurface(names) {
 // anywhere. Bare `brain` in prose ("the brain holds…") is never a command.
 // ---------------------------------------------------------------------------
 
-// Code regions of a markdown file: inline `spans`, fenced-block lines, and
+// Code regions of a markdown file: inline `spans` (which, as in CommonMark,
+// may wrap across the lines of one paragraph), fenced-block lines, and
 // indented command lines (4+ spaces, the skills' plain-text code style) that
 // start with a brain invocation.
 function codeRegions(text) {
   const out = [];
   let fenced = false;
+  let para = []; // consecutive prose lines: [{ line, lineNo }]
+  const flush = () => {
+    if (!para.length) return;
+    const joined = para.map((p) => p.line).join("\n");
+    const lineAt = (idx) => para[0].lineNo + (joined.slice(0, idx).match(/\n/g) || []).length;
+    for (const m of joined.matchAll(/`([^`]+)`/g)) out.push({ text: m[1].replace(/\s*\n\s*/g, " "), lineNo: lineAt(m.index) });
+    for (const m of joined.matchAll(/npx -y brain-axi(?:@[\w.]+)?((?: [^`|;&)\n]*)?)/g))
+      out.push({ text: "brain-axi" + m[1], lineNo: lineAt(m.index) });
+    para = [];
+  };
   text.split("\n").forEach((line, i) => {
     const lineNo = i + 1;
-    if (/^\s*```/.test(line)) return void (fenced = !fenced);
-    if (fenced || /^ {4,}(?:\$ )?(?:npx -y )?brain(?:-axi)?(?: |$)/.test(line)) return void out.push({ text: line, lineNo });
-    for (const m of line.matchAll(/`([^`]+)`/g)) out.push({ text: m[1], lineNo });
-    for (const m of line.matchAll(/npx -y brain-axi(?:@[\w.]+)?((?: [^`|;&)]*)?)/g)) out.push({ text: "brain-axi" + m[1], lineNo });
+    if (/^\s*```/.test(line)) {
+      flush();
+      fenced = !fenced;
+      return;
+    }
+    if (fenced || /^ {4,}(?:\$ )?(?:npx -y )?brain(?:-axi)?(?: |$)/.test(line)) {
+      flush();
+      return void out.push({ text: line, lineNo });
+    }
+    if (!line.trim()) return flush();
+    para.push({ line, lineNo });
   });
+  flush();
   return out;
 }
 

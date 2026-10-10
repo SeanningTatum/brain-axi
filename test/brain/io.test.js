@@ -67,6 +67,7 @@ test("import refuses a non-empty brain, a newer format, and malformed dumps", (t
   throwsCode(() => io.importAll(db, dump.replace("features[3]", "features[4]")), "IMPORT_PARSE");
   throwsCode(() => io.importAll(db, dump.replace("docs[1]{id,", "docs[1]{id,bogus,")), "IMPORT_PARSE");
   throwsCode(() => io.importAll(db, dump + "widgets[0]{x}:\n"), "IMPORT_PARSE", /unknown table/);
+  throwsCode(() => io.importAll(db, dump + "\n" + dump.slice(dump.indexOf("features["))), "IMPORT_PARSE", /appears twice/);
   assert.equal(features.list(db).length, 0, "a failed import writes nothing");
 });
 

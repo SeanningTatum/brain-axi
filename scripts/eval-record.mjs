@@ -17,8 +17,10 @@ const readJsonl = (f) =>
   fs.existsSync(f) ? fs.readFileSync(f, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l)) : [];
 
 // envelope: {cases:[{id, pass, score, output, notes}], usage}
-// Returns {summary, gateFailed, runFile}. gateFailed = a frozen case failed or
-// the score is below the suite's min_pass_rate.
+// Returns {summary, gateFailed, gateReason, runFile}. gateFailed = a frozen
+// case failed, the score is below the suite's min_pass_rate, or it dropped
+// more than thresholds.aggregate_tolerance (default 0.02) below the previous
+// recorded run.
 export function recordRun(root, suiteDir, envelope) {
   const suite = JSON.parse(fs.readFileSync(path.join(suiteDir, "suite.json"), "utf8"));
   const golden = [...readJsonl(path.join(suiteDir, "cases.jsonl"))];
@@ -53,6 +55,8 @@ export function recordRun(root, suiteDir, envelope) {
     unknown_case_ids: [...got.keys()].filter((id) => !byId.has(id)),
     cases,
   };
+  const prev = readJsonl(path.join(suiteDir, "runs.jsonl")).at(-1);
+  const prevScore = prev && typeof prev.score === "number" && Number.isFinite(prev.score) ? prev.score : null;
   fs.mkdirSync(path.join(suiteDir, "runs"), { recursive: true });
   fs.writeFileSync(path.join(suiteDir, runFile), JSON.stringify(full, null, 2) + "\n", { flag: "wx" });
   fs.appendFileSync(
@@ -60,5 +64,11 @@ export function recordRun(root, suiteDir, envelope) {
     JSON.stringify({ ts, branch, commit, ...summary, run_file: runFile, usage: envelope.usage || {} }) + "\n"
   );
   const min = suite.thresholds?.min_pass_rate ?? 1;
-  return { summary, gateFailed: frozenFailing.length > 0 || score < min, runFile };
+  const tolerance = suite.thresholds?.aggregate_tolerance ?? 0.02;
+  let gateReason = null;
+  if (frozenFailing.length) gateReason = `frozen case(s) failing: ${frozenFailing.join(", ")}`;
+  else if (score < min) gateReason = `score ${score.toFixed(3)} below min_pass_rate ${min}`;
+  else if (prevScore !== null && score < prevScore - tolerance)
+    gateReason = `score ${score.toFixed(3)} dropped below the previous run's ${prevScore.toFixed(3)} beyond aggregate_tolerance ${tolerance}`;
+  return { summary, gateFailed: gateReason !== null, gateReason, runFile };
 }

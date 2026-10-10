@@ -197,9 +197,12 @@ if (cmd === "gen") {
 }
 
 // Append the run record (runs/<ts>.json + runs.jsonl); exit 1 when the gate
-// (frozen cases, min_pass_rate) fails.
+// (frozen cases, min_pass_rate, aggregate_tolerance vs the previous run) fails.
 function record(env) {
-  const { summary, gateFailed, runFile } = recordRun(root, suiteDir, { cases: env.cases, usage: env.usage });
+  const { summary, gateFailed, gateReason, runFile } = recordRun(root, suiteDir, { cases: env.cases, usage: env.usage });
   process.stderr.write(`eval-skill-routing: ${summary.pass}/${summary.total} pass; frozen failing: ${summary.frozen_failing.join(", ") || "none"}; recorded ${runFile}\n`);
-  if (gateFailed) process.exitCode = 1;
+  if (gateFailed) {
+    process.stderr.write(`eval-skill-routing: gate failed — ${gateReason}\n`);
+    process.exitCode = 1;
+  }
 }

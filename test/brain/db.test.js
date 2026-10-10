@@ -115,6 +115,57 @@ test("migrate: an existing v0 DB is copied to brain.db.bak-v0, then brought to l
   copy.close();
 });
 
+test("migrate: a process that read the old version just before another migrated keeps that one's backup", (t) => {
+  const dir = tmpDir(t);
+  const dbPath = path.join(dir, "brain.db");
+  const raw = new DatabaseSync(dbPath);
+  raw.exec("CREATE TABLE legacy_marker (x TEXT); INSERT INTO legacy_marker VALUES ('kept');");
+  raw.close();
+  const slow = new DatabaseSync(dbPath);
+  t.after(() => close(slow));
+  // `slow` reads user_version 0, then another process migrates the file
+  // (backing up v0) before `slow` makes its own copy and takes the lock.
+  let raced = false;
+  const view = {
+    exec: (sql) => slow.exec(sql),
+    prepare: (sql) => {
+      const st = slow.prepare(sql);
+      if (raced || !/user_version/.test(sql)) return st;
+      return {
+        get: () => {
+          const r = st.get();
+          raced = true;
+          close(open(dbPath));
+          return r;
+        },
+      };
+    },
+  };
+  const r = migrate(view, { dbPath });
+  assert.equal(r.from, LATEST, "restarted from the version the other process left");
+  assert.equal(r.backup, null);
+  assert.deepEqual(fs.readdirSync(dir).filter((f) => f.includes(".bak-")), ["brain.db.bak-v0"], "no stray temp copy");
+  const copy = new DatabaseSync(`${dbPath}.bak-v0`);
+  assert.equal(copy.prepare("PRAGMA user_version").get().user_version, 0, "the v0 backup still holds v0");
+  assert.equal(copy.prepare("SELECT x FROM legacy_marker").get().x, "kept");
+  copy.close();
+});
+
+test("locate: a worktree-local .brain/ never shadows the main checkout's location", (t) => {
+  const base = tmpDir(t);
+  const main = path.join(base, "main");
+  fs.mkdirSync(main);
+  gitRepo(main);
+  const wt = path.join(base, "wt");
+  git(main, "worktree", "add", "-q", wt, "-b", "wt-branch");
+  fs.mkdirSync(path.join(wt, ".brain"));
+  assert.equal(locate(wt).brainDir, path.join(fs.realpathSync(main), ".brain"));
+  const b = create(wt);
+  t.after(() => close(b.db));
+  assert.equal(b.dbPath, path.join(fs.realpathSync(main), ".brain", "brain.db"));
+  assert.ok(!fs.existsSync(path.join(wt, ".brain", "brain.db")));
+});
+
 function migrationsWith(t, extraSql) {
   const dir = tmpDir(t, "brain-mig-");
   for (const m of loadMigrations()) fs.writeFileSync(path.join(dir, m.name), m.sql);
