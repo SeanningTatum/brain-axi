@@ -16,11 +16,11 @@ throwaway Playwright script YOU scaffold, run, and delete. Scaffolding:
   upward from the script's directory, and /tmp has no node_modules. Never name
   it *.spec.* and never put it in the e2e/tests dir, so the CI suite can't
   pick it up.
-- Screenshot each asserted step to the temp dir, then persist each one with
-  "brain shots add <png> --feature <slug> --step NN-name" (or write directly
-  to .brain/features/<slug>/screenshots/NN-name.png — equivalent). Capture on
-  PASS as well as FAIL — passing evidence is the point.
-- Delete the script when done. The screenshots and the verdict doc are the
+- Screenshot each asserted step straight into .brain/shots/<slug>/NN-name.png
+  (gitignored), then attach each file to the verdict with
+  `brain verifications add ... --shot <path>::<caption>`. Capture on PASS as
+  well as FAIL — passing evidence is the point.
+- Delete the script when done. The screenshots and the recorded verdict are the
   durable evidence; the driver is disposable.
 
 Write a throwaway script (not a committed test file — this is not the CI
@@ -45,9 +45,9 @@ regression suite) that:
 
     // golden path: drive it, assert the expected state, screenshot each step
     await page.goto(baseUrl + "/sign-up");
-    await page.screenshot({ path: "01-signup.png" });
+    await page.screenshot({ path: ".brain/shots/<slug>/01-signup.png" });
     // ... fill fields, submit, assert redirect/visible state ...
-    await page.screenshot({ path: "02-dashboard.png" });
+    await page.screenshot({ path: ".brain/shots/<slug>/02-dashboard.png" });
 
     // error path: FRESH CONTEXT if the golden path left the session
     // authenticated and the error path needs to be unauthenticated (or vice

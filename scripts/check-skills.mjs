@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// scripts/check-skills.mjs — repo-dev check (was `brain skill --check`).
+// scripts/check-skills.mjs — repo-dev check, run in CI.
 // Validates the skills/ tree and the Claude Code plugin packaging:
 //   - every skills/<dir>/SKILL.md has frontmatter whose name matches the dir
 //     and a description; size caps (router 6144 B, phase skills 10240 B)
@@ -7,6 +7,11 @@
 //   - every `references/x.md` link resolves
 //   - the router (skills/brain/SKILL.md) names every top-level CLI command,
 //     read from `brain --help` so the list can never drift from COMMANDS
+//   - every skill and reference names only real CLI forms: each
+//     `brain <cmd> [<sub>]` (or `npx -y brain-axi …`) must be a command and
+//     subcommand that `--help` lists, and each `--flag` after it must be a
+//     flag that command's `--help` lists; a code span that is just a flag
+//     must be a flag some command lists
 //   - plugin.json name/version (= package.json), marketplace lists the
 //     plugin, hooks.json runs `bin/brain.js context` on SessionStart
 // Exit 0 when valid, 1 with a TOON problems list otherwise.
@@ -37,6 +42,158 @@ function cliCommands() {
     names.push(l.trim().split(",")[0].replace(/^"|"$/g, ""));
   }
   return { names };
+}
+
+// ---------------------------------------------------------------------------
+// CLI surface: every command, its subcommands and the flags each one accepts,
+// read from the CLI's own --help output (never a hand-kept list).
+// ---------------------------------------------------------------------------
+
+function helpOf(args) {
+  const r = spawnSync(process.execPath, [path.join(ROOT, "bin", "brain.js"), ...args, "--help"], { encoding: "utf8" });
+  return r.status === 0 ? r.stdout : null;
+}
+
+// Rows of a TOON block: `subcommands[N]{name,summary}:` or `flags[N]:`.
+function helpRows(text, header) {
+  const lines = text.split("\n");
+  const at = lines.findIndex((l) => header.test(l));
+  if (at === -1) return [];
+  const rows = [];
+  for (const l of lines.slice(at + 1)) {
+    if (!l.startsWith("  ")) break;
+    rows.push(l.trim());
+  }
+  return rows;
+}
+const flagsIn = (text) => helpRows(text, /^flags\[\d+\]:$/).map((r) => /^(--[a-z][a-z0-9-]*)/.exec(r)?.[1]).filter(Boolean);
+
+function cliSurface(names) {
+  const surface = new Map(); // cmd -> { flags:Set, subs: Map(sub -> Set flags) }
+  for (const cmd of names) {
+    const text = helpOf([cmd]);
+    if (text === null) return { error: `bin/brain.js ${cmd} --help failed` };
+    const entry = { flags: new Set(flagsIn(text)), subs: new Map() };
+    for (const row of helpRows(text, /^subcommands\[\d+\]\{name,summary\}:$/)) {
+      const sub = row.split(",")[0].replace(/^"|"$/g, "");
+      const subText = helpOf([cmd, sub]);
+      if (subText === null) return { error: `bin/brain.js ${cmd} ${sub} --help failed` };
+      entry.subs.set(sub, new Set(flagsIn(subText)));
+    }
+    surface.set(cmd, entry);
+  }
+  return { surface };
+}
+
+// ---------------------------------------------------------------------------
+// Command references inside skill text.
+// A reference is `brain <cmd> …` or `brain-axi <cmd> …` inside a code span,
+// a fenced block, or an indented command line, plus `npx -y brain-axi <cmd>`
+// anywhere. Bare `brain` in prose ("the brain holds…") is never a command.
+// ---------------------------------------------------------------------------
+
+// Code regions of a markdown file: inline `spans`, fenced-block lines, and
+// indented command lines (4+ spaces, the skills' plain-text code style) that
+// start with a brain invocation.
+function codeRegions(text) {
+  const out = [];
+  let fenced = false;
+  text.split("\n").forEach((line, i) => {
+    const lineNo = i + 1;
+    if (/^\s*```/.test(line)) return void (fenced = !fenced);
+    if (fenced || /^ {4,}(?:\$ )?(?:npx -y )?brain(?:-axi)?(?: |$)/.test(line)) return void out.push({ text: line, lineNo });
+    for (const m of line.matchAll(/`([^`]+)`/g)) out.push({ text: m[1], lineNo });
+    for (const m of line.matchAll(/npx -y brain-axi(?:@[\w.]+)?((?: [^`|;&)]*)?)/g)) out.push({ text: "brain-axi" + m[1], lineNo });
+  });
+  return out;
+}
+
+// The plan artifact's CSS custom properties (brain-plan references/style.md)
+// look like flags in a code span but are not CLI flags.
+const CSS_VAR = /^--(?:bg|surface|fg|fg-secondary|muted|border|highlight|accent|space-[\w*-]*)$/;
+
+const SHELL_STOP = /^(?:\||\|\||&&|;|\)|>|2>&1|#)$/;
+// A token in subcommand position that is a real word, not a placeholder, path,
+// quoted arg, or flag. `list|view|add` alternations are checked one by one.
+const WORDISH = /^[a-z][a-z-]*(?:\|[a-z][a-z-]*)*$/;
+
+function tokenize(s) {
+  return s.match(/"[^"]*"|'[^']*'|\S+/g) || [];
+}
+
+// Every command reference in one code region: [{cmd, subs[], flags[]}].
+function refsIn(region, topNames) {
+  const toks = tokenize(region.replace(/[[\]]/g, " "));
+  const refs = [];
+  for (let i = 0; i < toks.length; i++) {
+    const t = toks[i];
+    let start = -1;
+    if ((t === "brain" || t === "brain-axi" || /^brain-axi@/.test(t)) && i + 1 < toks.length) start = i + 1;
+    // The router's command map writes `features list|view …` without the
+    // `brain` prefix: a region whose first token is a top-level command name
+    // and that has more tokens after it is treated as a command too.
+    else if (i === 0 && topNames.has(t) && toks.length > 1) start = i;
+    if (start === -1) continue;
+    const cmd = toks[start];
+    if (!/^[a-z][a-z-]*$/.test(cmd)) continue; // `brain <cmd>`, `brain --help`
+    const ref = { cmd, subs: [], flags: [] };
+    let j = start + 1;
+    if (j < toks.length && WORDISH.test(toks[j])) ref.subs = toks[j++].split("|");
+    for (; j < toks.length; j++) {
+      const tok = toks[j];
+      if (SHELL_STOP.test(tok) || tok === "brain" || tok === "brain-axi") break;
+      const f = /^(--[a-z][a-z0-9-]*)/.exec(tok);
+      if (f) ref.flags.push(f[1]);
+    }
+    refs.push(ref);
+    i = j - 1;
+  }
+  return refs;
+}
+
+function checkCommandRefs(problems, files, surface) {
+  const allFlags = new Set(["--help", "--brain"]);
+  for (const e of surface.values()) {
+    e.flags.forEach((f) => allFlags.add(f));
+    for (const s of e.subs.values()) s.forEach((f) => allFlags.add(f));
+  }
+  const topNames = new Set(surface.keys());
+  for (const file of files) {
+    const rel = path.relative(ROOT, file);
+    for (const region of codeRegions(read(file))) {
+      const where = `${rel}:${region.lineNo}`;
+      // A span that is only a flag (`--shot`, `--run <name>`) must be a real one.
+      const lone = /^(--[a-z][a-z0-9-]*)(?:[ =].*)?$/.exec(region.text.trim());
+      if (lone && !allFlags.has(lone[1]) && !CSS_VAR.test(lone[1])) problems.push(`${where}: names flag ${lone[1]}, which no brain command lists in --help`);
+      for (const ref of refsIn(region.text, topNames)) {
+        const entry = surface.get(ref.cmd);
+        if (!entry) {
+          problems.push(`${where}: names \`brain ${ref.cmd}\`, which is not a command (see \`brain --help\`)`);
+          continue;
+        }
+        let allowed = new Set([...entry.flags, "--help", "--brain"]);
+        if (entry.subs.size) {
+          const subs = ref.subs.length ? ref.subs : [...entry.subs.keys()];
+          for (const s of ref.subs)
+            if (!entry.subs.has(s)) problems.push(`${where}: names \`brain ${ref.cmd} ${s}\`, which is not a subcommand (\`brain ${ref.cmd} --help\` lists ${[...entry.subs.keys()].join(", ")})`);
+          for (const s of subs) for (const f of entry.subs.get(s) || []) allowed.add(f);
+        }
+        for (const f of ref.flags)
+          if (!allowed.has(f))
+            problems.push(`${where}: \`brain ${ref.cmd}${ref.subs.length ? " " + ref.subs.join("|") : ""}\` has no flag ${f} in --help`);
+      }
+    }
+  }
+}
+
+function markdownFiles(dir) {
+  const out = [];
+  for (const e of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) out.push(...markdownFiles(p));
+    else if (e.name.endsWith(".md")) out.push(p);
+  }
+  return out;
 }
 
 function checkSkillsTree(problems) {
@@ -85,6 +242,9 @@ function checkSkillsTree(problems) {
     const re = new RegExp("(?:`|brain(?:-axi)? )" + c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?![A-Za-z0-9-])");
     if (!re.test(router)) problems.push(`skills/brain/SKILL.md: router never names command "${c}"`);
   }
+  const s = cliSurface(cli.names);
+  if (s.error) return void problems.push(s.error);
+  checkCommandRefs(problems, markdownFiles(SKILLS_DIR), s.surface);
 }
 
 function checkPluginFiles(problems) {
@@ -115,9 +275,10 @@ function checkPluginFiles(problems) {
   }
 }
 
-const problems = [];
-checkSkillsTree(problems);
-checkPluginFiles(problems);
+const found = [];
+checkSkillsTree(found);
+checkPluginFiles(found);
+const problems = [...new Set(found)]; // a span can match two scanners (`npx -y brain-axi x`)
 const q = (s) => (/[",:]|^\s|\s$/.test(s) ? JSON.stringify(s) : s);
 if (!problems.length) {
   process.stdout.write("check-skills: skills/ tree and plugin files (.claude-plugin/, hooks/) are valid\n");

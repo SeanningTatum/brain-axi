@@ -4,16 +4,16 @@ description: "Use while planning user-facing work (a CLI command or flag, an out
 ---
 > CLI note: examples below say `brain <cmd>`. If `brain` is not on PATH, run `npx -y brain-axi <cmd>` instead.
 
-PRODUCT CASE PLAYBOOK
-=====================
+PRODUCT CASE
+============
 
 You are about to write the product case for a plan before its technical shape
-exists. It fires BEFORE the technical sections of the `brain-plan` skill (`brain playbook plan` if skills are unavailable) — it
+exists. It fires BEFORE the technical sections of the `brain-plan` skill — it
 produces the product-facing sections of the plan artifact (problem,
 user/job-to-be-done, success metric, non-goals, scope tiers, prior art) and
 the product decision cards that go in their own section, ordered before the
-technical decisions section from `brain playbook plan` (section 8).
-Read that playbook if you have not already; this one reuses its decision-card
+technical decisions section of the `brain-plan` skill (section 8).
+Read that skill if you have not already; this one reuses its decision-card
 markup, `data-brain-action` rule, and `queueDecision(...)` helper verbatim —
 it does not invent a parallel mechanism.
 
@@ -30,12 +30,12 @@ justification for one that was already made.**
 0. WHEN THIS APPLIES
 -------------------------------------------------------------------------------
 
-Apply this playbook to any plan for USER-FACING work — a change to what a
+Apply this skill to any plan for USER-FACING work — a change to what a
 person's, or an agent's, experience of the product is. Concretely, required
 for:
 
 - a new or changed screen, wireframe, or UI flow (this pairs with
-  the `brain-ux` skill (`brain playbook ux` if skills are unavailable) once a screen is actually involved — read that one too);
+  the `brain-ux` skill once a screen is actually involved — read that one too);
 - a new or changed CLI command, flag, or output shape that a human or an
   agent invokes;
 - a new or changed output format (a TOON shape, a file layout, a generated
@@ -66,8 +66,8 @@ ORDERED STEPS
 Write these in order, before any technical section of the plan. Each section is in the references; read it before writing that part.
 
 1. PROBLEM + EVIDENCE — a real problem with a quote, count, or observed failure. 2. USER + JOB TO BE DONE — name who, and the job. 3. SUCCESS METRIC — one number with a baseline and a target. 4. NON-GOALS — what you decline, with reasons. 5. SCOPE TIERS — thin / complete / gold, mapped onto the plan of record's phases. 6. PRIOR ART — what exists in this repo and elsewhere.
-Sections 1-6 in full (worked examples included): Read `references/case-sections.md` (`brain playbook product --ref case-sections`).
-7. PRODUCT DECISIONS — the WHAT questions as decision cards, each with a recommendation and rationale, before any technical card. Full standard and a worked card: Read `references/product-decisions.md` (`brain playbook product --ref product-decisions`).
+Sections 1-6 in full (worked examples included): Read `references/case-sections.md`.
+7. PRODUCT DECISIONS — the WHAT questions as decision cards, each with a recommendation and rationale, before any technical card. Full standard and a worked card: Read `references/product-decisions.md`.
 
 -------------------------------------------------------------------------------
 8. ANTI-PATTERNS — the ways this goes wrong
@@ -91,11 +91,11 @@ Sections 1-6 in full (worked examples included): Read `references/case-sections.
   approve alone and ship on its own.
 - **Recommendation-free decision cards.** A radio group with nothing
   pre-checked, or a pros/cons cell left blank. Fix: take a position in
-  section 7's card — every technical decision card in `brain playbook plan`
+  section 7's card — every technical decision card in the `brain-plan` skill
   does this; product cards are not exempt.
 - **Prior art asserted without reading anything.** "Other tools already
   solve this," with no command run and no source named. Fix: actually run
-  `brain plans` / `brain timeline` / `brain search` / `brain features`
+  `brain plans list` / `brain progress list` / `brain search` / `brain features list`
   (section 6) before writing the sentence, and cite what came back —
   including a null result.
 - **The product brief written after the technical plan.** Writing sections
@@ -103,14 +103,14 @@ Sections 1-6 in full (worked examples included): Read `references/case-sections.
   decision, it produces a justification for one already made — the metric
   will match whatever ships, the non-goals will match whatever you didn't
   feel like building, and the recommendation will match whatever you
-  already wrote. This playbook runs BEFORE `brain playbook plan`'s
+  already wrote. This skill runs BEFORE the `brain-plan` skill's
   technical sections, not as cleanup after them.
 
 -------------------------------------------------------------------------------
 9. READINESS
 -------------------------------------------------------------------------------
 
-State these, briefly, before moving on to `brain playbook plan`'s technical
+State these, briefly, before moving on to the `brain-plan` skill's technical
 sections:
 
 - [ ] Section 0 checked — this is genuinely user-facing, not an internal
@@ -125,13 +125,13 @@ sections:
       you're declining, with a reason.
 - [ ] Thin / complete / gold scope tiers exist and map onto the technical
       plan's actual phase boundaries.
-- [ ] Prior art cites real command output (`brain plans`, `brain timeline`,
-      `brain search`, `brain features`), including any null result.
+- [ ] Prior art cites real command output (`brain plans list`, `brain progress list`,
+      `brain search`, `brain features list`), including any null result.
 - [ ] Every product decision card has a recommendation with rationale, and
-      reuses the plan playbook's `decision-card` / `queueDecision` mechanism
+      reuses the plan skill's `decision-card` / `queueDecision` mechanism
       verbatim.
 
-If any box is unchecked, do not proceed to `brain playbook plan`'s technical
+If any box is unchecked, do not proceed to the `brain-plan` skill's technical
 sections — a technical plan built on top of an unfinished product case will
 answer the wrong question precisely.
 

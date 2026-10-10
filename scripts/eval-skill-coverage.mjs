@@ -1,25 +1,26 @@
 #!/usr/bin/env node
 // scripts/eval-skill-coverage.mjs — the runner for the `skill-coverage` eval
-// suite. This is the reference implementation of the runner contract that
-// `brain evals run` expects, and deliberately the simplest possible one:
-// deterministic string assertions over the skills/ tree, no model call, no deps.
+// suite (evals/skill-coverage/). Repo-dev tooling for brain-axi itself, run
+// standalone: deterministic string assertions over the skills/ tree, no model
+// call, no deps, no brain command.
 //
-// Contract (see `brain playbook ai` and .brain/rules/ai-work.md):
-//   - read the golden set from the suite directory
-//   - print ONE JSON envelope on stdout: {"cases":[{id, output, pass, score,
-//     notes}], "usage": {...}}
-//   - exit 0 when the run completed, non-zero only when the run itself could
-//     not be performed (a failing CASE is a result, not a runner error)
+//   node scripts/eval-skill-coverage.mjs            print the run envelope
+//   node scripts/eval-skill-coverage.mjs --record   also append the run record to
+//                                                   evals/skill-coverage/ (exit 1
+//                                                   if a frozen case fails or the
+//                                                   score is under min_pass_rate)
 //
-// Any project can swap this for promptfoo, a python harness, or an agent —
-// the envelope is the only thing brain reads.
+// Envelope: ONE JSON object on stdout, {"cases":[{id, output, pass, score,
+// notes}], "usage": {...}}. Without --record, exit 0 when the run completed
+// (a failing CASE is a result, not a runner error).
 
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { recordRun } from "./eval-record.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const suiteDir = path.join(repoRoot, ".brain", "evals", "skill-coverage");
+const suiteDir = path.join(repoRoot, "evals", "skill-coverage");
 const skillsDir = path.join(repoRoot, "skills");
 
 function fail(message) {
@@ -60,10 +61,11 @@ try {
 }
 
 // Needles get the same whitespace collapse as the haystack, and match with
-// letter/digit boundaries on both ends: plain substring matching makes
-// "brain pr" pass whenever "brain progress" is present — exactly the silent
-// skill drift this suite exists to catch. (Not \b: needles may start with
-// a flag like "--stage evals", where \b would never match.)
+// letter/digit boundaries on both ends: plain substring matching makes a
+// short command name pass inside a longer one ("brain view" inside "brain
+// views", say) — exactly the silent skill drift this suite exists to catch.
+// (Not \b: needles may start with a flag like "--stage", where \b would
+// never match.)
 const norm = (s) => String(s).replace(/\s+/g, " ");
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const mentions = (needle) => new RegExp(`(?<![A-Za-z0-9])${escapeRe(norm(needle))}(?![A-Za-z0-9])`).test(skill);
@@ -108,9 +110,13 @@ const results = cases.map((c) => {
   return { id: c.id, output: r.output, pass: r.pass, score: r.pass ? 1 : 0, notes: r.notes };
 });
 
-process.stdout.write(
-  JSON.stringify({
-    cases: results,
-    usage: { tokens: 0, cost_usd: 0 },
-  }) + "\n"
-);
+const envelope = { cases: results, usage: { tokens: 0, cost_usd: 0 } };
+process.stdout.write(JSON.stringify(envelope) + "\n");
+
+if (process.argv.includes("--record")) {
+  const { summary, gateFailed, runFile } = recordRun(repoRoot, suiteDir, envelope);
+  process.stderr.write(
+    `eval-skill-coverage: ${summary.pass}/${summary.total} pass; frozen failing: ${summary.frozen_failing.join(", ") || "none"}; recorded ${runFile}\n`
+  );
+  if (gateFailed) process.exitCode = 1;
+}

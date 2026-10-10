@@ -8,13 +8,13 @@ This section covers the rest of what a plan needs to be truly clickable: lists
 that the reviewer edits in place (add/remove/rewrite an item without typing a
 prompt), the submit discipline that keeps those edits from spamming duplicate
 prompts, and a lavish-axi input pattern worth porting. Read
-lavish-axi's own "input" playbook for the underlying philosophy if you have
+lavish-axi's own "input" guide for the underlying philosophy if you have
 access to it; this section adapts that philosophy to the window.brain API and
 the list-edit prompt tag.
 
 --- 9.1 EDITABLE LIST COMPONENT (the flagship pattern) ---
 
-Four sections in this playbook are fundamentally editable lists: Plan of
+Four sections in this skill are fundamentally editable lists: Plan of
 record (10), Error paths (13, a table), Testing plan (14), and Open questions
 (15). Instead of leaving them as static markup the reviewer can only
 free-annotate, give every item a small x / restore toggle and every section an
@@ -245,7 +245,7 @@ three sections:
 There is no API to un-queue or delete an already-queued prompt — queuePrompt
 can only add or, via a repeated queueKey, REPLACE. So "click x, then click
 restore" cannot simply vanish the queued removal; it has to replace it with
-something the agent reads as "never mind." The idiom this playbook uses:
+something the agent reads as "never mind." The idiom this skill uses:
 restore re-queues the SAME queueKey (section:remove:index) with action
 "edit", the item text unchanged, and a prompt string that starts literally
 with "Cancelled: keep ...". The agent applies this as a no-op — a plain-
@@ -322,11 +322,11 @@ Skipped, one line each, with reasons:
   whitelist per tag; anything outside a tag's known fields is stripped at
   the trust boundary, so an author-side data bag would silently vanish and
   mislead whoever wrote it.
-- data-lavish-question auto-scoping as something THIS playbook teaches —
+- data-lavish-question auto-scoping as something THIS skill teaches —
   brain-axi ports the underlying idea as automatic queueKey derivation
   inside the SDK itself (addendum v5, item 2: radio/checkbox/text derive a
   queueKey from a [data-brain-question] ancestor when none is passed), so
-  authors get the behavior for free; this playbook still shows explicit
+  authors get the behavior for free; this skill still shows explicit
   queueKey everywhere above because explicit beats derived for a reader
   trying to learn the shape, not because the automatic path is missing.
 - a dedicated tag for tradeoff-table option selection distinct from

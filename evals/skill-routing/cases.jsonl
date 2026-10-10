@@ -24,7 +24,7 @@
 {"id":"edge-ux-vs-product","input":"a new screen for inviting teammates: what problem does it solve and what should the wireframe look like","expected":"brain-ux|brain-product","tags":["edge","core"],"frozen":false,"origin":"synthetic","note":"ux vs product overlap"}
 {"id":"edge-merge-ready","input":"tests are green, anything else I should do before this gets merged","expected":"brain-done","tags":["edge","core"],"frozen":false,"origin":"synthetic","note":""}
 {"id":"edge-css-tweak","input":"tweak the padding on the primary button in the settings screen","expected":"brain-start|none","tags":["edge","core"],"frozen":false,"origin":"synthetic","note":"trivial UI tweak; no heavy phase skill expected"}
-{"id":"adv-pr-description","input":"write a PR description for these changes: added retry logic to the uploader and fixed a null check","expected":"none","tags":["adversarial","core"],"frozen":false,"origin":"synthetic","note":"generic writing task; no brain skill"}
+{"id":"adv-pr-description","input":"write a PR description for these changes: added retry logic to the uploader and fixed a null check","expected":"none","tags":["adversarial","core"],"frozen":false,"origin":"synthetic","note":"generic writing task; no brain-* skill"}
 {"id":"adv-regex","input":"explain this regex: ^(?:\\d{3}-){2}\\d{4}$","expected":"none","tags":["adversarial","core"],"frozen":false,"origin":"synthetic","note":""}
 {"id":"adv-haiku","input":"write a haiku about databases","expected":"none","tags":["adversarial","core"],"frozen":false,"origin":"synthetic","note":""}
 {"id":"adv-translate-code","input":"convert this to JavaScript: def add(a, b): return a + b","expected":"none","tags":["adversarial","core"],"frozen":false,"origin":"synthetic","note":""}
