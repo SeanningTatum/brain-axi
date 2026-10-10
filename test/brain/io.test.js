@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { create, open, close, features, tasks, progress, runs, docs, plans, verifications, verify, search, io, check } from "../../lib/brain/index.js";
+import { schemaVersion } from "../../lib/brain/db.js";
 import { freshBrain, tmpDir, throwsCode } from "./helpers.js";
 
 // A brain with a row in every table, and awkward strings throughout.
@@ -32,7 +33,7 @@ function rich(t) {
 test("export → import → export is byte-identical, and the import is a working brain", (t) => {
   const a = rich(t);
   const dump = io.exportAll(a.db);
-  assert.match(dump, /^format: brain-export\nversion: 1\nschema: 1\n/);
+  assert.match(dump, new RegExp(`^format: brain-export\\nversion: 1\\nschema: ${schemaVersion(a.db)}\\n`));
   for (const tbl of io.TABLES) assert.match(dump, new RegExp(`^${tbl}\\[\\d+\\]\\{`, "m"));
 
   const dir = tmpDir(t);
@@ -61,7 +62,7 @@ test("import refuses a non-empty brain, a newer format, and malformed dumps", (t
 
   const { db } = freshBrain(t);
   throwsCode(() => io.importAll(db, dump.replace("version: 1", "version: 2")), "IMPORT_VERSION");
-  throwsCode(() => io.importAll(db, dump.replace("schema: 1", "schema: 9")), "IMPORT_VERSION");
+  throwsCode(() => io.importAll(db, dump.replace(/^schema: \d+$/m, "schema: 99")), "IMPORT_VERSION");
   throwsCode(() => io.importAll(db, "hello"), "IMPORT_PARSE");
   throwsCode(() => io.importAll(db, "version: 1\n"), "IMPORT_PARSE", /not a brain export/);
   throwsCode(() => io.importAll(db, dump.replace("features[3]", "features[4]")), "IMPORT_PARSE");

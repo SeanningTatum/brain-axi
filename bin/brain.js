@@ -949,10 +949,12 @@ function renderPoll(data, file, flags) {
       snapshotShown = true;
     } else lines.push(kv("snapshot_chars", data.dom_snapshot ? data.dom_snapshot.length : data.dom_snapshot_chars || 0));
   }
+  if (data.redelivered) lines.push(kv("redelivered", true));
   if (data.ended_by) lines.push(kv("ended_by", data.ended_by));
   if (data.next_step) lines.push(kv("next_step", data.next_step));
   const help = [];
   if (data.status === "feedback" && !data.session_ended) {
+    if (data.redelivered) help.push("This batch was delivered before but never confirmed — skip any prompt you already applied");
     help.push(`Apply the changes, then run \`brain review poll ${file} --agent-reply "what you changed"\` to continue`);
     if ((data.prompts || []).length) help.push(ANCHOR_HELP);
     if (!snapshotShown) help.push(`Run \`brain review poll ${file} --snapshot\` for the full DOM outline`);
@@ -966,9 +968,11 @@ function renderPoll(data, file, flags) {
   return [...lines, ...toonList("help", help)];
 }
 
-// The CLI is the one writer of review state in brain.db: a drained feedback
+// The CLI is the one writer of review state in brain.db: a polled feedback
 // batch becomes the plan's next round (exactly what the agent received), and
-// a session the user ended is closed. The server only relays.
+// a session the user ended is closed. The server only relays, and re-delivers
+// a batch until ackPoll confirms it was recorded — the batch id keeps a
+// re-delivery from becoming a second round.
 function recordPoll(db, root, abs, data) {
   const userEnded = (data.session_ended || data.status === "ended") && data.ended_by === "user";
   const prompts = data.status === "feedback" ? data.prompts || [] : [];
@@ -981,8 +985,25 @@ function recordPoll(db, root, abs, data) {
     L.plans.addRound(db, plan.slug, {
       prompts: prompts.map((p) => ({ tag: p.tag, prompt: p.prompt, selector: p.selector || null, text: p.text || null, html: p.html || null, target: p.target ?? null })),
       endedBy: data.session_ended || closing ? data.ended_by : null,
+      batchId: typeof data.batch === "string" && data.batch ? data.batch : null,
     });
   if (closing) L.plans.endSession(db, plan.slug);
+}
+
+// Tell the server the batch is safely in brain.db so it stops re-delivering
+// it. Best effort: a lost ack only means one more (deduplicated) delivery.
+async function ackPoll(port, key, data) {
+  if (data.status !== "feedback" || typeof data.batch !== "string" || !data.batch) return;
+  try {
+    await fetch(`http://127.0.0.1:${port}/api/ack`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ key, batch: data.batch }),
+      signal: AbortSignal.timeout(3000),
+    });
+  } catch {
+    // server gone: the next poll re-delivers and the batch id dedups it
+  }
 }
 
 const review = {
@@ -1088,6 +1109,7 @@ const review = {
           fail("SERVER_BAD_RESPONSE", "malformed response from the review server", [`Run \`brain review poll ${file}\` again`]);
         }
         recordPoll(db, root, abs, data);
+        await ackPoll(reviewPort(flags), key, data);
         print(renderPoll(data, file, flags));
       },
     },

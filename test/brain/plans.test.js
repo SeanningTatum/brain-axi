@@ -63,6 +63,19 @@ test("sessions, rounds with prompts and snapshots, addPrompts", (t) => {
   rejectsRaw(db, "UPDATE review_prompts SET target = '{bad' WHERE seq = 1");
 });
 
+test("addRound with a batchId is idempotent: a re-delivered batch is one round", (t) => {
+  const { db, root } = freshBrain(t);
+  plans.upsert(db, { file: planFile(root), slug: "p1", root });
+  const r1 = plans.addRound(db, "p1", { prompts: [{ prompt: "once" }], batchId: "b-1" });
+  assert.deepEqual(r1, { slug: "p1", round: 1, status: "in-review" });
+  const again = plans.addRound(db, "p1", { prompts: [{ prompt: "once" }], batchId: "b-1" });
+  assert.deepEqual(again, { slug: "p1", round: 1, status: "in-review", duplicate: true });
+  assert.equal(plans.addRound(db, "p1", { prompts: [{ prompt: "next" }], batchId: "b-2" }).round, 2);
+  const g = plans.get(db, "p1");
+  assert.equal(g.rounds, 2);
+  assert.deepEqual(g.reviews.map((r) => r.prompts.map((p) => p.prompt)), [["once"], ["next"]]);
+});
+
 test("endSession closes the session; --approved-by approves headless and increments the round (#8)", (t) => {
   const { db, root } = freshBrain(t);
   plans.upsert(db, { file: planFile(root), slug: "p", root });

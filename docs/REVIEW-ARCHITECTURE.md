@@ -36,16 +36,22 @@ Node >= 24 ESM, zero runtime dependencies, no build step. Browser files are plai
 | Data | Owner | Where |
 |---|---|---|
 | plan row (path, sha256, title, feature, status) | CLI `review open` / `poll` (hash refresh) | brain.db `plans` |
-| review round + prompts | CLI `review poll`, when it drains a feedback batch | `review_rounds`, `review_prompts` |
+| review round + prompts | CLI `review poll`, when it receives a feedback batch (deduped by `batch_id`) | `review_rounds`, `review_prompts` |
 | session open/closed, approval | CLI `review open` / `end [--approved-by]`; `poll` closes a user-ended session | `plans.session_*`, `status`, `approved_by` |
-| pending prompts, chat, DOM snapshot, layout warnings | server | `<stateDir>/sessions.json` |
+| pending prompts, in-flight batch, chat, DOM snapshot, layout warnings | server | `<stateDir>/sessions.json` |
 | screenshot pins (watch lightbox) | server | `<stateDir>/sessions.json` (`pins`) |
 | run steps, verifications, shots, checkpoints, features | CLI (other commands) | brain.db |
 
 The server opens brain.db read-only in practice (one cached handle per brain dir,
 reopened if the file is replaced). A round is recorded when the agent's poll receives it,
 so the round history is exactly what the agent saw; prompts wait in the server until then
-(Ctrl-C on a poll loses nothing). `review end --approved-by <who>` needs no server
+(Ctrl-C on a poll loses nothing). Delivery is at-least-once with an ack: a poll moves the
+queued prompts into `inflight` `{batch, prompts, session_ended, ended_by, deliveries}`
+instead of deleting them; the CLI records the round with that `batch` id, then
+`POST /api/ack`s it, and only the ack deletes the batch. A poll killed before the ack gets
+the same batch again (`redelivered: true`); `plans.addRound({batchId})` skips a batch id
+already recorded for the plan (migration `002`, unique `(plan_id, batch_id)`), so one batch
+is one round. Prompts queued while a batch is in flight ride the next batch. `review end --approved-by <who>` needs no server
 (headless/CI): it records a closing round ended by the approver and sets `approved`.
 Plan snapshots are not written: the plan row's sha256 tracks the file, and `brain check`
 flags a missing or changed plan.
@@ -61,7 +67,7 @@ flags a missing or changed plan.
   nothing is connected.
 - Brain change poll: 1 s (`BRAIN_AXI_DB_POLL_MS`).
 - `/health` → `{ok, app: "brain-axi", version, api}`. The CLI respawns a server whose
-  `version` or `api` (`REVIEW_API`, currently 2) differs from its own.
+  `version` or `api` (`REVIEW_API`, currently 3) differs from its own.
 
 ## Session (sessions.json)
 
@@ -69,7 +75,7 @@ flags a missing or changed plan.
 { "key": "0a1b2c3d4e5f6a7b", "file": "/abs/real/plan.html", "brain": "/abs/.brain",
   "root": "/abs/checkout", "plan": "auth", "feature": "auth",
   "url": "http://127.0.0.1:4517/session/0a1b2c3d4e5f6a7b", "status": "open|feedback|ended",
-  "ended_by": null, "prompts": [], "dom_snapshot": "", "chat": [{ "role": "user", "text": "", "at": "" }],
+  "ended_by": null, "prompts": [], "inflight": null, "dom_snapshot": "", "chat": [{ "role": "user", "text": "", "at": "" }],
   "layout_warnings": [], "delivered_layout_keys": [], "updated_at": "" }
 ```
 
@@ -100,6 +106,7 @@ POSTs are same-origin guarded: an `Origin`/`Referer` that is present must match 
 | `POST /api/open` `{file, plan?, feature?, reopen?, brain?, root?}` | validate against brain.db (feature must exist), open/revive the session → `{key, url, status, plan, feature}` or `{refused, reason, key, url}` |
 | `GET /api/poll?key=&reply=` | long-poll; `reply` posts an agent chat line first. 15 s whitespace heartbeat |
 | `POST /api/feedback` `{key, prompts, end?, dom_snapshot?}` | browser queues prompts (409 on an ended session) → `{ok, queued}` |
+| `POST /api/ack` `{key, batch}` | the CLI recorded the polled batch → delete it (`{ok, acked}`; unknown id is a no-op) |
 | `POST /api/end` `{key, by}` | end the session (idempotent) |
 | `POST /api/layout` `{key, warnings}` | layout audit from the chrome; a fresh error wakes the poll |
 | `GET /events/<key>` | SSE: `chat-sync`, `agent-presence`, `agent-reply`, `reload`, `context-update`, `chrome-reload` |
@@ -115,9 +122,9 @@ POSTs are same-origin guarded: an `Origin`/`Referer` that is present must match 
 | `POST /watch/<f>/annotate[/delete|/send]?brain=` | pin add `{shot, x, y, note}` / delete `{id}` / mark sent |
 | `GET /chrome.js`, `/dashboard.js`, `/lightbox.js`, `/vendor/mermaid.min.js`, `/session/<key>/sdk.js` | static |
 
-Poll payloads (unchanged wire contract):
+Poll payloads (wire contract unchanged; `batch` and `redelivered` are additive):
 
-- `{status: "feedback", prompts: [...], dom_snapshot | dom_snapshot_chars: 0, layout_warnings?, session_ended?, ended_by?, next_step}`
+- `{status: "feedback", prompts: [...], batch, redelivered?, dom_snapshot | dom_snapshot_chars: 0, layout_warnings?, session_ended?, ended_by?, next_step}`
 - `{status: "ended", ended_by, next_step}` · `{status: "missing", next_step}`
 
 `next_step` strings live in `NEXT_STEP` (server.js). Presence: a poll attached →

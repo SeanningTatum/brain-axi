@@ -263,3 +263,54 @@ test("watch: a brain.db replaced on disk (restore) sends context-update and serv
   assert.ok(events.join("").split("event: context-update").length > before, `no context-update after replacing brain.db: ${events.join("")}`);
   assert.equal((await (await fetch(`${base}/watch/auth/context${qs}`)).json()).feature.status, "planned");
 });
+
+test("review: a poll that dies before the ack gets the same batch re-delivered; exactly one round; the ack clears it", async (t) => {
+  const { base, brain, ok, post } = await setup(t);
+  const open = ok(brain(["review", "open", "plans/auth.html", "--no-open"]));
+  const key = urlOf(open.out).split("/").pop();
+  assert.equal((await post("/api/feedback", { key, prompts: [{ tag: "message", prompt: "tighten the intro" }] }, { origin: base })).status, 200);
+
+  // A poll that fetched the batch and died before recording/acking it.
+  const lost = await (await fetch(`${base}/api/poll?key=${key}`)).json();
+  assert.equal(lost.status, "feedback");
+  assert.match(lost.batch, /^[0-9a-f-]{36}$/);
+  assert.equal(lost.redelivered, undefined);
+  ok(brain(["plans", "view", "auth"]), /^status: draft$/m);
+
+  // The next CLI poll gets the SAME batch, records one round, and acks it.
+  const poll = ok(brain(["review", "poll", "plans/auth.html", "--timeout-ms", "5000"]), /^status: feedback$/m);
+  assert.match(poll.out, /tighten the intro/);
+  assert.match(poll.out, /^redelivered: true$/m);
+  let view = ok(brain(["plans", "view", "auth"]), /^status: in-review$/m);
+  assert.match(view.out, /^rounds\[1\]/m);
+
+  // Acked: nothing left to deliver, so the next poll waits (and times out).
+  ok(brain(["review", "poll", "plans/auth.html", "--timeout-ms", "1200"]), /^status: timeout$/m);
+  view = ok(brain(["plans", "view", "auth"]), /^rounds\[1\]/m);
+
+  // Recorded-but-unacked (killed between record and ack): the re-delivery is
+  // deduplicated by batch id, then acked. A stale/unknown ack is a no-op.
+  assert.equal((await post("/api/feedback", { key, prompts: [{ tag: "message", prompt: "second pass" }] }, { origin: base })).status, 200);
+  ok(brain(["review", "poll", "plans/auth.html", "--timeout-ms", "5000"]), /second pass/);
+  assert.deepEqual(await (await post("/api/ack", { key, batch: lost.batch })).json(), { ok: true, acked: false });
+  assert.equal((await post("/api/ack", { key })).status, 400);
+  view = ok(brain(["plans", "view", "auth"]), /^rounds\[2\]/m);
+  ok(brain(["check"]), /^ok: true$/m);
+});
+
+test("review: the CLI records a re-delivered batch once even when the first delivery was recorded but not acked", async (t) => {
+  const { base, brain, ok, post, brainDir } = await setup(t);
+  const open = ok(brain(["review", "open", "plans/auth.html", "--no-open"]));
+  const key = urlOf(open.out).split("/").pop();
+  assert.equal((await post("/api/feedback", { key, prompts: [{ tag: "message", prompt: "only once" }] }, { origin: base })).status, 200);
+  const first = await (await fetch(`${base}/api/poll?key=${key}`)).json();
+  // Simulate the CLI having recorded this exact batch before it was killed.
+  const { openBrain, plans, close } = await import("../../lib/brain/index.js");
+  const b = openBrain(path.dirname(brainDir));
+  plans.addRound(b.db, "auth", { prompts: first.prompts.map((p) => ({ tag: p.tag, prompt: p.prompt })), batchId: first.batch });
+  close(b.db);
+  const poll = ok(brain(["review", "poll", "plans/auth.html", "--timeout-ms", "5000"]), /^redelivered: true$/m);
+  assert.match(poll.out, /only once/);
+  ok(brain(["plans", "view", "auth"]), /^rounds\[1\]/m);
+  ok(brain(["review", "poll", "plans/auth.html", "--timeout-ms", "1200"]), /^status: timeout$/m);
+});
