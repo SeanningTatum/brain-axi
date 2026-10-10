@@ -5208,20 +5208,35 @@ function readJsonSafe(p) {
 const isBrainHookCommand = (cmd) =>
   typeof cmd === "string" && /(^|[/\\"'\s])brain(\.js)?"? context$/.test(cmd);
 
-// Is the `brain` Claude Code plugin installed? Reads installed_plugins.json
-// under CLAUDE_CONFIG_DIR (default ~/.claude); missing/malformed => false.
-function brainPluginInstalled() {
+// Is the `brain` Claude Code plugin installed AND enabled for this repo?
+// Installed = installed_plugins.json under CLAUDE_CONFIG_DIR (default ~/.claude).
+// Enabled follows Claude Code settings precedence: the LAST defined
+// enabledPlugins[key] across user settings.json, <repo>/.claude/settings.json,
+// then <repo>/.claude/settings.local.json wins; `false` disables. Missing or
+// malformed files count as "not set" and never throw.
+function brainPluginInstalled(repoRoot) {
   const dir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude");
+  const enabledIn = (file) => {
+    try {
+      const e = JSON.parse(fs.readFileSync(file, "utf8")).enabledPlugins;
+      return e && typeof e === "object" ? e : {};
+    } catch {
+      return {};
+    }
+  };
   try {
     const data = JSON.parse(fs.readFileSync(path.join(dir, "plugins", "installed_plugins.json"), "utf8"));
     const plugins = data && typeof data.plugins === "object" && data.plugins ? data.plugins : {};
     const keys = Object.keys(plugins).filter((k) => k.startsWith("brain@"));
-    // Installed but disabled (enabledPlugins[key] === false) supplies no hook.
-    let enabled = {};
-    try {
-      enabled = JSON.parse(fs.readFileSync(path.join(dir, "settings.json"), "utf8")).enabledPlugins || {};
-    } catch {} // no/unreadable user settings: nothing is disabled
-    return keys.some((k) => enabled[k] !== false);
+    const layers = [
+      path.join(dir, "settings.json"),
+      path.join(repoRoot, ".claude", "settings.json"),
+      path.join(repoRoot, ".claude", "settings.local.json"),
+    ].map(enabledIn);
+    return keys.some((k) => {
+      const eff = layers.map((l) => l[k]).filter((v) => v !== undefined).pop();
+      return eff !== false;
+    });
   } catch {
     return false;
   }
@@ -5229,7 +5244,7 @@ function brainPluginInstalled() {
 
 function setupClaude(repoRoot, command) {
   const settingsPath = path.join(repoRoot, ".claude", "settings.json");
-  if (brainPluginInstalled()) {
+  if (brainPluginInstalled(repoRoot)) {
     // The plugin's hooks/hooks.json supplies the context hook; drop our duplicate.
     const cur = readJsonSafe(settingsPath);
     const list = Array.isArray(cur.hooks?.SessionStart) ? cur.hooks.SessionStart : null;

@@ -9,7 +9,16 @@
 //   gen                      .brain/evals/skill-routing/{cases,heldout}.jsonl -> evals-plugin/<id>/{prompt.md,case.yaml}
 //   convert <result.json>    aggregate-result.json -> brain envelope on stdout
 //        [--heldout-out f]   also append the split summary row (held-out + baseline arm) to f
+//        [--rescored-from ts] label the output as a re-grade of an earlier run (no new model calls)
 //   live                     gen + run `claude plugin eval` (spends credential: ~2 child runs per case) + convert
+//
+// First-skill grading: the tool's per-case result records only WHICH brain skills
+// fired (the `fired-*` graders), not their order (traces are temp files). So
+// `convert` grades the with-plugin arm itself from the fired set: positive cases
+// pass only if every brain skill that fired is acceptable (then the first one is
+// too); a case where several distinct skills fired and any is unacceptable fails,
+// since the first cannot be shown to be right. `none` cases pass if nothing outside
+// the allowed set fired. Single-skill outcomes (the usual case) are exact.
 //
 // Held-out cases live in heldout.jsonl, are run with everything else, and are
 // reported in the split summary, but are NOT in the envelope: the brain gate
@@ -87,7 +96,7 @@ function gen() {
 
 const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
 
-function convert(file, heldoutOut) {
+function convert(file, heldoutOut, rescoreNote = "") {
   const agg = JSON.parse(fs.readFileSync(file, "utf8"));
   const heldIds = new Set(readJsonl(path.join(suiteDir, "heldout.jsonl")).map((c) => c.id));
   const known = new Map(loadAll().map((c) => [c.id, c]));
@@ -105,12 +114,16 @@ function convert(file, heldoutOut) {
     const bucket = heldIds.has(c.name) ? split.held : split.core;
     // The turn cap is by design (we only grade the routing tool call), so hitting it is not an error.
     const realError = (r) => (r?.error && !/maximum number of turns/i.test(r.error) ? r.error : null);
-    const pass = (r) => (r && !realError(r) && r.score >= 1 ? 1 : 0);
+    const fired = (r) => (r?.graders || []).filter((g) => g.name?.startsWith("fired-") && g.passed).map((g) => g.name.slice(6));
     const w = runsWith[0];
     const wo = runsWithout[0];
+    // Baseline arm has no fired-* data (with-only graders): keep the tool's own score.
+    const passBase = (r) => (r && !realError(r) && r.score >= 1 ? 1 : 0);
+    const { none, accept } = parseExpected(spec.expected);
+    const wf = fired(w);
+    const pass = (r) => (r && !realError(r) && wf.every((s) => accept.includes(s)) && (none || wf.length > 0) ? 1 : 0);
     bucket.with.push(pass(w));
-    bucket.without.push(pass(wo));
-    const fired = (r) => (r?.graders || []).filter((g) => g.name?.startsWith("fired-") && g.passed).map((g) => g.name.slice(6));
+    bucket.without.push(passBase(wo));
     const err = realError(w);
     if (!heldIds.has(c.name)) {
       envelope.push({
@@ -118,7 +131,7 @@ function convert(file, heldoutOut) {
         pass: !!pass(w),
         score: pass(w),
         output: err ? `ERROR: ${err}` : `fired: ${fired(w).join(", ") || "(no brain skill)"}`,
-        notes: `expected ${spec.expected}; baseline arm (no plugin) ${pass(wo) ? "passed" : "failed"}${fired(wo).length ? `, fired ${fired(wo).join(",")}` : ""}`,
+        notes: `${rescoreNote}expected ${spec.expected}; baseline arm (no plugin) ${passBase(wo) ? "passed" : "failed"}${fired(wo).length ? `, fired ${fired(wo).join(",")}` : ""}`,
       });
     }
   }
@@ -128,6 +141,7 @@ function convert(file, heldoutOut) {
   const row = {
     ts: new Date().toISOString(),
     source: path.basename(path.dirname(file)),
+    ...(rescoreNote ? { note: rescoreNote.trim() } : {}),
     non_held_out: { ...core, delta: core.with !== null ? core.with - core.without : null },
     held_out: { ...held, delta: held.with !== null ? held.with - held.without : null },
     usage: { cost_usd: Number(cost.toFixed(4)) },
@@ -144,7 +158,8 @@ if (cmd === "gen") {
   const file = rest.find((a) => !a.startsWith("--"));
   if (!file) die("usage: convert <aggregate-result.json> [--heldout-out file]");
   const i = rest.indexOf("--heldout-out");
-  const env = convert(file, i >= 0 ? rest[i + 1] : null);
+  const j = rest.indexOf("--rescored-from");
+  const env = convert(file, i >= 0 ? rest[i + 1] : null, j >= 0 ? `rescored from ${rest[j + 1]}: first-skill grading, same raw data; ` : "");
   process.stdout.write(JSON.stringify({ cases: env.cases, usage: env.usage }) + "\n");
   process.stderr.write(`split: ${JSON.stringify(env.split)}\n`);
 } else if (cmd === "live") {
@@ -164,5 +179,5 @@ if (cmd === "gen") {
   const env = convert(jsonFile, path.join(suiteDir, "split-runs.jsonl"));
   process.stdout.write(JSON.stringify({ cases: env.cases, usage: env.usage }) + "\n");
 } else {
-  die("usage: eval-skill-routing.mjs gen | convert <aggregate-result.json> [--heldout-out f] | live");
+  die("usage: eval-skill-routing.mjs gen | convert <aggregate-result.json> [--heldout-out f] [--rescored-from ts] | live");
 }
