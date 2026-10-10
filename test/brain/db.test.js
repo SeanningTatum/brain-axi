@@ -184,3 +184,14 @@ test("check: passes on a clean brain and flags unverified shipped features, open
   assert.match(files.detail, /plan plan\.html changed/);
   assert.match(files.detail, /shot s\.png is missing/);
 });
+
+test("check: a long-lived connection sees no false FTS5 mismatch after another connection writes", (t) => {
+  const b = freshBrain(t);
+  const other = open(b.dbPath);
+  t.after(() => close(other));
+  features.add(other, { slug: "a", name: "A" });
+  assert.deepEqual(check(b.db, { root: b.root }).filter((r) => r.status !== "pass"), []);
+  features.set(other, "a", { name: "A renamed" });
+  features.add(other, { slug: "b", name: "B" });
+  assert.deepEqual(check(b.db, { root: b.root }).filter((r) => r.status !== "pass"), []);
+});

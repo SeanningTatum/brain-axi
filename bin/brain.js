@@ -12,7 +12,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { kv, toonTable, toonList } from "../lib/brain/toon.js";
@@ -864,14 +863,17 @@ function reviewPort(flags) {
   return Number.isInteger(n) && n > 0 ? n : REVIEW_DEFAULT_PORT;
 }
 
-// The server's session store lives outside the repo (~/.brain-axi, or
-// BRAIN_AXI_STATE_DIR); a session is keyed by the plan file's real path.
-function reviewStateDir() {
-  const dir = process.env.BRAIN_AXI_STATE_DIR ? path.resolve(process.env.BRAIN_AXI_STATE_DIR) : path.join(os.homedir(), ".brain-axi");
-  fs.mkdirSync(dir, { recursive: true });
-  return dir;
+// The review server owns the session key and its state dir (~/.brain-axi, or
+// BRAIN_AXI_STATE_DIR); context.js owns the plan-by-file lookup. Loaded
+// lazily — only review/watch need them.
+let RV;
+async function reviewModules() {
+  if (!RV) {
+    const [server, context] = await Promise.all([import("../lib/review/server.js"), import("../lib/review/context.js")]);
+    RV = { stateDir: server.stateDir, sessionKey: server.sessionKey, api: server.REVIEW_API, planForFile: context.planForFile };
+  }
+  return RV;
 }
-const sessionKey = (file) => crypto.createHash("sha256").update(fs.realpathSync(path.resolve(file))).digest("hex").slice(0, 16);
 
 async function fetchHealth(port, timeoutMs = 1500) {
   try {
@@ -891,25 +893,28 @@ async function waitFor(pred, capMs = 5000) {
   }
 }
 
-function spawnServer(port) {
-  const fd = fs.openSync(path.join(reviewStateDir(), "server.log"), "a");
+function spawnServer(port, dir) {
+  const fd = fs.openSync(path.join(dir, "server.log"), "a");
   const child = spawn(process.execPath, [SERVER_PATH], { env: { ...process.env, BRAIN_AXI_PORT: String(port) }, detached: true, stdio: ["ignore", fd, fd] });
   child.on("error", () => {});
   child.unref();
   fs.closeSync(fd);
 }
 
-// A live, version-matched server on `port`, spawned (or respawned) as needed.
+// A live server on `port` matching this CLI's version and API, spawned (or
+// respawned) as needed.
 async function ensureServer(port) {
-  const log = tilde(path.join(reviewStateDir(), "server.log"));
+  const { stateDir, api } = await reviewModules();
+  const dir = stateDir();
+  const log = tilde(path.join(dir, "server.log"));
   let health = await fetchHealth(port);
-  if (health && health.version !== OWN_VERSION) {
+  if (health && (health.version !== OWN_VERSION || health.api !== api)) {
     await fetch(`http://127.0.0.1:${port}/shutdown`, { method: "POST" }).catch(() => {});
     await waitFor(async () => !(await fetchHealth(port, 500)));
     health = null;
   }
   if (!health) {
-    spawnServer(port);
+    spawnServer(port, dir);
     health = await waitFor(() => fetchHealth(port, 800));
     if (!health) fail("SERVER_DOWN", `could not start the review server on port ${port}`, [`Check ${log}`, "Try another port: --port <n>"]);
   }
@@ -924,12 +929,6 @@ function openBrowser(url) {
   } catch {
     // best effort
   }
-}
-
-// The registered plan for an HTML file (by path), or null.
-function planForFile(db, root, file) {
-  const abs = path.resolve(file);
-  return L.plans.list(db).find((p) => path.resolve(root, p.file_path) === abs) || null;
 }
 
 const REVIEW_PORT_FLAG = { "--port": { value: true, desc: `review server port (default ${REVIEW_DEFAULT_PORT} or BRAIN_AXI_PORT)` } };
@@ -966,6 +965,22 @@ function renderPoll(data, file, flags) {
   return [...lines, ...toonList("help", help)];
 }
 
+// The CLI is the one writer of review state in brain.db: a drained feedback
+// batch becomes the plan's next round (exactly what the agent received), and
+// a session the user ended is closed. The server only relays.
+function recordPoll(db, root, abs, data) {
+  const userEnded = (data.session_ended || data.status === "ended") && data.ended_by === "user";
+  const prompts = data.status === "feedback" ? data.prompts || [] : [];
+  if (!prompts.length && !userEnded) return;
+  const plan = RV.planForFile(db, root, abs) || L.plans.upsert(db, { file: abs, root });
+  if (prompts.length || data.session_ended)
+    L.plans.addRound(db, plan.slug, {
+      prompts: prompts.map((p) => ({ tag: p.tag, prompt: p.prompt, selector: p.selector || null, text: p.text || null, html: p.html || null, target: p.target ?? null })),
+      endedBy: data.session_ended ? data.ended_by : null,
+    });
+  if (userEnded && L.plans.get(db, plan.slug).session_open) L.plans.endSession(db, plan.slug);
+}
+
 const review = {
   summary: "Human review of a plan artifact in the browser: open, poll, end (--approved-by for headless)",
   default: "open",
@@ -986,8 +1001,8 @@ const review = {
         const file = ctx.pos[0];
         const abs = path.resolve(file);
         if (!fs.existsSync(abs)) fail("NOT_FOUND", `no such file: ${file}`, ["Write the plan HTML first, then open it"]);
-        const { db, root } = ctx.brain();
-        const known = planForFile(db, root, file);
+        const { db, root, brainDir } = ctx.brain();
+        const known = (await reviewModules()).planForFile(db, root, abs);
         const plan = L.plans.upsert(db, { file: abs, slug: flags.plan || (known && known.slug), feature: flags.feature, root });
         const port = reviewPort(flags);
         await ensureServer(port);
@@ -996,7 +1011,7 @@ const review = {
           const res = await fetch(`http://127.0.0.1:${port}/api/open`, {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ file: abs, plan: flags.plan, feature: flags.feature, reopen: !!flags.reopen }),
+            body: JSON.stringify({ file: abs, plan: plan.slug, feature: plan.feature, reopen: !!flags.reopen, brain: brainDir, root }),
           });
           data = await res.json();
           if (!res.ok) fail("REVIEW_REJECTED", data.error || "the review server rejected the request", [data.help || `Try again: brain review open ${file}`]);
@@ -1034,16 +1049,18 @@ const review = {
         const file = ctx.pos[0];
         const timeoutMs = posInt(flags["timeout-ms"], "--timeout-ms");
         const missing = { status: "missing", next_step: `No session for this file. Run \`brain review open ${file}\` first.` };
+        const rv = await reviewModules();
         let key;
         try {
-          key = sessionKey(file);
+          key = rv.sessionKey(file);
         } catch {
           return void print(renderPoll(missing, file, flags));
         }
         // The agent edits the plan between polls: keep the recorded hash current.
         const { db, root } = ctx.brain();
-        const known = planForFile(db, root, file);
-        if (known) L.plans.upsert(db, { file: path.resolve(file), slug: known.slug, root });
+        const abs = path.resolve(file);
+        const known = rv.planForFile(db, root, abs);
+        if (known) L.plans.upsert(db, { file: abs, slug: known.slug, root });
         process.stderr.write("waiting for feedback… leave this running (Ctrl-C safe: feedback is never lost)\n");
         let url = `http://127.0.0.1:${reviewPort(flags)}/api/poll?key=${encodeURIComponent(key)}`;
         if (flags["agent-reply"]) url += `&reply=${encodeURIComponent(flags["agent-reply"])}`;
@@ -1066,6 +1083,7 @@ const review = {
         } catch {
           fail("SERVER_BAD_RESPONSE", "malformed response from the review server", [`Run \`brain review poll ${file}\` again`]);
         }
+        recordPoll(db, root, abs, data);
         print(renderPoll(data, file, flags));
       },
     },
@@ -1078,7 +1096,8 @@ const review = {
         const { flags } = ctx;
         const file = ctx.pos[0];
         const { db, root } = ctx.brain();
-        let plan = planForFile(db, root, file);
+        const rv = await reviewModules();
+        let plan = rv.planForFile(db, root, path.resolve(file));
         if (!plan && flags["approved-by"] !== undefined) plan = L.plans.upsert(db, { file: path.resolve(file), root });
         if (plan) L.plans.upsert(db, { file: path.resolve(file), slug: plan.slug, root });
         const ended = plan ? L.plans.endSession(db, plan.slug, { approvedBy: flags["approved-by"] }) : null;
@@ -1087,7 +1106,7 @@ const review = {
           const res = await fetch(`http://127.0.0.1:${reviewPort(flags)}/api/end`, {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ key: sessionKey(file), by: "agent" }),
+            body: JSON.stringify({ key: rv.sessionKey(file), by: "agent" }),
             signal: AbortSignal.timeout(3000),
           });
           server = (await res.json()).status || "ended";
