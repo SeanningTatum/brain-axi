@@ -4,52 +4,44 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-`brain-axi` is a single-file, zero-dependency **AXI CLI** (`brain`) that queries and updates a `.brain/` agent-harness directory living in some *other* repo. Agents run it via shell (`brain <cmd>` or `npx -y brain-axi <cmd>`) to read/write project state: features, progress checkpoints, docs, run notes. It is a tool agents use — not a library — so agent ergonomics are the product. Read the AXI standard (upstream [kunchenguid/axi](https://github.com/kunchenguid/axi); install with `npx skills add kunchenguid/axi`) before changing any agent-facing surface.
+`brain-axi` is an **AXI CLI** (`brain`) plus a **Claude Code plugin** that give coding agents durable project memory. The memory is one SQLite file, `.brain/brain.db`, in the target repo (gitignored). Agents run the CLI via shell (`brain <cmd>` or `npx -y brain-axi <cmd>`) to read and write features, tasks, checkpoints, run notes, docs, plans, verifications and declared checks. It is a tool agents use, not a library, so agent ergonomics are the product. Read the AXI standard (upstream [kunchenguid/axi](https://github.com/kunchenguid/axi); `npx skills add kunchenguid/axi`) before changing any agent-facing surface.
 
-The implementation is **`bin/brain.js`** (Node ESM, `node >=18`, no runtime deps) plus the **`lib/review/`** modules it imports (review server, playbook loader, brain data access) and the **`skills/`** tree (router + `brain-<id>` phase skills whose bodies `brain playbook <id>` prints). There is no build step, no `src/`, no bundler, no test framework, no lint config. `package.json` declares only the `brain` bin and has no scripts.
+Node **>=24** (the brain lives in the built-in `node:sqlite` with FTS5). Zero npm dependencies, no build step, no bundler, no lint config, no third-party test framework (`node:test` only). `package.json` declares only the `brain` bin.
 
-### `.brain/` in this repo is REAL — brain-axi dogfoods its own harness
+## Architecture: three layers plus the UIs
 
-Since 2026-07-14, `.brain/` is this project's own live harness (features, rules, plans, run notes for brain-axi itself), not fixture data. Its rules ARE constraints on the code you write here. Operate it with the CLI: read state before a task (`brain playbook start`), checkpoint after, and treat `.brain/` writes as real state — do not casually `git checkout .brain/` to reset unless undoing a deliberate test write.
+1. **`lib/brain/`: the SQLite library.** The only code that touches `brain.db`. One module per domain (`features`, `tasks`, `progress`, `runs`, `docs`, `plans`, `verifications`, `verify`, `search`, `io`), each a set of plain functions taking a `db` handle first and throwing `BrainError` (`errors.js`). `db.js` owns open/create/locate (a git worktree shares the main checkout's `.brain/`), WAL + `busy_timeout`, migrations (`migrations/NNN-*.sql`, `PRAGMA user_version`, a `.bak-vN` copy before migrating, rollback on failure, refuses a DB newer than the CLI) and `check`. `toon.js` is the TOON encoder ([toonformat.dev](https://toonformat.dev)). Entry point: `lib/brain/index.js`.
+2. **`bin/brain.js`: the thin AXI.** Parse args, call one library function, print TOON with a `help:` list. 16 commands in the `COMMANDS` table: `init context export import features tasks progress runs docs plans review watch verifications verify search check`; bare `brain` is the dashboard. It never reads `.brain/` content itself and loads `lib/brain` with a dynamic `import()` **after** the Node version gate.
+3. **`skills/` + plugin packaging: the method.** `skills/brain/SKILL.md` is the router; `skills/brain-<id>/` are the phase skills (start, grill, plan, product, ux, ai, execute, verify, done, write), long material in `references/`. Shipped as the Claude Code plugin via `.claude-plugin/plugin.json` + `marketplace.json` (marketplace `SeanningTatum`) and `hooks/hooks.json` (SessionStart runs `node "${CLAUDE_PLUGIN_ROOT}/bin/brain.js" context`).
+
+**`lib/review/`** serves the two browser UIs: `brain review` (plan review with long-poll feedback) and `brain watch` (live execution dashboard). `server.js` is a loopback `node:http` server; `context.js` builds its payloads read-only from `lib/brain`; the CLI is the single writer. Static assets (`chrome.*`, `dashboard.*`, `lightbox.js`, `sdk.js`, `vendor/mermaid`) keep their wire contract. See `docs/REVIEW-ARCHITECTURE.md`.
+
+Repo-dev only (not part of the CLI): `scripts/check-skills.mjs`, `scripts/eval-*.mjs` with suites in `evals/` and `evals-plugin/` (eval run records are history: never delete them), `plans/*.html` (approved plan artifacts, registered in the brain by path + sha256).
 
 ## Commands
 
 ```bash
-node bin/brain.js                 # home dashboard (bare invocation)
-node bin/brain.js --help          # help for any command; every command supports --help
-node bin/brain.js <cmd> --brain .brain   # target this repo's own brain explicitly
-
-# there is no `npm test` / `npm run build` / lint — verify by running the CLI:
-node bin/brain.js verify --brain .brain  # declared checks from .brain/verify.json (skill sync + harness)
-node bin/brain.js features
-node bin/brain.js docs view rules/cli-commands --full
-node bin/brain.js search "verify" --section rules
+node bin/brain.js                         # dashboard; every command supports --help
+node --test                               # all tests (test/brain, test/cli, test/review)
+node scripts/check-skills.mjs             # skills tree + plugin files + skills name only real commands/flags
+node bin/brain.js verify run              # this repo's declared checks (test, check-skills, harness)
+node bin/brain.js check                   # integrity: SQLite, FKs, search index, cross-entity rules, file hashes
 ```
 
-Verify a change by invoking the affected command against `.brain/` and eyeballing the TOON output, exit code (`echo $?`), and that stderr stays diagnostics-only — then `node bin/brain.js verify --brain .brain` for the declared checks. `.brain/` is live state: only revert writes that were throwaway tests, never real checkpoints.
+Verify a change by running the affected command and eyeballing the TOON on stdout, the exit code (`echo $?`), and that stderr stays diagnostics-only; then the three commands above. CI (`.github/workflows/ci.yml`, Node 24) has no `brain.db`, so it runs the zero-dep check, `node --test`, `check-skills` and a fresh-`init` smoke.
 
-## Architecture of `bin/brain.js`
+## `.brain/brain.db` is real: this repo dogfoods itself
 
-Top-to-bottom, the file is layered:
+`.brain/brain.db` is brain-axi's own live brain (features, rules, recipes, checkpoints, plans). Its rule docs are constraints on the code you write here (`node bin/brain.js docs list`, `search "<words>"`). Read and write it **through the CLI only**: never edit it with `sqlite3`, never delete or reset it. `brain export` writes a gitignored `.brain/export.toon` dump if you need a snapshot.
 
-1. **TOON serialization** (`toonScalar`, `toonString`, `kv`, `toonTable`, `toonList`, `print`) — hand-rolled encoder for [toonformat.dev](https://toonformat.dev). All stdout is TOON; this is the token-efficient wire format for agents. Never `console.log` free text to stdout — build lines and `print()` them.
-2. **Errors** (`usageError` → exit 2, `opError` → exit 1). Both emit an `error:` line plus a `help:` list of the *corrected* command. Exit 0 = success incl. no-ops.
-3. **Flag parsing** (`parseArgs`) — per-command flag specs; unknown flags are rejected (exit 2). `--help` and `--brain` are global on every command. `helpBlock` renders help from the same spec.
-4. **Brain discovery + loaders** (`findBrain` walks up from cwd for `.brain/`; `loadFeatureList`, `parseProgress`, `listMd`, `firstHeading`). `DOC_SECTIONS` maps CLI section names → dir names.
-5. **Commands** registered in the `COMMANDS` dispatch table (`features`, `progress`, `runs`, `docs`, `search`, `context`, `setup`, `skill`, `review`, `plans`, `shots`, `verifications`, `timeline`, `playbook`, `check`, `ship`, `watch`, `pr`, `verify`, `init`). `main()` routes: bare/`--*` → home, else look up the command. Playbook texts live in `lib/review/playbooks.js`; review-server logic in `lib/review/`.
+## Invariants to preserve
 
-### Data model the CLI reads/writes (inside a target `.brain/`)
-
-- `features/feature_list.json` — machine-readable feature tracker (source of truth for status). `STATUSES = planned|in-progress|shipped|blocked|cut`. Enforces `policy.one_in_progress_at_a_time`.
-- `runs/progress.md` — checkpoints separated by `---` lines, newest under the preamble. `parseProgress` splits on `\n---+\n`; `progress add` inserts a new entry right after the first separator.
-- `runs/<name>.md`, and doc sections (`rules`, `recipes`, `codebase`, `high-level-architecture`, `features`, `emails`, `transcripts`) — markdown; long bodies truncated (`bodyLines`, 1200-char default) unless `--full`.
-- `verify.json` — declared project-check registry for `brain verify`: named checks with a shell `run` string, `stages` drawn from `bootstrap|baseline|verify`, optional per-check `timeout` (seconds, default 300). Run sequentially from the repo root; results table prints even on failure (aggregate exit 1). `brain init` scaffolds this whole skeleton into a fresh repo.
-
-## Invariants to preserve when editing
-
-- **stdout = TOON payload only; stderr = diagnostics/banners.** Agents parse stdout.
-- **Every command result ends with a `help:` list** guiding the next action (this is AXI contextual disclosure — the tool teaches through its output). `home()` / `cmdHome` is the master guidance surface.
-- **The agent skills (`skills/`, served by `cmdSkill` / `skillContent`) must stay in sync with the CLI's real commands.** `skillContent()` returns the router `skills/brain/SKILL.md` (one source; there is no generated copy). The repo ships as a Claude Code plugin (`.claude-plugin/plugin.json` + `marketplace.json`, `hooks/hooks.json`). `brain skill --check` exits 1 on an invalid `skills/` tree or plugin files (plugin.json version must equal package.json, name `brain-axi`, marketplace `SeanningTatum` lists it, hook runs `bin/brain.js context`) — frontmatter, size caps (router 6144 B, phase skills 10240 B), `## Next` successors, `references/` links, every `COMMANDS` name in the router (intended for CI). If you add/rename a command or change guidance, update the router (and the owning `skills/brain-<id>/`) too. Skills use `npx -y brain-axi` command forms and omit the version field by design.
-- **`setup` (`cmdSetup`) installs SessionStart hooks** for claude / codex / opencode — idempotent, repairs stale paths, JSON-merges into existing settings without clobbering. Keep it idempotent.
-- **`cmdContext` stays silent (exit 0, no output) outside a brain repo** (`findBrain(..., {optional:true})`) — it runs from installed hooks and must not error when the cwd has no `.brain/`.
-- New commands: add to `COMMANDS`, give a `--help` via `helpBlock`, reject unknown flags, return TOON + a `help:` next-step list.
+- **stdout = TOON payload only; stderr = diagnostics.** Build lines and `print()` them; never `console.log` prose. Errors also go to stdout as `error:` + `code:` + `help:`.
+- **Every result ends with a `help:` list** naming the next command (AXI contextual disclosure). The dashboard (`home`) is the master guidance surface.
+- **Exit codes:** 0 success (incl. no-ops), 1 operation error (`BrainError`), 2 usage error (bad args, unknown command). **Unknown flags are rejected** (exit 2) with the valid set.
+- **`context` is silent and exits 0** outside a brain, without `brain.db`, on a legacy markdown brain, on any error, and on Node < 24: it runs from the SessionStart hook and must never break a session. It is capped at 600 B. Every other command on Node < 24 exits 2 with `NODE_TOO_OLD`.
+- **A legacy markdown brain** (no `brain.db`) gets `LEGACY_BRAIN` (exit 1) with the pin `npx -y brain-axi@0.2.0`; `init` refuses to write over one.
+- **Only `lib/brain` imports `node:sqlite` or reads `.brain/`.** New behavior goes in the library with a `node:test` case; the CLI stays thin.
+- **Skills name only real commands and flags.** `check-skills` reads every command's `--help` and fails (exit 1) on a skill or reference naming a command, subcommand or flag the CLI doesn't list; the router must name every command. It also enforces frontmatter, size caps (router 6144 B, phase skills 10240 B), `## Next` handoffs, `references/` links, and plugin.json version = package.json version. Skills use `npx -y brain-axi` forms. If you add, rename or change a command, update the router and the owning `skills/brain-<id>/` in the same change.
+- **New commands:** add to `COMMANDS`, give it a summary, spec and examples (its `--help` is rendered from them), return TOON ending in `help:`, add a CLI test.
+- **Zero npm dependencies** (CI enforces it).

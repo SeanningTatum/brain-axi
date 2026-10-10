@@ -2,269 +2,127 @@
 
 **A CLI that gives coding agents a memory.**
 
-`brain` is a single-file, zero-dependency Node tool that reads and writes a `.brain/` directory — the durable knowledge layer (features, progress checkpoints, rules, recipes, run notes, plan reviews, screenshot feedback) that survives across agent sessions. Agents shell out to it; humans get a queryable project brain for free.
-
-<img src="https://raw.githubusercontent.com/SeanningTatum/brain-axi/main/docs/assets/demo.gif" alt="Terminal recording of an agent running brain commands: brain features, brain progress, brain search, and brain shots notes, each returning compact TOON output" width="760">
+`brain` reads and writes one SQLite file, `.brain/brain.db`: the durable knowledge layer of a repo (features, tasks, checkpoints, run notes, rules and recipes, reviewed plans, verifications, declared checks) that survives across agent sessions. Agents shell out to it; a Claude Code plugin ships the skills that tell them when.
 
 ## Why
 
-Every new agent session starts from zero. It re-reads the codebase, re-derives what's in progress, re-asks "what did we decide last time," and — worst of all — sometimes forgets a decision was ever made and re-litigates it. Context windows reset; institutional memory shouldn't.
+Every new agent session starts from zero. It re-reads the codebase, re-derives what's in progress, re-asks "what did we decide last time", and sometimes forgets a decision was ever made and re-litigates it. Context windows reset; institutional memory shouldn't.
 
-`.brain/` is that memory: a plain directory of JSON and Markdown living in your repo, checked into git like everything else. `brain` is the interface to it — one command to check feature status, one to append a checkpoint, one to search every rule and recipe you've ever written down. Agents run it via shell like any other CLI. No MCP server, no daemon, no API key.
+`.brain/brain.db` is that memory and `brain` is the interface to it: one command to see feature status, one to add a checkpoint, one to search every rule and recipe you've written down. No MCP server, no daemon, no API key, no npm dependencies.
 
-The output is [TOON](https://toonformat.dev/), not JSON or prose: minimal default schemas, pre-computed counts, truncated bodies with a `--full` escape hatch, definitive empty states, and a `help:` block at the end of *every* command teaching the agent what to run next. That last part matters — the CLI's own output is how agents learn to use it, so a fresh agent with no prior context can bootstrap correctly on the first invocation.
+The output is [TOON](https://toonformat.dev/), not JSON or prose: small default schemas, pre-computed counts, truncated bodies with a `--full` escape hatch, definitive empty states, and a `help:` block at the end of *every* result naming the next command. The CLI's own output is how a fresh agent learns to use it.
 
-## Who this is for
+**It's for you if** you re-brief an agent every morning on work the same agent did yesterday, you've watched one confidently redo something you ruled out, or you run more than one agent and want them working from the same state. **It's not for you if** the whole project fits in one context window.
 
-You work with coding agents every day — not for toy scripts, but for real features that take more than one sitting.
+## Install
 
-So you know the tax. Session one, you explain the codebase, the constraints, the thing you tried last week that didn't work. The agent gets it, does good work, and then the context window ends. Session two, you explain it again. By session five you're not designing software, you're a human cache with a bad eviction policy — and the agent has quietly re-litigated a decision you settled on Tuesday, because nothing ever told it the decision existed.
+Requires **Node 24+** (the brain is stored with the built-in `node:sqlite`).
 
-`brain-axi` moves that memory out of your head and out of the context window, into a directory in your repo.
+**Claude Code plugin (recommended)**: skills plus a SessionStart hook that injects `brain context` into every session.
 
-**It's for you if:**
-
-- You start most days re-briefing an agent on work *the same agent* did yesterday.
-- You've watched an agent confidently redo something you already ruled out.
-- You want project decisions in git, reviewable in a PR — not buried in a chat log you can't grep.
-- You're the only one who knows why the code is shaped this way, and that's a bus-factor problem.
-- You run more than one agent (Claude Code, Codex, OpenCode) and want them working from the same state.
-
-**It's not for you if:** you're doing one-off scripts, or the whole project already fits in one context window. The overhead won't pay for itself.
-
-## How it works
-
-Install once. After that you rarely type `brain` — the agent does, because the CLI's own output teaches it the next command.
-
-```mermaid
-flowchart LR
-    I["<b>Setup, once per repo</b><br/>/plugin install brain-axi@SeanningTatum<br/>npx -y brain-axi init"]
-
-    I --> S
-
-    S["<b>New session</b><br/>context: empty"]
-    S --> H["<b>brain context</b><br/>dashboard injected<br/>before the agent acts"]
-    H --> R["<b>Agent orients</b><br/>features · progress<br/>search · docs"]
-    R --> W["<b>Agent works</b><br/>rules and past decisions<br/>already in hand"]
-    W --> C["<b>Agent records</b><br/>progress add<br/>set-status · ship"]
-    C --> B[("<b>.brain/</b><br/>md + json<br/>lives in git")]
-    B -.->|"next session starts warm"| H
-
-    style I fill:#f8fafc,stroke:#94a3b8,color:#0f172a
-    style S fill:#7f1d1d,stroke:#b91c1c,color:#fef2f2
-    style W fill:#14532d,stroke:#16a34a,color:#f0fdf4
-    style B fill:#1f2937,stroke:#4b5563,color:#f9fafb
+```sh
+claude plugin marketplace add SeanningTatum/brain-axi
+claude plugin install brain-axi@SeanningTatum
 ```
 
-The dotted line is the whole product. Everything the agent learns on the way down gets written to `.brain/`, so the next cold session starts where the last one stopped.
+(Inside a session: `/plugin marketplace add SeanningTatum/brain-axi`, then `/plugin install brain-axi@SeanningTatum`.)
 
-|  | Without `.brain/` | With `.brain/` |
-|---|---|---|
-| **Session start** | "Let me read the codebase first…" | Feature status, last checkpoint, and next step, before the first tool call |
-| **Mid-task** | Re-derives conventions from the code | `brain search "auth"` hits the rule you wrote in March |
-| **Settled decisions** | Re-litigated, silently | Written down, cited, linked in the PR |
-| **Session end** | Evaporates | A checkpoint you can read six weeks later |
-| **Handoff** | Only you know why | The repo knows why |
-
-## The intended way to use it
-
-Don't drive `brain` by hand. **Install the skill and let a coding agent use it.**
-
-`brain` is built for agent ergonomics, not human ones — TOON output, a `help:` block teaching the next command on every result, exit codes as a contract. Those are affordances for an LLM shelling out mid-task, not a CLI you sit and type at. The whole design assumes an agent is the operator and you are the reader of what it wrote down.
-
-So the flow is: install the [`brain` plugin](#quick-start) once, then just work normally. When you ask your agent to plan a feature, check what's in progress, or record where it left off, it discovers the right `brain` command from the skill and runs it — reading `.brain/` before a task, searching rules and recipes during, checkpointing progress and flipping feature status after. You get a durable project brain as a side effect of the agent doing its job; you rarely type `brain` yourself.
-
-Everything below documents the command surface for completeness — but reach for the skill first, and only run commands directly when you're debugging the CLI itself.
+**CLI only**, any agent: `npx -y brain-axi <command>`. Or from a checkout: `git clone https://github.com/SeanningTatum/brain-axi.git && cd brain-axi && npm link`.
 
 ## Quick start
 
-**Claude Code — install the plugin (recommended):**
-
-```sh
-/plugin marketplace add SeanningTatum/brain-axi
-/plugin install brain-axi@SeanningTatum
-```
-
-The `brain` plugin ships the router skill, the ten `brain-*` phase skills (each is also a slash command), and a SessionStart hook that runs the plugin's own copy of `brain context` (no `npx`, no network, versions stay locked). Then, once per repo that has no `.brain/` yet:
+Once per repo:
 
 ```sh
 npx -y brain-axi init
 ```
 
-If you previously copied the brain skill into `~/.claude/skills/brain` (or `.claude/skills/brain`), delete it to avoid a duplicate. If `brain setup --app claude` ever wrote a SessionStart hook into a repo's `.claude/settings.json`, re-running it once the plugin is installed removes that duplicate hook.
+That creates `.brain/brain.db`, adds it to `.gitignore`, and seeds the first checkpoint. Then just work: ask your agent to plan, build or check on something. The plugin's skills chain the method: **`brain`** (orient and route) → **`brain-start`** → **`brain-grill`** → **`brain-plan`** (with **`brain-product`** / **`brain-ux`** / **`brain-ai`** as needed) → **`brain-execute`** → **`brain-verify`** → **`brain-done`**, with **`brain-write`** as the register for anything written into the brain. Each skill is also a slash command (`/brain-axi:brain-plan`, …).
 
-**Other agents (codex, opencode, copilot):** `npx -y brain-axi setup --app codex|opencode` installs the context hook only. Skills are Claude Code-only for now; `brain playbook <id>` prints any skill's guidance for any agent.
+You rarely type `brain` yourself. When you do, bare `brain` is the dashboard:
 
-The CLI follows the AXI standard for agent-facing CLIs: [kunchenguid/axi](https://github.com/kunchenguid/axi) (`npx skills add kunchenguid/axi`).
-
-**Or run the CLI straight from a checkout**, no skill involved:
-
-```sh
-git clone https://github.com/SeanningTatum/brain-axi.git && cd brain-axi
-npm link                          # puts `brain` on PATH from this checkout
 ```
-
-Requires Node 18+. No dependencies, no build step, no config file.
-
-Point it at an existing `.brain/` (it walks up from cwd to find one, or take `--brain <path>`):
-
-```sh
 $ brain
 brain: .brain
-features: "4 total (3 shipped, 1 planned)"
-in-progress: none
-last-checkpoint: "2026-07-17 — shot-review PR opened: https://github.com/.../pull/4 — carousel + annotation + CTA toast + shots notes verb, all verified."
-sessions[5]{key,status,plan,file}:
-  "6944437cc165648b",open,"2026-07-14-plan",/private/tmp/brain-review-demo/plan.html
-  ...
-help[7]:
-  Run `brain features` to list features with status
-  Run `brain progress` to see the latest session checkpoint in full
-  Run `brain docs` to browse rules, recipes, and architecture docs
+features: "13 total (1 planned, 1 in-progress, 9 shipped, 1 blocked, 1 cut)"
+in-progress: axi-core
+last-checkpoint: "2026-10-10 — axi-core phase 3 done: review + watch read brain.db via lib/brain, ..."
+next: phase 4 (skills on the new surface) lands from its worktree; then phase 5 rebuilds this repo's brain
+help[5]:
+  Run `brain features view axi-core` for the feature in flight
+  Run `brain progress list` for recent checkpoints
   Run `brain search "<query>"` to find text anywhere in the brain
-  Run `brain review <plan.html>` to open a human review session
-  Run `brain check` to verify harness invariants
-  Run `brain setup --app claude` to install a session-start context hook
+  Run `brain docs list` to browse rules, recipes and architecture docs
+  Run `brain --help` for every command
 ```
-
-<img src="https://raw.githubusercontent.com/SeanningTatum/brain-axi/main/docs/assets/home.png" alt="Screenshot of the brain home dashboard TOON output in a terminal" width="620">
-
-No `.brain/` yet? Scaffold one with `npx -y brain-axi init`, or hand-roll the [layout below](#the-brain-layout).
 
 ## Commands
 
-Every command supports `--help` (self-documenting) and a global `--brain <path>` override. Unknown flags are rejected with the valid flag set (exit 2), and every successful result ends with a `help:` block of next steps.
-
-### State — features & checkpoints
+Every command supports `--help` and a global `--brain <path>` (default: walk up from cwd; git worktrees share the main checkout's brain). Unknown flags are rejected with the valid set.
 
 | Command | What it does |
 |---|---|
-| `brain features [--status s] [--fields ...] [--limit n]` | List features from `feature_list.json` |
-| `brain features view <slug> [--full]` | Tracker fields + feature doc body |
-| `brain features set-status <slug> --status <s> [--evidence "..."]` | Flip feature state — enforces `one_in_progress_at_a_time`, idempotent |
-| `brain progress [--limit n]` | Latest session checkpoint in full + older-entry index |
-| `brain progress add --summary "..." [--next "..."]` | Append a checkpoint to `runs/progress.md` |
-| `brain ship <slug> --evidence "..."` | Flip a feature to `shipped`: requires evidence, **preflights `brain check` and refuses the ship if anything would fail — nothing written, exit 1**, then writes atomically, warns on missing screenshots, checkpoints |
-| `brain pr <slug> --url <pr-url>` | Record the feature's opened pull request (the execution dashboard's terminal state) |
+| `brain init` | Create `.brain/brain.db` (gitignored) and seed the first checkpoint |
+| `brain context` | Compact session-start context (≤ 600 B); silent outside a brain. Used by the SessionStart hook |
+| `brain features` | The feature tracker: `list`, `view`, `add`, `set` (status, pr, fields), `ship` (needs evidence, no open tasks and a PASS verification) |
+| `brain tasks` | Units of work below a feature: `list`, `view` (the brief), `add`, `claim`, `set` |
+| `brain progress` | Checkpoints, the rolling where-are-we cursor: `list`, `add` (`--run` links a run note) |
+| `brain runs` | Run notes, verbatim numbered steps per feature: `view`, `append` |
+| `brain docs` | Markdown docs in the brain (rules, recipes, codebase, architecture, features, …): `list`, `view`, `set`, `rm` |
+| `brain search "<words>"` | Full-text search (FTS5) across features, docs, checkpoints, run steps and verifications |
+| `brain review` | Human review of a plan artifact in the browser: `open`, `poll`, `end` (`--approved-by` for headless) |
+| `brain plans` | Reviewed plan artifacts (registered by `brain review open`): `list`, `view` |
+| `brain watch <feature>` | Open the live execution dashboard for a feature |
+| `brain verifications` | Verdicts bound to the commit they were taken on: `list`, `view`, `add` (`--shot` attaches screenshots) |
+| `brain verify` | Declared project checks: `list`, `add`, `run` (`--stage` / `--only`). Bare `brain verify` runs them |
+| `brain check` | Integrity: SQLite integrity, foreign keys, search index, cross-entity rules, plan/shot file hashes |
+| `brain export` | Deterministic TOON dump of the whole brain (default `.brain/export.toon`, gitignored) |
+| `brain import <file>` | Load an export into an empty brain |
 
-### Knowledge — docs, rules, recipes, search
+**Exit codes**: `0` success (including no-ops), `1` operation error, `2` usage error. Errors print to stdout as `error:` + `code:` + `help:` lines; stdout is always the parseable payload, stderr is diagnostics only.
 
-| Command | What it does |
-|---|---|
-| `brain docs [section]` | Browse sections: `rules`, `recipes`, `codebase`, `architecture`, `features`, `emails`, `transcripts` |
-| `brain docs view <section>/<name> [--full]` | Read one doc |
-| `brain search "<query>" [--section s] [--limit n]` | Case-insensitive text search across the whole brain |
-| `brain runs` / `brain runs view <name> [--full]` | Per-task run notes (deep task state) |
-| `brain playbook [id]` | Authoring playbooks for agent-produced artifacts (plan, verify, execute) |
-
-### Workflow — plans & human review
-
-| Command | What it does |
-|---|---|
-| `brain review <plan.html> [--plan s] [--feature s] [--port n] [--no-open] [--reopen]` | Open a human review session for a plan artifact in the browser |
-| `brain review poll <plan.html> [--agent-reply "..."] [--snapshot] [--timeout-ms n]` | Long-poll for reviewer feedback — leave running until it returns |
-| `brain review end <plan.html>` | End an open review session (marks the plan reviewed) |
-| `brain plans` / `brain plans view <slug> [--full]` | List plan review artifacts, or one plan's meta + review rounds |
-| `brain verifications [feature]` / `brain verifications view <feature> <date> [--full]` | List or read feature verification verdict docs (browser walk + command runs), one per fix round |
-| `brain timeline [--limit n]` | Merged history: checkpoints, run notes, plan creations, review rounds |
-
-### Screenshot review loop
-
-| Command | What it does |
-|---|---|
-| `brain shots [feature]` | List review screenshots (per-feature + legacy); gains a `notes` column once any shot carries an annotation |
-| `brain shots add <img> --feature <slug> --step <NN-name> [--caption "..."]` | File a screenshot into the brain (`--scope <name>` is the legacy form) |
-| `brain shots notes <feature>` | List reviewer pin+note annotations — pin coords, note preview, timestamp, open/superseded, sent/unsent |
-| `brain watch <feature> [--port n] [--no-open]` | Open the live execution dashboard: progress, run-step logs, verifications, PR state, screenshot carousel |
-
-### Setup & integrity
-
-| Command | What it does |
-|---|---|
-| `brain context` | Compact dashboard used by session-start hooks (silent, exit 0, outside a brain repo) |
-| `brain setup --app <claude\|codex\|opencode\|copilot\|all>` | Install a SessionStart hook that injects `brain context` |
-| `brain skill [--check]` | Print the router skill; `--check` validates the `skills/` tree and plugin files (CI-friendly) |
-| `brain check` | Run deterministic harness invariant checks (CI-usable: exit 1 on any failure) |
-
-**Exit codes**: `0` success (including no-ops), `1` operation error, `2` usage error. Errors print to stdout as `error:` + `help:` lines — stdout is always the parseable payload, stderr stays diagnostics-only.
-
-## Finding things fast
-
-```sh
-$ brain search "wrangler"
-matches: 0 matches for "wrangler" in .brain
+```
+$ brain search "one in progress" --limit 1
+query: one in progress
+results[1]{kind,ref,title,snippet}:
+  doc,features/core-cli,"Feature: Core AXI CLI","…planned|[in]-[progress]|shipped|blocked|cut`, `policy.[one]_[in]_[progress]_at_a…"
+help[1]: Open a hit: brain docs view <ref>
 ```
 
-<img src="https://raw.githubusercontent.com/SeanningTatum/brain-axi/main/docs/assets/search.png" alt="Screenshot of brain search output in a terminal, showing zero matches for a query" width="620">
+## Plan review and the execution dashboard
 
-An empty result is still a definitive answer — no ambiguity about whether the search ran.
-
-## Giving agents ambient brain context
-
-Two complementary paths — install either or both:
-
-1. **Agent skills (recommended — the Claude Code plugin above)** — on-demand, zero per-session token cost, static guidance only. `brain skill --check` exits 1 if the `skills/` tree or the plugin files drift from the CLI's real commands — wire it into CI.
-2. **Session hook (ambient, always-on)** — `brain setup --app claude` (or `codex` / `opencode` / `copilot` / `all`). Every new agent session in the repo starts with the compact `brain context` dashboard: live feature state, last checkpoint, next step. Re-running repairs the hook path after a reinstall; repeated runs are no-ops. With the plugin installed you do not need this for Claude Code (`setup --app claude` then removes its own duplicate). Requires a local checkout (this hook shells out to the CLI directly, so it needs `brain` resolvable — either on `PATH` or as a project devDependency).
-
-## Plan review
-
-`brain review <plan.html>` opens an HTML plan artifact in the browser next to a composer sidebar — round indicator, draft badge, the decisions and context queued for this round, and a message box for sending feedback straight back to the agent. The agent's own long-poll (`brain review poll`) picks up whatever gets sent, so review happens without either side leaving their tool.
+`brain review open <plan.html>` opens an HTML plan in the browser next to a composer sidebar: round indicator, queued annotations, a message box. The agent's `brain review poll` long-poll picks up whatever is sent, so review loops without either side leaving their tool.
 
 <img src="https://raw.githubusercontent.com/SeanningTatum/brain-axi/main/docs/assets/plan-review.png" alt="Screenshot of a brain review session: a rendered HTML plan on the left, composer sidebar with round indicator and message box on the right" width="700">
 
-## Screenshot review loop
-
-`brain watch <feature>` opens a live execution dashboard for a feature: its status pipeline (plan approved → in-progress → run steps → verification → shipped → PR opened), run-step logs, checkpoints, and screenshots — everything an agent produced while working the feature, in one page.
+`brain watch <feature>` opens a live, read-only dashboard: status pipeline (plan approved → in-progress → run steps → verification → shipped → PR), run-step logs, checkpoints and screenshots.
 
 <img src="https://raw.githubusercontent.com/SeanningTatum/brain-axi/main/docs/assets/execution-dashboard.png" alt="Screenshot of the brain watch execution dashboard showing a feature's status pipeline, run steps, checkpoints, and screenshot filmstrip" width="700">
 
-Screenshots captured with `brain shots add <img> --feature <slug> --step NN-name` are never opened one-tab-per-image: the dashboard above and a `brain review` session's execution sidebar both render them in a shared in-page carousel — arrows, ←/→/Esc, counter, captions, filmstrip, and a placeholder for a missing file.
+Screenshots attached with `brain verifications add --shot` open in a shared in-page carousel (arrows, ←/→/Esc, captions, filmstrip). Toggle **Annotate** to drop a numbered pin with a note.
 
 <img src="https://raw.githubusercontent.com/SeanningTatum/brain-axi/main/docs/assets/carousel-lightbox.png" alt="Screenshot of the shared lightbox carousel open over a screenshot, with arrow navigation and a filmstrip of thumbnails" width="700">
 
-Toggle **Annotate** in the carousel and click a screenshot to drop a numbered pin at that x/y and write a note:
-
 <img src="https://raw.githubusercontent.com/SeanningTatum/brain-axi/main/docs/assets/annotate-pin.png" alt="Screenshot of the lightbox in Annotate mode with a numbered pin dropped on the screenshot" width="700">
 
-- On the dashboard, the pin saves as an unsent draft. "Send N pins to Claude" (the topbar button, or the toast shown right after pinning) hands the whole batch to the agent and stamps it sent.
-- In a review session's sidebar, the same pin instead queues immediately as a screenshot-tagged prompt in the composer, delivered on the next Send like any other annotation, through the normal `brain review poll` loop.
+## Architecture
 
-Re-capturing the shot (`brain shots add` again for the same feature/step) makes its earlier annotations read as **superseded** — that's the resolution signal; there is no separate "mark done" action.
+Three layers, each depending only on the one below:
 
-The agent reads pending feedback with `brain shots notes <feature>`:
+- **Skills** (`skills/`, shipped as the `brain-axi` Claude Code plugin with `.claude-plugin/` and `hooks/`): the method, as sequential handoffs.
+- **The AXI CLI** (`bin/brain.js`): thin; parses args, calls one library function, prints TOON with a `help:` list.
+- **The library** (`lib/brain/`): the only code that touches `brain.db`. Per-domain functions over `node:sqlite`, schema migrations with a backup, WAL for concurrent writers.
 
-<img src="https://raw.githubusercontent.com/SeanningTatum/brain-axi/main/docs/assets/shots-notes.png" alt="Screenshot of brain shots notes output listing a superseded annotation pin" width="620">
+The review and watch UIs (`lib/review/`) read the brain through the library; the CLI is the only writer. Contracts in [`docs/REVIEW-ARCHITECTURE.md`](docs/REVIEW-ARCHITECTURE.md).
 
-```
-$ brain shots notes shot-review
-notes: 1 annotations for shot-review (0 open, 1 superseded, 1 unsent)
-annotations[1]{shot,pin,note,at,status,sent}:
-  features/shot-review/screenshots/02-lightbox-open.png,"39.9%,69.9%",button misaligned — test pin,"2026-07-17T05:28:36.708Z",superseded,no
-help[3]:
-  Run `brain watch shot-review` to see these pins over the actual screenshots in the carousel
-  Run `brain shots add <img> --feature shot-review --step <NN-name>` to re-capture a shot — this supersedes its open annotations
-  1 pin(s) are still unsent drafts — the reviewer clicks "Send to Claude" in the carousel when ready
-```
+## Upgrading from 0.2.x
 
-Planned, not yet shipped: a `brain watch poll <feature>` long-poll runner (mirroring `brain review poll`) so "Send to Claude" wakes the agent immediately instead of waiting on the next `brain shots notes` check.
-
-## The `.brain` layout
-
-```
-.brain/
-  features/feature_list.json   # machine-readable feature status (source of truth)
-  features/<slug>/<slug>.md    # one doc per feature, plus plans/ verifications/ screenshots/
-  runs/progress.md             # rolling session checkpoint log
-  runs/<date>-<slug>.md        # per-task deep state
-  rules/ recipes/ codebase/ high-level-architecture/
-```
-
-See `.brain/HARNESS.md` in a scaffolded brain for the 5-subsystem harness model this serves: instructions, state, verification, scope, lifecycle.
+0.3.0 replaces the markdown `.brain/` directory with `brain.db`, and file brains are not read. A repo with an old markdown brain gets `LEGACY_BRAIN`; pin the old CLI there with `npx -y brain-axi@0.2.0 <command>`, or move the old `.brain/` aside and run `brain init`. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Design principles
 
-- **Single file, zero deps.** `bin/brain.js`, Node ESM, `node >=18`. Nothing to install, nothing to break.
-- **TOON, not JSON or prose.** Token-efficient for agents to parse and for you to eyeball; see [toonformat.dev](https://toonformat.dev/).
-- **Contextual disclosure.** Every command teaches the next command through its own `help:` output — an agent with zero prior knowledge of `brain` can still use it correctly.
-- **Exit codes are the contract.** `0`/`1`/`2` are meaningful and stable; scripts and CI can depend on them.
-- **Idempotent by default.** Re-running `setup` or `set-status` to the same state is always a safe no-op.
+- **Zero dependencies.** Node built-ins only, no build step.
+- **TOON, not JSON or prose.** Token-efficient for agents to parse and for you to read.
+- **Contextual disclosure.** Every result teaches the next command through `help:`.
+- **Exit codes are the contract.** `0` / `1` / `2` are stable; scripts and CI can depend on them.
+- **The [AXI standard](https://github.com/kunchenguid/axi)** for agent-facing CLIs (`npx skills add kunchenguid/axi`).
