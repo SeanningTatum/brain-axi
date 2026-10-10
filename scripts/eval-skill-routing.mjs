@@ -4,18 +4,24 @@
 //
 // The engine is the built-in `claude plugin eval`; this file only (a) turns the
 // suite's golden set into the case dirs that tool reads, and (b) turns the
-// tool's aggregate-result JSON into the brain run envelope.
+// tool's aggregate-result JSON into the run envelope. Repo-dev tooling for
+// brain-axi itself, run standalone (no brain command involved).
 //
-//   gen                      .brain/evals/skill-routing/{cases,heldout}.jsonl -> evals-plugin/<id>/{prompt.md,case.yaml}
-//   convert <result.json>    aggregate-result.json -> brain envelope on stdout
+//   gen                      evals/skill-routing/{cases,heldout}.jsonl -> evals-plugin/<id>/{prompt.md,case.yaml}
+//   convert <result.json>    aggregate-result.json -> run envelope on stdout
 //        [--heldout-out f]   also append the split summary row (held-out + baseline arm) to f
 //        [--rescored-from ts] label the output as a re-grade of an earlier run (no new model calls)
-//   live                     gen + run `claude plugin eval` (spends credential: ~2 child runs per case) + convert
+//        [--record]          also append the run record to evals/skill-routing/ (runs/<ts>.json + runs.jsonl)
+//   live                     gen + run `claude plugin eval` (spends credential: ~2 child runs per case,
+//                            ~$7 per run) + convert; appends split-runs.jsonl and the run record
+//
+// The scaffold for every case with a brain (evals-plugin/scaffold-brain.sh) is a
+// fresh `brain init` in a new git repo — the CLI makes the brain, no fixture.
 //
 // First-skill grading: the tool's per-case result records only WHICH brain skills
 // fired (the `fired-*` graders), not their order (traces are temp files). So
 // `convert` grades the with-plugin arm itself from the fired set: positive cases
-// pass only if every brain skill that fired is acceptable (then the first one is
+// pass only if every brain-* skill that fired is acceptable (then the first one is
 // too); a case where several distinct skills fired and any is unacceptable fails,
 // since the first cannot be shown to be right. `none` cases pass if nothing outside
 // the allowed set fired. Single-skill outcomes (the usual case) are exact.
@@ -33,9 +39,10 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { recordRun } from "./eval-record.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const suiteDir = path.join(root, ".brain", "evals", "skill-routing");
+const suiteDir = path.join(root, "evals", "skill-routing");
 const evalDir = path.join(root, "evals-plugin");
 const SKILLS = ["brain", "brain-ai", "brain-done", "brain-execute", "brain-grill", "brain-plan", "brain-product", "brain-start", "brain-ux", "brain-verify", "brain-write"];
 const MAX_TURNS = 3;
@@ -55,7 +62,7 @@ function parseExpected(expected) {
 
 function gen() {
   const cases = loadAll();
-  if (!cases.length) die("no cases in .brain/evals/skill-routing/{cases,heldout}.jsonl");
+  if (!cases.length) die("no cases in evals/skill-routing/{cases,heldout}.jsonl");
   fs.mkdirSync(evalDir, { recursive: true });
   for (const c of cases) {
     const { none, accept } = parseExpected(c.expected);
@@ -130,7 +137,7 @@ function convert(file, heldoutOut, rescoreNote = "") {
         id: c.name,
         pass: !!pass(w),
         score: pass(w),
-        output: err ? `ERROR: ${err}` : `fired: ${fired(w).join(", ") || "(no brain skill)"}`,
+        output: err ? `ERROR: ${err}` : `fired: ${fired(w).join(", ") || "(no brain-* skill)"}`,
         notes: `${rescoreNote}expected ${spec.expected}; baseline arm (no plugin) ${passBase(wo) ? "passed" : "failed"}${fired(wo).length ? `, fired ${fired(wo).join(",")}` : ""}`,
       });
     }
@@ -162,6 +169,7 @@ if (cmd === "gen") {
   const env = convert(file, i >= 0 ? rest[i + 1] : null, j >= 0 ? `rescored from ${rest[j + 1]}: first-skill grading, same raw data; ` : "");
   process.stdout.write(JSON.stringify({ cases: env.cases, usage: env.usage }) + "\n");
   process.stderr.write(`split: ${JSON.stringify(env.split)}\n`);
+  if (rest.includes("--record")) record(env);
 } else if (cmd === "live") {
   gen();
   // Run against a staged copy holding only the plugin's own files: the tool loads
@@ -183,6 +191,15 @@ if (cmd === "gen") {
   if (r.status !== 0 || !fs.existsSync(jsonFile)) die(`claude plugin eval failed (exit ${r.status})`);
   const env = convert(jsonFile, path.join(suiteDir, "split-runs.jsonl"));
   process.stdout.write(JSON.stringify({ cases: env.cases, usage: env.usage }) + "\n");
+  record(env);
 } else {
-  die("usage: eval-skill-routing.mjs gen | convert <aggregate-result.json> [--heldout-out f] [--rescored-from ts] | live");
+  die("usage: eval-skill-routing.mjs gen | convert <aggregate-result.json> [--heldout-out f] [--rescored-from ts] [--record] | live");
+}
+
+// Append the run record (runs/<ts>.json + runs.jsonl); exit 1 when the gate
+// (frozen cases, min_pass_rate) fails.
+function record(env) {
+  const { summary, gateFailed, runFile } = recordRun(root, suiteDir, { cases: env.cases, usage: env.usage });
+  process.stderr.write(`eval-skill-routing: ${summary.pass}/${summary.total} pass; frozen failing: ${summary.frozen_failing.join(", ") || "none"}; recorded ${runFile}\n`);
+  if (gateFailed) process.exitCode = 1;
 }

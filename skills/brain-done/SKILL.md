@@ -4,14 +4,14 @@ description: "Use before declaring any task complete, opening a PR, or shipping 
 ---
 > CLI note: examples below say `brain <cmd>`. If `brain` is not on PATH, run `npx -y brain-axi <cmd>` instead.
 
-TERMINATION CHECK PLAYBOOK
-==========================
+TERMINATION CHECK
+=================
 
 You are about to declare a task complete. This is the bookend that closes the
-state the `brain-start` skill (`brain playbook start` if skills are unavailable) opened — full verify, harness invariants, and a
+state the `brain-start` skill opened — full verify, brain integrity, and a
 brain-coherence pass, before a single "looks done to me" claim leaves this
-session. The rule this playbook exists to enforce, ported from the execution
-loop (the `brain-execute` skill (`brain playbook execute` if skills are unavailable)): every claim below is something you actually
+session. The rule this skill exists to enforce, ported from the execution
+loop (the `brain-execute` skill): every claim below is something you actually
 ran and read back, never something you expect to be true. A red row you
 didn't look at is not a passed check — it's an unchecked one.
 
@@ -19,90 +19,66 @@ didn't look at is not a passed check — it's an unchecked one.
 1. FULL VERIFY
 -------------------------------------------------------------------------------
 
-    brain verify --feature <slug>
+    brain verify run --feature <slug>
 
-Runs every declared project check (the full `verify` stage — typecheck,
-tests, lint, e2e, whatever `.brain/verify.json` registers). Every row must be
-green. On a failure:
+(bare `brain verify` does the same; omit `--feature` for work not tied to a
+feature.) Runs every declared project check — typecheck, tests, lint, e2e,
+whatever `brain verify list` shows. Read the results table: every row must be
+green; the command exits 1 if any fails, and `NO_CHECKS` (exit 1) means no
+checks are declared — declare real ones first with `brain verify add`. On a
+failure:
 
 - Fix the underlying problem.
-- Re-run just that check: `brain verify --only <name>`.
+- Re-run just that check: `brain verify run --only <name>`.
 - Never declare the task done with a red row still showing — "it'll probably
   pass on the next run" is not a result.
 
-Pass `--feature <slug>` (when this task is scoped to a tracked feature) so
-the final green run is appended as a run-note step under that feature — real
-verbatim output, not a paraphrase, landing as evidence for step 5.
+With `--feature <slug>` the gate rows are attributed to that feature. Log the
+final green output verbatim as evidence for step 5:
+`brain runs append <slug> --step "brain verify run" --observed -` (pipe the
+output on stdin) — real output, not a paraphrase.
 
 -------------------------------------------------------------------------------
 2. FEATURE VERIFICATION FOR USER-VISIBLE WORK
 -------------------------------------------------------------------------------
 
 If this task shipped or changed user-visible behavior, it needs a
-verification doc from an independent verifier: every acceptance criterion
-walked, golden path + at least one error path + edge probes — driven in a
-real browser for what a browser can reach, each non-browser criterion run as
-its named command — screenshots (or command + exit code + output), quality
-scores against their floors, a Verdict line. That full standard lives in
-the `brain-verify` skill (`brain playbook verify` if skills are unavailable) — read and follow it there; this playbook does not
-duplicate it. Confirm it landed with `brain verifications <slug>`, then open
-the newest doc — the highest round (`<date>-rN.md` is newer than
-`<date>.md`) — and hold three:
+verification from an independent verifier: every acceptance criterion walked,
+golden path + at least one error path + edge probes — driven in a real
+browser for what a browser can reach, each non-browser criterion run as its
+named command — screenshots (or command + exit code + output), quality scores
+against their floors, a Verdict line. That full standard lives in the
+`brain-verify` skill — follow it there; this skill does not duplicate it.
+Confirm it landed with `brain verifications list --feature <slug>`, then
+`brain verifications view <slug> --full` (latest round) and hold four:
 
-- **It was independent.** Its `- **Independence**:` line names a
+- **It was independent.** The body's `- **Independence**:` line names a
   fresh-context verifier that did not write the code — or reads
   `self-verified — <reason>` with a reason that holds (no second agent was
-  possible), not a convenience. You grading your own work here is exactly
-  the leniency this step exists to catch; if that is what happened, spawn a
+  possible), not a convenience; `verified_by:` and `implemented_by:` should be
+  two different parties. You grading your own work here is exactly the
+  leniency this step exists to catch; if that is what happened, spawn a
   verifier now rather than declaring done.
-- **Every acceptance row is ✅.** One row per plan-of-record and task
-  acceptance criterion, none ❌, none quietly missing. A row that failed and
-  was fixed needs a later round that re-graded it (`- **Round**: N`), not
-  your note that it is fixed now.
+- **Every acceptance row is PASS.** One row per plan-of-record and task
+  acceptance criterion, none failing, none quietly missing. A row that failed
+  and was fixed needs a later round that re-graded it (`round:` higher), not
+  your note that it is fixed now. `verdict:` is `PASS` on the LATEST round.
 - **No quality score sits under its floor.** Product depth, functionality,
-  design ≥ 2 (design N/A for non-UI work); code quality ≥ 1. Below a floor is a FAIL whatever the Verdict
-  line says. Round 3 still failing is an escalation to the human, not done.
+  design >= 2 (design N/A for non-UI work); code quality >= 1. Below a floor
+  is a FAIL whatever the Verdict line says. Round 3 still failing is an
+  escalation to the human, not done.
+- **It binds a clean commit.** Read `commit:` and `dirty:`. `dirty: true`
+  means the tree had uncommitted changes when it was taken — commit, then
+  have the verdict re-taken as the next round.
 
 Pure internal refactor / no user-visible surface changed? Skip this step —
 but say so explicitly in your final report rather than silently omitting it.
 
 -------------------------------------------------------------------------------
-2b. AI WORK — EVAL GATE, GOLDEN CASES, HUMAN FEEDBACK
+2b. PRODUCT CLAIMS — STILL TRUE?
 -------------------------------------------------------------------------------
 
-Skip if this task touched no prompt, model, chain, retrieval, or agent. If it
-did, run
-
-    brain verify --stage evals
-
-and hold all four of the following — read the `brain-ai` skill (`brain playbook ai` if skills are unavailable) for the
-reasoning:
-
-- **The suite was re-run after your LAST edit**, not three edits ago. Report
-  the real before/after numbers, not "it improved." `brain evals` marks a
-  suite `stale` when a prompt it points at changed after the last run.
-- **No frozen regression case is failing.** These are absolute: a red frozen
-  case blocks done regardless of how the aggregate moved, and the aggregate
-  must be inside its tolerance band rather than merely "close."
-- **Every bug you fixed this session exists as a new frozen case** in the
-  golden set (`brain evals golden add ... --frozen`, or
-  `brain evals golden freeze <suite> <case-id>`). Fixing a failure without
-  encoding it means the next prompt rewrite is free to reintroduce it, and it
-  will.
-- **Human feedback on eval output has been answered.** If a human commented on
-  prompts or eval results and nothing changed in the prompt OR the golden set
-  in response, the loop is open and the task is not done. Answering means a
-  concrete change or an explicit, written "not doing this, because —" — not
-  silence.
-
-No suite exists for the prompt you changed? Say that plainly in the final
-report as a known gap. Do not report the change as verified.
-
--------------------------------------------------------------------------------
-2c. PRODUCT CLAIMS — STILL TRUE?
--------------------------------------------------------------------------------
-
-Skip if the approved plan had no product brief (internal work). Otherwise hold three claims — the success metric actually observed, the non-goals held, the shipped UI matching the approved mockups. Read `references/product-claims.md` (`brain playbook done --ref product-claims`) before skipping this step.
+Skip if the approved plan had no product brief (internal work). Otherwise hold three claims — the success metric actually observed, the non-goals held, the shipped UI matching the approved mockups. Read `references/product-claims.md` before skipping this step.
 
 -------------------------------------------------------------------------------
 3. HARNESS INVARIANTS
@@ -110,9 +86,9 @@ Skip if the approved plan had no product brief (internal work). Otherwise hold t
 
     brain check
 
-Every row must pass — feature-list validity, the one-in-progress policy, doc
-paths resolving, dependency refs, plan/review file integrity, verification
-docs having a Verdict line. Exits 1 on any failure. Fix and re-run; do not
+Every row must pass — database integrity, foreign keys, the search index,
+cross-entity rules (the one-in-progress policy, verification and task links),
+and plan/shot file hashes. Exits 1 on any failure. Fix and re-run; do not
 report done over a failing `brain check`.
 
 -------------------------------------------------------------------------------
@@ -120,13 +96,17 @@ report done over a failing `brain check`.
 -------------------------------------------------------------------------------
 
 For every path your diff touched, name the brain doc that owns it (a rules
-doc, a codebase doc, the feature's own `<slug>.md`) and confirm it still
-describes reality:
+doc, a recipe, a codebase doc, the feature's own doc) and confirm it still
+describes reality: find it with `brain search "<term>" --kind doc` or
+`brain docs list --section rules`, read it with
+`brain docs view <section>/<name> --full`.
 
-- Changed how something behaves or is structured? The owning rules/codebase
-  doc should say so now, not what it said before you started.
-- Changed a tracked feature's behavior? Its `<slug>.md` should reflect that
-  change.
+- Changed how something behaves or is structured? The owning doc should say so
+  now, not what it said before you started. Rewrite it with
+  `brain docs set <section> <name> --from <file>` (rules and recipes included).
+- Changed a tracked feature's behavior? Its doc should reflect that change:
+  `brain docs set features <slug> --from <file>`; confirm with
+  `brain features view <slug>`.
 
 Flag, explicitly, any changed path whose owning doc you did NOT update — do
 not let it pass silently as "probably fine."
@@ -135,18 +115,20 @@ not let it pass silently as "probably fine."
 5. CLOSE STATE
 -------------------------------------------------------------------------------
 
-Everything written in this step follows the `brain-write` skill (`brain playbook write` if skills are unavailable) — it owns the
+Everything written in this step follows the `brain-write` skill — it owns the
 slots and the register for each artifact below.
 
 - Final step of record: `brain runs append <slug> --step "..." --observed
-  "..."` — the last verbatim entry in this task's deep run-note record.
+  "..." [--run <name>]` — the last verbatim entry in this task's run note.
 - Checkpoint: `brain progress add --summary "<what shipped>" --next "<what's
-  next, if anything>"` — closes the rolling cursor for this session.
-- Feature actually done, not just this task? `brain ship <slug> --evidence
-  "<from real output — a verify result, a verdict line>"` — this single
-  command flips status to shipped, checkpoints, and runs `brain check` itself,
-  so parts of steps 3 and 5 above happen again as part of shipping. Never
-  compose `--evidence` from a sentence you made up to satisfy the flag.
+  next, if anything>" --feature <slug> [--run <name>]` — closes the rolling
+  cursor for this session (summary <= 200 chars).
+- Feature actually done, not just this task? `brain features ship <slug>
+  --evidence "<from real output — a verify result, a verdict line>"` — refused
+  (exit 1) unless the latest verification is PASS and no tasks are open, and it
+  writes its own checkpoint. Never compose `--evidence` from a sentence you
+  made up to satisfy the flag.
+- PR opened? Record it: `brain features set <slug> --pr <url>`.
 
 -------------------------------------------------------------------------------
 6. DEFINITION OF DONE — restated
@@ -154,26 +136,22 @@ slots and the register for each artifact below.
 
 A task is done only when ALL of the following are true, not "mostly true":
 
-- [ ] Implementation matches the task as framed at kickoff
-      (`brain playbook start`)
-- [ ] `brain verify` green — every declared check, not just the ones you
+- [ ] Implementation complete, matching the task as framed at kickoff (the
+      `brain-start` skill)
+- [ ] `brain verify run` green — every declared check, not just the ones you
       remembered to run
-- [ ] Feature verification doc produced, if user-visible work — or
+- [ ] Independent verification PASS (user-visible work) — a fresh-context
+      verifier, or declared `self-verified — <reason>`; every acceptance row
+      PASS; quality floors met; a clean commit (`dirty:` not true) — or
       explicitly marked N/A with a reason
-- [ ] That verification was independent (fresh-context verifier), or
-      declared `self-verified — <reason>`; every acceptance row ✅; no
-      quality score under its floor
-- [ ] AI work only: suite re-run after the last edit, no frozen case failing,
-      every fixed bug encoded as a new frozen case, human eval feedback
-      answered — or the whole block explicitly marked N/A
 - [ ] User-facing work only: the plan's success metric observed (or its
       measurement date named), non-goals held, and shipped UI reconciled
       against the approved mockups — or explicitly marked N/A
 - [ ] `brain check` — all harness invariants pass
-- [ ] Every changed path's owning brain doc updated, or explicitly flagged as
-      not
-- [ ] Feature status flipped (`brain ship` / `set-status`) if the feature
-      itself is done
+- [ ] Feature doc updated, and every changed path's owning rules/recipes/
+      codebase doc updated or explicitly flagged as not
+- [ ] Feature shipped (`brain features ship`) if the feature itself is done,
+      and the PR recorded
 - [ ] Run note closed, progress checkpoint written
 
 If anything above is unmet, do not declare the task done — say exactly what's

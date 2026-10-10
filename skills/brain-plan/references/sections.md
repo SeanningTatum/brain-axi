@@ -6,7 +6,7 @@
 What it's for: instant orientation — title, when, which feature this plan is
 for, the tier you chose, and where the review stands right now (draft /
 in-review / reviewed, which round). Pull the status/round values from
-"brain plans view <slug>" if this plan already exists, otherwise start at
+`brain plans view <slug>` (read `status:` and `rounds:`) if this plan already exists, otherwise start at
 draft, round 0.
 
 The tier belongs here and nowhere else. Stating it makes the scope of the
@@ -45,7 +45,7 @@ technical plan exists. Problem + evidence, the user and their job, one success
 metric with a number, non-goals, scope tiers (thin / complete / gold), and
 prior art. Written afterwards it is a justification, not a decision.
 
-Read `brain playbook product` and follow it — that playbook owns this section
+Read the `brain-product` skill and follow it — it owns this section
 and section 7. Skip both entirely for internal refactors, dependency bumps,
 and pure infrastructure. If you are unsure whether the change is user-facing,
 it is: someone invokes it, reads its output, or sees it.
@@ -58,8 +58,8 @@ without forcing another review round.
 4. CONTEXT — cite brain memory
 -------------------------------------------------------------------------------
 What it's for: ground the plan in what already happened. Before writing this
-section, actually run "brain plans", "brain progress", and "brain features
-view <slug>" and pull real slugs/dates/quotes in — do not paraphrase from
+section, actually run `brain plans list`, `brain progress list`, and `brain features
+view <slug>` and pull real slugs/dates/quotes in — do not paraphrase from
 memory. Name the prior plan slug, the last checkpoint date + summary, and the
 relevant feature's current status.
 
@@ -90,7 +90,7 @@ success), and a user-journey flow diagram — what the PERSON does, as opposed
 to section 12's golden path, which is what the system does. Layout variants
 that are genuinely a coin flip become decision cards here, side by side.
 
-Read `brain playbook ux` and follow it — that playbook owns this section and
+Read the `brain-ux` skill and follow it — it owns this section and
 ships the wireframe CSS kit that belongs in section 0's style block. Skip this
 section when nothing visual changes; a CLI's output SHAPE is a product surface
 but belongs in the product brief, not here.
@@ -116,5 +116,5 @@ Same markup as section 8 (decision cards, radio groups, tradeoff tables,
   options and takes no position is the planner outsourcing its job to the
   reviewer.
 
-`brain playbook product` section 7 has the full standard and a worked card.
+The `brain-product` skill (section 7) has the full standard and a worked card.
 

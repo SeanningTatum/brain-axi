@@ -4,8 +4,8 @@ description: "Use whenever writing anything into the brain — progress checkpoi
 ---
 > CLI note: examples below say `brain <cmd>`. If `brain` is not on PATH, run `npx -y brain-axi <cmd>` instead.
 
-WRITTEN RECORD PLAYBOOK
-=======================
+WRITTEN RECORD
+==============
 
 One rule carries everything below: **the record is reference, not release
 notes.**
@@ -24,7 +24,7 @@ the facts out of it. A checkpoint written as slots hands them over.
 1. THE DEFECT, CONCRETELY
 -------------------------------------------------------------------------------
 
-Real, from a template repo's progress.md:
+Real, from a template repo's progress log:
 
     ## 2026-08-06 — Released v1.8.0 'Your Sub-Agents Follow You To Kimi'
     (squash 2fac879, PR #24 squash-merged). The ten .claude/agents/ operators
@@ -73,8 +73,8 @@ the load-bearing mechanism buried mid-clause.
   invariant worth asserting".
 - **Quote command output; never paraphrase it.** "301/301 tests, exit 0" is
   evidence. "tests pass" is a claim. This is the same rule
-  the `brain-execute` skill (`brain playbook execute` if skills are unavailable) applies to every --observed string, and it applies
-  to prose for the same reason.
+  the `brain-execute` skill applies to every `--observed` string, and it
+  applies to prose for the same reason.
 - **Aphorisms are for the plan artifact, not the record.** A plan argues; a
   record reports. The sentence you are proud of usually belongs in the plan.
 
@@ -96,50 +96,77 @@ Three tests, applied line by line before you write it down:
   pays for itself by the third use.
 
 The environment is a source of truth too. A doc that restates what
-`brain features` or a config file already reports is a copy that can go stale;
+`brain features list` or a config file already reports is a copy that can go stale;
 cache only what the reader cannot look up.
 
 -------------------------------------------------------------------------------
 4. SLOTS PER ARTIFACT
 -------------------------------------------------------------------------------
 
---- 4.1 CHECKPOINT (progress add) ---
+Everything below lands in brain.db through `brain` — there are no markdown
+files to open or edit inside `.brain/`.
+
+--- 4.1 CHECKPOINT (`brain progress add`) ---
 
 The rolling cursor. One line of summary, hard — `brain progress add` refuses a
-summary over 200 characters, because the file's own format has always
-documented a one-line summary and prose expands to fill whatever it is given.
+summary over 200 characters (SUMMARY_TOO_LONG; `--clip` truncates instead, but
+write the short line), because prose expands to fill whatever it is given.
 
     --summary  <what changed, in one line — the headline, not the story>
     --next     <the single next concrete action, or the open items>
+    --feature  <slug>    --run <run-note name>   (link the deep record)
 
+Detail that does not fit one line goes in `--body` / `--body-from <file>`.
 Verbatim command output does NOT belong here. It belongs in the run note.
 
---- 4.2 RUN-NOTE STEP (runs append) ---
+Architectural shifts get a checkpoint too. If the shift is lasting — someone
+will need to know it in a month — also write it as a doc:
+`brain docs set architecture <name> --from <file>`.
+
+--- 4.2 RUN-NOTE STEP (`brain runs append`) ---
 
 The deep record. This is where verbatim output lives.
 
+    brain runs append <slug> --step "<phase name>" --observed "<quoted output>"
+
     --step      <what you were doing — a phase name, not a sentence>
-    --observed  <what the command actually printed, quoted>
+    --observed  <what the command actually printed, quoted verbatim>
+                (`--observed -` reads it from stdin — pipe long output in)
+    --task <tN> --author <who> --run <name>   (optional; default run is
+                <today>-progress)
 
 If --observed contains a word you wrote rather than read, it is wrong.
+Read steps back with `brain runs view <slug> --run <name>`.
 
---- 4.3 FEATURE DOC ---
+--- 4.3 FEATURE DOC AND RULES (`brain docs set`) ---
 
-Sections are fixed by the template. Two failure modes worth naming: a Purpose
-that restates the feature name, and a How It Works that narrates the diff
-instead of describing the runtime. Write it for someone who will read it
-BEFORE touching the code, not someone reviewing your change.
+A feature's doc: `brain docs set features <slug> --from <file>` (or stdin);
+`brain features view <slug>` shows it. A rule or recipe is the same call with
+section `rules` / `recipes`: `brain docs set rules <name> --from <file>`.
+Write the file in a scratch path, not in the repo; the doc lives in the brain.
 
-The changelog table takes one row per behaviour change: date, type, and what
-changed — with the evidence, not the adjective.
+Two failure modes worth naming: a Purpose that restates the feature name, and
+a How It Works that narrates the diff instead of describing the runtime. Write
+it for someone who will read it BEFORE touching the code, not someone
+reviewing your change. A rule states the constraint and the reason it exists;
+a violation should be checkable.
 
---- 4.4 VERIFICATION DOC ---
+Keep a short changelog table in the doc: one row per behaviour change — date,
+type, and what changed, with the evidence, not the adjective. Re-`set` the
+whole doc to update it.
 
-Owned by the `brain-verify` skill (`brain playbook verify` if skills are unavailable); the register rules here apply to its prose.
-The Verdict line is parsed by `brain check` — write it exactly as that
-playbook specifies and do not editorialize on the same line. One Verdict per
-doc: a re-walk after a FAIL is a new `<date>-rN.md` doc, never a second
-verdict appended to the old one.
+--- 4.4 VERIFICATION VERDICT (`brain verifications add`) ---
+
+Owned by the `brain-verify` skill; the register rules here apply to its prose.
+The verdict is a flag, not a line in the body:
+
+    brain verifications add <slug> --verdict PASS|FAIL|BLOCKED \
+        --body-from <scratch-file.md> [--shot <path>::<caption>]...
+
+One verdict per round: a re-walk after a FAIL is a new `verifications add`
+(rounds number themselves), never an edit to the old one. `brain features
+ship` and `brain check` read the latest verdict, so do not editorialize in the
+flag — put the reasoning in the body.
 
 --- 4.5 COMMIT BODY ---
 
@@ -161,11 +188,11 @@ why this shape, what you rejected, what would break if someone undid it.
 
 Plan artifacts. A plan is persuasion — it argues that a thing is worth
 building, and it is read once, start to finish, by a person deciding. That is
-the opposite job, and the `brain-plan` skill (`brain playbook plan` if skills are unavailable) owns it.
+the opposite job, and the `brain-plan` skill owns it.
 
 If you are unsure which you are writing: a record answers "what happened", a
 plan answers "what should we do". Only one of them is allowed a good sentence.
 
 ## Next
 
-- Used from the `brain-execute` skill (run notes, checkpoints) and the `brain-done` skill (close-out checkpoint, ship evidence, PR record); no successor of its own.
+- Used from the `brain-execute` skill (run notes, checkpoints) and the `brain-done` skill (close-out checkpoint, ship evidence, PR record via `brain features set <slug> --pr <url>`); no successor of its own.

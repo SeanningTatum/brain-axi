@@ -11,7 +11,7 @@ checkable.
   product or running a named command — "a reload keeps the session", not
   "sessions are robust". A criterion nobody could fail is not one.
 - **Each phase states how it will be verified** (a "Verify:" clause). These
-  become the `--verify` lines the execute playbook's contract step agrees
+  become the `--verify` lines (`brain tasks add <slug> --verify ...`) the `brain-execute` skill's contract step agrees
   with an independent verifier before any code.
 - **Stay at product + high-level design.** Constrain the deliverable, not the
   path: no exact function signatures or line-level edits the implementer

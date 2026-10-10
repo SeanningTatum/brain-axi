@@ -1,9 +1,0 @@
-{
-  "$schema": "Machine-readable feature state tracker. Source of truth for status; per-feature MD docs are source of truth for design/runtime.",
-  "updated": "2026-10-10",
-  "policy": {
-    "one_in_progress_at_a_time": true,
-    "definition_of_done": "implementation complete + `brain verify` green + feature doc updated + `brain check` green"
-  },
-  "features": []
-}

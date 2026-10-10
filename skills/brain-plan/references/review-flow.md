@@ -1,8 +1,10 @@
-[brain-plan reference — the review loop in full (moved from the generated skill)]
+[brain-plan reference — the review loop in full]
 
-3. **`npx -y brain-axi review <plan.html>`** — this pops the review UI in the user's
-   browser. The UI shows your plan beside brain memory panels (past plans, timeline,
-   screenshots), so the human reviews with full context.
+3. **`npx -y brain-axi review open <plan.html> --feature <slug>`** — registers the plan
+   in the brain (the plan stays an ordinary repo file, e.g. `plans/<date>-<slug>.html`)
+   and pops the review UI in the user's browser. The UI shows your plan beside brain
+   memory panels (past plans, checkpoints, verifications), so the human reviews with
+   full context. Add `--no-open` to skip launching the browser.
 4. **Immediately run `npx -y brain-axi review poll <plan.html>` and wait for it in the
    foreground of this same turn.** It blocks until the human annotates and clicks Send —
    that is the point. Do not background-and-forget it, do not skip it, do not end your
@@ -19,10 +21,10 @@
 
 Rules:
 
-- If a poll response shows `ended_by: user` (or `next_step` says the user ended it): **stop polling, do not reopen the browser**, apply any remaining feedback, and report the outcome in the conversation. Only reopen with `review <plan.html> --reopen` if the user explicitly asks to resume.
+- If a poll response shows `ended_by: user` (or `next_step` says the user ended it): **stop polling, do not reopen the browser**, apply any remaining feedback, and report the outcome in the conversation. Only reopen with `npx -y brain-axi review open <plan.html> --reopen` if the user explicitly asks to resume.
 - If a poll response carries `layout_warnings`, fix any `severity: error` entry and wait for the next poll to confirm a clean audit; if the SAME warning comes back `persistent: true`, proceed and mention it to the human instead of looping.
 - A poll's DOM snapshot is a compact outline, not the raw page — it prints as `snapshot_chars: N` by default; pass `--snapshot` to see the full outline block only when you actually need it.
-- `npx -y brain-axi review end <plan.html>` — end the session yourself once the plan is fully approved
-- `npx -y brain-axi shots add <img> --feature <slug> --step <NN-name>` — attach a screenshot to a feature (`--scope <plan-or-feature>` is the legacy form)
-- `npx -y brain-axi plans` / `plans view <slug>` — see past plan artifacts and their review rounds. Each round prints a `snapshot:` path (`plans/<slug>/vN.html`) — the FROZEN copy of the artifact as it stood at that round. A snapshot is written for every round, so the newest one is NOT automatically the approved one: the approved snapshot — the FROZEN copy the human approved — is the one for the round that ended the review (`ended by` in the round header). `plans view` names it for you in its `help:` line, and says so explicitly when no round has ended yet. When verifying a feature whose plan carried wireframes, compare the shipped UI against that approved snapshot, never against the live artifact path (the agent has been editing it); record each difference in the verification doc's mockup-reconciliation table per `playbook verify` 5b.
-- `npx -y brain-axi timeline` — merged history across checkpoints, run notes, plan reviews, and verifications
+- `npx -y brain-axi review end <plan.html>` — end the session yourself once the plan is fully approved. Headless/CI approval, with no browser session: `npx -y brain-axi review end <plan.html> --approved-by <who>` records an approval round and marks the plan approved.
+- Screenshots are not attached to the plan. Evidence screenshots belong to a verification: `brain verifications add <slug> --verdict PASS --body-from <file> --shot <path>::<caption>` (see the `brain-verify` skill).
+- `npx -y brain-axi plans list` / `plans view <slug>` — past plans and their review history. `plans view` prints `file`, `sha256`, `status`, `approved_by`, `rounds` (round, at, ended_by, prompts) and the prompts. The registered plan's approved round (file + `sha256`) is the FROZEN copy the human approved; `brain check` fails if the file's hash no longer matches, so after approval stop editing the file. When verifying a feature whose plan carried wireframes, compare the shipped UI against that approved plan, never against a copy the agent has since edited; record each difference in the verification verdict's mockup-reconciliation table (see the `brain-verify` skill).
+- Prior art and history for a feature: `brain runs view <slug>`, `brain progress list --feature <slug>`, `brain verifications list --feature <slug>`, `brain plans list --feature <slug>`, and `brain search "<q>"`.
