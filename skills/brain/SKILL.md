@@ -9,13 +9,13 @@ description: "Use in any repo with a .brain/ directory — orient on project sta
 
 ## No `.brain/` yet?
 
-`npx -y brain-axi init` scaffolds a minimal `.brain/` (HARNESS.md, feature_list.json, progress.md, verify.json, doc stubs); `--agents-md` also writes an AGENTS.md pointer + CLAUDE.md symlink; `--state-only --dir <repo> --yes` wipes cloned state but keeps the docs. It never clobbers an existing `.brain/` (exit 1).
+`npx -y brain-axi init` creates `.brain/brain.db` (SQLite, gitignored; needs Node >= 24) and seeds the first checkpoint with the real branch. It refuses an existing brain, and a markdown-era `.brain/` (LEGACY_BRAIN: pin `npx -y brain-axi@0.2.0` there).
 
 ## Orient (start of session)
 
-- `npx -y brain-axi` — dashboard: feature counts, in-progress feature, last checkpoint, open review sessions
-- `npx -y brain-axi progress` — latest checkpoint in full (branch, next step)
-- `npx -y brain-axi features` — feature list with status; `features view <slug>` for the doc
+- `npx -y brain-axi` — dashboard: feature counts, in-progress feature, last checkpoint, next step, open review sessions
+- `npx -y brain-axi progress list` — recent checkpoints (branch, next, linked run)
+- `npx -y brain-axi features list` — feature list with status; `features view <slug>` for tasks, verdict and doc
 
 Then use the phase skill for what you are about to do (below).
 
@@ -34,25 +34,19 @@ Then use the phase skill for what you are about to do (below).
 | `brain-done` | before declaring complete / opening a PR: verify, check, coherence, ship |
 | `brain-write` | writing anything into the brain: checkpoints, run notes, docs, commit bodies |
 
-If skills are unavailable, `brain playbook <id>` prints the same text (`brain playbook` lists them; `--ref <topic>` prints a reference).
-
 ## Plans: review by default
 
 A request for a plan, proposal, design, or approach review is never answered in chat. Use `brain-plan`: write ONE HTML artifact, `npx -y brain-axi review <plan.html>`, then `npx -y brain-axi review poll <plan.html>` in the foreground until the human approves (`review end` after). `plans view <slug>` prints each round's `snapshot:` — verify shipped UI against the approved one, the FROZEN copy the human approved, never the live file.
 
 ## Command map (every command; `npx -y brain-axi <cmd>`)
 
-- `npx -y brain-axi init` — scaffold `.brain/`. `npx -y brain-axi setup --app claude|codex|opencode` — SessionStart hook (idempotent). `npx -y brain-axi context` — that hook's compact block; silent outside a brain. `npx -y brain-axi skill [--check]` — print this router / validate the skills tree + plugin files.
-- `features [view <slug>]`, `features set-status <slug> --status planned|in-progress|shipped|blocked|cut`, `features index [--write]` — tracker; one-in-progress policy; `shipped` needs `--evidence`.
-- `tasks <slug>`, `tasks add|claim|done|view <slug> ...`, `brief <slug> <task-id>` — task slices; a worker starts with `brief`.
-- `progress [add --summary "..." --next "..."]` — checkpoints (summary capped at 200 chars). `runs [view <name>|append <slug> --step "..." --observed "..."]` — deep run notes, verbatim.
-- `docs [<section>|view <section/doc>]`, `search "<q>" [--section rules]` — rules, recipes, codebase docs.
-- `evals [run <suite>|golden ...]` — AI eval suites; `verify --stage evals` is the AI gate.
-- `check [--strict]` — harness invariants (exit 1 on fail). `verify [--stage bootstrap|baseline|verify] [--only <name>] [--feature <slug>]` — run `.brain/verify.json` checks. `metrics` — gate effectiveness.
-- `review <plan.html> [--feature <slug>]`, `review poll|end`, `plans [view <slug>]`, `timeline` — human plan review and history.
-- `shots add <img> --feature <slug> --step NN-name`, `shots [<feature>]`, `shots notes <feature>` — screenshot evidence.
-- `verifications [<slug>|view <slug> <date>]`, `receipt <slug> --verified-by <v> --implemented-by <i>` — verdict docs and commit-bound receipts.
-- `ship <slug> --evidence "..."`, `pr <slug> --url <url>`, `watch <slug>` — close a feature, record the PR, live dashboard.
-- `playbook [<id> [--ref <topic>]]` — the phase-skill texts as a CLI fallback.
+- `init` — create brain.db. `context` — the SessionStart hook's compact block; silent outside a brain. `export [--out f]` / `import <file>` — TOON backup ↔ an empty brain.
+- `features list|view|add|set|ship` — tracker; one in-progress at a time; `set --pr <url>` records the PR; `ship <slug> --evidence "..."` needs a PASS verification.
+- `tasks list|view|add|claim|set <slug> ...` — task slices; a worker starts with `tasks view <slug> <task>` (the brief).
+- `progress list|add --summary "..." --next "..." [--run <name>]` — checkpoints (summary ≤ 200 chars). `runs view|append <slug> --step "..." --observed "..."` — verbatim run steps.
+- `docs list|view|set|rm`, `search "<q>" [--kind doc]` — rules, recipes, codebase docs; full-text search over everything.
+- `check` — integrity + cross-entity rules (exit 1 on fail). `verify list|add|run [--stage bootstrap|baseline|verify] [--only <name>]` — declared project checks.
+- `review open|poll|end <plan.html>` (`end --approved-by <who>` headless), `plans list|view` — human plan review and history.
+- `verifications list|view|add <slug> --verdict PASS|FAIL|BLOCKED --body-from <f> [--shot <img>]` — verdicts stamped with the commit. `watch <slug>` — live dashboard.
 
-Record state with `brain-write`; never paste verbatim output into `progress.md` (it goes to `runs append --observed`).
+Record state with `brain-write`; never paste verbatim output into a checkpoint (it goes to `runs append --observed`).
