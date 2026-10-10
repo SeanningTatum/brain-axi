@@ -174,7 +174,12 @@ if (cmd === "gen") {
   const out = path.join(evalDir, "results", `live-${Date.now()}`);
   fs.mkdirSync(out, { recursive: true });
   const jsonFile = path.join(out, "aggregate-result.json");
-  const r = spawnSync("claude", ["plugin", "eval", stage, "--eval-dir", "evals-plugin", "--scaffold", "--ablation", "with-without", "--runs", "1", "-j", "4", "--threshold", "0", "--trust-plugin", "--no-publish", "--json", jsonFile], { cwd: stage, stdio: ["ignore", "ignore", "inherit"] });
+  let r;
+  try {
+    r = spawnSync("claude", ["plugin", "eval", stage, "--eval-dir", "evals-plugin", "--scaffold", "--ablation", "with-without", "--runs", "1", "-j", "4", "--threshold", "0", "--trust-plugin", "--no-publish", "--json", jsonFile], { cwd: stage, stdio: ["ignore", "ignore", "inherit"] });
+  } finally {
+    fs.rmSync(stage, { recursive: true, force: true });
+  }
   if (r.status !== 0 || !fs.existsSync(jsonFile)) die(`claude plugin eval failed (exit ${r.status})`);
   const env = convert(jsonFile, path.join(suiteDir, "split-runs.jsonl"));
   process.stdout.write(JSON.stringify({ cases: env.cases, usage: env.usage }) + "\n");
