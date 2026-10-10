@@ -4,6 +4,37 @@ All notable changes to `brain-axi` are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Harness and brain-state
 shifts for this repo's own `.brain/` are logged separately in `.brain/CHANGELOG.md`.
 
+## [Unreleased] — 2026-10-10
+
+**Why:** the method now loads itself. The ten playbooks were CLI output an agent had to remember
+to ask for; they are now skills that trigger by description and hand off to each other, shipped
+as a Claude Code plugin. Plan: `plans/2026-10-09-skills-plugin-sqlite.html` (phases 1-3).
+
+### Added
+
+- **Claude Code plugin `brain`.** `/plugin marketplace add SeanningTatum/brain-axi`, then
+  `/plugin install brain@brain-axi`. Ships 11 skills and a SessionStart hook that runs the
+  plugin's own `bin/brain.js context` (no npx, no network).
+- **Skills `skills/brain` (router) + `skills/brain-<id>`** for start, grill, plan, product, ux, ai,
+  execute, verify, done, write. Each SKILL.md is capped (router 6144 B, phase 10240 B), ends in a
+  `## Next` handoff, and keeps long material in `references/`.
+- **`brain playbook <id> --ref <topic>`** prints a skill reference; the index lists refs.
+- **Eval `skill-routing`** (`evals-plugin/`, run by `claude plugin eval`): 31/34 = 0.912 with the
+  plugin vs 0.294 without; held-out 8/8.
+
+### Changed
+
+- **Playbook text lives in `skills/`.** `lib/review/playbooks.js` is a loader; `brain skill`
+  prints the router; `brain skill --check` validates the skills tree and the plugin files
+  (frontmatter, caps, handoffs, refs, plugin version = package version).
+- **`brain context`** adds a `skills:` pointer and is held to 600 bytes.
+- **`brain setup --app claude`** is plugin-aware: with the plugin enabled it removes the
+  duplicate settings hook instead of installing one.
+
+### Removed
+
+- `.claude/skills/brain/` (generated copy), `.claude/skills/init-brain/`, `brain skill --write`.
+
 ## [Unreleased] — 2026-09-30
 
 **Why:** this release separates the evaluator from the generator, following Anthropic's

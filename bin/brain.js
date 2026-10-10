@@ -3842,6 +3842,7 @@ function cmdSearch(argv) {
 }
 
 // Compact dashboard for session-start hooks. Ruthlessly minimal.
+const CONTEXT_CAP = 600; // bytes — runs on every session start
 function cmdContext(argv) {
   const { flags } = parseArgs(argv, {}, "context");
   if (flags.help)
@@ -3860,15 +3861,26 @@ function cmdContext(argv) {
     ),
     kv("in-progress", inProgress.length ? inProgress.map((f) => f.slug).join(", ") : "none"),
   ];
+  // Free text, clipped below so the block stays within CONTEXT_CAP.
+  const free = {};
   if (progress.entries.length) {
     const top = progress.entries[0];
-    lines.push(kv("last-checkpoint", `${top.date} — ${top.summary}`));
+    free["last-checkpoint"] = `${top.date} — ${top.summary}`;
     const next = top.body.match(/^- next: (.+)$/m);
-    if (next) lines.push(kv("next", next[1]));
+    if (next) free.next = next[1];
   }
-  lines.push(kv("skills", "use the brain-* skills (brain, brain-start, brain-plan, ...); else `brain playbook <id>`"));
-  lines.push(...toonList("help", ["Run `brain` for the full dashboard, `brain progress` for the latest checkpoint"]));
-  print(lines);
+  const tail = [
+    kv("skills", "use the brain-* skills (brain, brain-start, brain-plan, ...); else `brain playbook <id>`"),
+    ...toonList("help", ["Run `brain` for the full dashboard, `brain progress` for the latest checkpoint"]),
+  ];
+  const render = () => [...lines, ...Object.entries(free).map(([k, v]) => kv(k, v)), ...tail];
+  for (const key of ["next", "last-checkpoint"]) {
+    const over = Buffer.byteLength(render().join("\n")) - CONTEXT_CAP;
+    if (over <= 0 || !free[key]) continue;
+    const chars = [...free[key]];
+    free[key] = chars.slice(0, Math.max(20, chars.length - over - 8)).join("") + "…";
+  }
+  print(render());
 }
 
 // ---------------------------------------------------------------------------
@@ -5203,7 +5215,13 @@ function brainPluginInstalled() {
   try {
     const data = JSON.parse(fs.readFileSync(path.join(dir, "plugins", "installed_plugins.json"), "utf8"));
     const plugins = data && typeof data.plugins === "object" && data.plugins ? data.plugins : {};
-    return Object.keys(plugins).some((k) => k.startsWith("brain@"));
+    const keys = Object.keys(plugins).filter((k) => k.startsWith("brain@"));
+    // Installed but disabled (enabledPlugins[key] === false) supplies no hook.
+    let enabled = {};
+    try {
+      enabled = JSON.parse(fs.readFileSync(path.join(dir, "settings.json"), "utf8")).enabledPlugins || {};
+    } catch {} // no/unreadable user settings: nothing is disabled
+    return keys.some((k) => enabled[k] !== false);
   } catch {
     return false;
   }

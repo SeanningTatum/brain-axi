@@ -14,3 +14,8 @@ call. The CLI stays the only thing that reads or writes state. Plan: `plans/2026
 
 ## Non-goals
 codex/opencode skill install; adopting obra/superpowers; any storage change (see sqlite-engine).
+
+## Deviations from the plan
+- No plugin `commands/` dir: plugin skills are already slash-invocable (`/brain:brain-plan`). The
+  repo's `.claude/commands/` stay — they are repo-dev tooling that dogfoods the local build, not product.
+- The `skill-routing` eval moved after phase 3 (it needs the installed plugin to measure triggering).

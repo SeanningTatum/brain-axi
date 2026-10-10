@@ -42,7 +42,7 @@ A request for a plan, proposal, design, or approach review is never answered in 
 
 ## Command map (every command; `npx -y brain-axi <cmd>`)
 
-- `npx -y brain-axi init` — scaffold `.brain/`. `npx -y brain-axi setup --app claude|codex|opencode` — SessionStart hook (idempotent). `npx -y brain-axi context` — that hook's compact block; silent outside a brain. `npx -y brain-axi skill [--write|--check]` — print/regenerate/validate this skill tree.
+- `npx -y brain-axi init` — scaffold `.brain/`. `npx -y brain-axi setup --app claude|codex|opencode` — SessionStart hook (idempotent). `npx -y brain-axi context` — that hook's compact block; silent outside a brain. `npx -y brain-axi skill [--check]` — print this router / validate the skills tree + plugin files.
 - `features [view <slug>]`, `features set-status <slug> --status planned|in-progress|shipped|blocked|cut`, `features index [--write]` — tracker; one-in-progress policy; `shipped` needs `--evidence`.
 - `tasks <slug>`, `tasks add|claim|done|view <slug> ...`, `brief <slug> <task-id>` — task slices; a worker starts with `brief`.
 - `progress [add --summary "..." --next "..."]` — checkpoints (summary capped at 200 chars). `runs [view <name>|append <slug> --step "..." --observed "..."]` — deep run notes, verbatim.
