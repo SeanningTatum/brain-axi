@@ -406,6 +406,39 @@ test("review: the CLI records a re-delivered batch once even when the first deli
   ok(brain(["review", "poll", "plans/auth.html", "--timeout-ms", "1200"]), /^status: timeout$/m);
 });
 
+test("review: a lost-ack user-end batch re-delivered after --reopen does not close the reopened session", async (t) => {
+  const { base, brain, ok, post } = await setup(t);
+  const key = urlOf(ok(brain(["review", "open", "plans/auth.html", "--no-open"])).out).split("/").pop();
+  assert.equal((await post("/api/feedback", { key, end: true, prompts: [{ tag: "message", prompt: "last words" }] }, { origin: base })).status, 200);
+  const lost = await (await fetch(`${base}/api/poll?key=${key}`)).json(); // fetched, never acked
+  assert.equal(lost.session_ended, true);
+  ok(brain(["review", "open", "plans/auth.html", "--no-open", "--reopen"]), /^ {2}status: open$/m);
+  const poll = ok(brain(["review", "poll", "plans/auth.html", "--timeout-ms", "5000"]), /^redelivered: true$/m);
+  assert.match(poll.out, /last words/);
+  assert.doesNotMatch(poll.out, /^ended_by: user$/m);
+  ok(brain(["plans", "view", "auth"]), /^session_open: true$/m);
+});
+
+test("watch: replacing a recorded shot file (no brain.db write) sends context-update", async (t) => {
+  const { base, brain, ok, brainDir } = await setup(t);
+  fs.mkdirSync(path.join(brainDir, "shots"), { recursive: true });
+  const shot = path.join(brainDir, "shots", "01-login.png");
+  fs.writeFileSync(shot, "v1");
+  ok(brain(["verifications", "add", "auth", "--verdict", "PASS", "--body", "walked", "--shot", ".brain/shots/01-login.png"]));
+  const url = urlOf(ok(brain(["watch", "auth", "--no-open"])).out);
+  const qs = url.slice(url.indexOf("?"));
+  const events = [];
+  const req = http.get(`${base}/watch-events/auth${qs}`, (res) => res.on("data", (c) => events.push(String(c))));
+  t.after(() => req.destroy());
+  await new Promise((r) => setTimeout(r, 600));
+  const count = () => events.join("").split("event: context-update").length;
+  const before = count();
+  fs.writeFileSync(shot, "v2 re-captured");
+  const deadline = Date.now() + 4000;
+  while (count() <= before && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+  assert.ok(count() > before, `no context-update after a shot replace: ${events.join("")}`);
+});
+
 test("review: sessions saved by a pre-0.3 server (state.json) survive the upgrade, user-end latch included", async (t) => {
   const { dir, state, brain, ok } = await setup(t);
   const file = path.join(dir, "plans", "auth.html");

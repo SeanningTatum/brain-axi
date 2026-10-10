@@ -291,14 +291,20 @@ const context = {
       ...toonList("help", ["Run `brain` for the dashboard, `brain progress list` for recent checkpoints"]),
     ];
     const render = () => [...head, ...Object.entries(free).map(([k, v]) => kv(k, v)), ...tail];
+    const overBy = () => Buffer.byteLength(render().join("\n") + "\n") - CONTEXT_CAP;
     for (const key of ["next", "last-checkpoint", "in-progress"]) {
-      const over = Buffer.byteLength(render().join("\n") + "\n") - CONTEXT_CAP;
+      const over = overBy();
       if (over <= 0 || !free[key]) continue;
       const chars = [...free[key]];
       free[key] = chars.slice(0, Math.max(20, chars.length - over - 8)).join("") + "…";
     }
+    // Multi-byte text can keep it over (≥20 chars per field): drop the
+    // optional lines, then shorten the pins line to its bare count.
+    for (const key of ["next", "last-checkpoint"]) if (overBy() > 0) delete free[key];
+    const pinAt = head.findIndex((l) => l.startsWith("pins: "));
+    if (overBy() > 0 && pinAt !== -1) head[pinAt] = kv("pins", `${pins.length} sent open — brain verifications view <feature>`);
     // A very long brain path (deep worktree) still fits: keep its tail.
-    const over = Buffer.byteLength(render().join("\n") + "\n") - CONTEXT_CAP;
+    const over = overBy();
     if (over > 0) {
       const chars = [...brainPath];
       head[0] = kv("brain", "…" + chars.slice(Math.min(chars.length - 1, over + 8)).join(""));
@@ -939,12 +945,16 @@ const plans = {
         const prompts = p.reviews.flatMap((r) =>
           r.prompts.map((x) => ({ round: r.round, tag: x.tag, prompt: ctx.flags.full ? x.prompt : clip(x.prompt) }))
         );
+        const clipped = !ctx.flags.full && p.reviews.some((r) => r.prompts.some((x) => clip(x.prompt) !== x.prompt));
         print([
           ...kvs({ slug: p.slug, title: p.title, file: p.file_path, sha256: p.sha256, feature: p.feature, status: p.status }),
           ...kvs({ approved_by: p.approved_by, session_open: p.session_open }),
           ...toonTable("rounds", p.reviews.map((r) => ({ ...r, prompts: r.prompts.length })), ["round", "at", "ended_by", "prompts"]),
           ...toonTable("prompts", prompts, ["round", "tag", "prompt"]),
-          ...toonList("help", [`Reopen it for review: brain review open ${p.file_path}`]),
+          ...toonList("help", [
+            ...(clipped ? [`Prompts cut at ${CELL_LIMIT} chars (…): brain plans view ${p.slug} --full`] : []),
+            `Reopen it for review: brain review open ${p.file_path}`,
+          ]),
         ]);
       },
     },
@@ -1345,7 +1355,7 @@ const verifications = {
         'brain verifications add auth --verdict FAIL --body "step 3: 500 on submit"',
       ],
       run(ctx) {
-        const { db, root, mainRoot } = ctx.brain(), { flags } = ctx;
+        const { db, root, mainRoot, brainDir } = ctx.brain(), { flags } = ctx;
         const slug = ctx.pos[0];
         if (flags.body !== undefined && flags["body-from"] !== undefined) usage("pass --body or --body-from, not both", ["brain verifications add --help"]);
         const shots = (flags.shot || []).map((s) => {
@@ -1360,6 +1370,7 @@ const verifications = {
           implementedBy: flags["implemented-by"],
           root,
           mainRoot,
+          brainDir,
           cwd: process.cwd(),
         });
         const help = [];

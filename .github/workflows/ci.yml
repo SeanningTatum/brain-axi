@@ -18,11 +18,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # node:sqlite with FTS5 needs Node 24; pinned to the major so a red run
-      # is attributable to the diff, not to a moving runtime.
+      # node:sqlite with FTS5 needs Node 24; pinned to an exact release (bump
+      # it deliberately) so a red run is attributable to the diff, not to a
+      # moving runtime.
       - uses: actions/setup-node@v4
         with:
-          node-version: "24.x"
+          node-version: "24.18.0"
 
       # Zero dependencies by design — nothing to install. Count declared KEYS:
       # an empty `"devDependencies": {}` left behind by an install/uninstall

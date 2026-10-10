@@ -52,7 +52,8 @@ instead of deleting them; the CLI records the round with that `batch` id, then
 `POST /api/ack`s it, and only the ack deletes the batch. A poll killed before the ack gets
 the same batch again (`redelivered: true`); `plans.addRound({batchId})` skips a batch id
 already recorded for the plan (migration `002`, unique `(plan_id, batch_id)`), so one batch
-is one round. Prompts queued while a batch is in flight ride the next batch. `review end --approved-by <who>` needs no server
+is one round. A re-delivery carries `session_ended` only while the session is still ended:
+after a `--reopen` the old batch's end no longer closes the reopened session. Prompts queued while a batch is in flight ride the next batch. `review end --approved-by <who>` needs no server
 (headless/CI): it records a closing round ended by the approver and sets `approved`.
 Plan snapshots are not written: the plan row's sha256 tracks the file, and `brain check`
 flags a missing or changed plan.
@@ -141,7 +142,9 @@ Poll payloads (wire contract unchanged; `batch` and `redelivered` are additive):
   `PRAGMA data_version` of the server's handle (bumped by any other connection's commit —
   the CLI's writes) and sends `context-update`. The baseline is taken at bind time, and
   every new stream gets one `context-update` so a page that fetched before connecting
-  catches up. Pin writes broadcast directly (they are not in brain.db) — to the feature's
+  catches up. The same tick also compares a size+mtime signature of the brain's recorded
+  shot files, so a shot replaced or deleted with no brain.db write (pins turn superseded,
+  file health changes) still sends `context-update`. Pin writes broadcast directly (they are not in brain.db) — to the feature's
   dashboard and to every review tab on the same brain.
 
 ## Payloads (context.js)

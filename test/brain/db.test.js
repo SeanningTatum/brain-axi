@@ -166,6 +166,33 @@ test("locate: a worktree-local .brain/ never shadows the main checkout's locatio
   assert.ok(!fs.existsSync(path.join(wt, ".brain", "brain.db")));
 });
 
+test("locate: an explicit --brain of the main checkout, from a worktree, keeps the worktree as root", (t) => {
+  const base = tmpDir(t);
+  const main = path.join(base, "main");
+  fs.mkdirSync(main);
+  gitRepo(main);
+  const wt = path.join(base, "wt");
+  git(main, "worktree", "add", "-q", wt, "-b", "wt-branch");
+  const loc = locate(wt, { brain: path.join(main, ".brain") });
+  assert.equal(loc.brainDir, path.join(fs.realpathSync(main), ".brain"));
+  assert.equal(loc.root, fs.realpathSync(wt), "stamps the checkout the caller stands in");
+  assert.equal(loc.worktree, true);
+  // Another repo's brain still resolves against that repo.
+  const other = path.join(base, "other");
+  fs.mkdirSync(other);
+  gitRepo(other);
+  assert.equal(locate(wt, { brain: path.join(other, ".brain") }).root, fs.realpathSync(other));
+});
+
+test("create: an explicit brain under directories that do not exist yet is created", (t) => {
+  const root = gitRepo(tmpDir(t));
+  const b = create(root, { brain: "state/nested/.brain" });
+  t.after(() => close(b.db));
+  assert.equal(b.brainDir, path.join(root, "state", "nested", ".brain"));
+  assert.ok(fs.existsSync(b.dbPath));
+  assert.equal(b.root, root);
+});
+
 function migrationsWith(t, extraSql) {
   const dir = tmpDir(t, "brain-mig-");
   for (const m of loadMigrations()) fs.writeFileSync(path.join(dir, m.name), m.sql);

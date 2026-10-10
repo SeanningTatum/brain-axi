@@ -228,6 +228,60 @@ test("screenshot pins: a long slug and long next still fit context's 600 B; a co
   assert.equal(v2.err, "");
 });
 
+test("context: multi-byte checkpoint text plus a sent pin still fits 600 B", async (t) => {
+  const dir = repoWithBrain(t);
+  const slug = "f".repeat(40);
+  // A long features line (every status, 3-digit counts) + 40-char slugs + emoji.
+  const { openBrain, features, close } = await import("../../lib/brain/index.js");
+  const b = openBrain(dir);
+  for (let i = 0; i < 117; i++) features.add(b.db, { slug: `q${i}`, name: "Q" });
+  for (const [s, st] of [["b1", "blocked"], ["c1", "cut"]]) {
+    features.add(b.db, { slug: s, name: "X" });
+    features.set(b.db, s, { status: st });
+  }
+  close(b.db);
+  ok(brain(dir, ["features", "add", "s1", "--name", "S"]));
+  ok(brain(dir, ["verifications", "add", "s1", "--verdict", "PASS", "--body", "ok"]));
+  ok(brain(dir, ["features", "ship", "s1", "--evidence", "x"]));
+  ok(brain(dir, ["features", "add", slug, "--name", "F"]));
+  ok(brain(dir, ["features", "set", slug, "--status", "in-progress"]));
+  ok(brain(dir, ["progress", "add", "--summary", "😀".repeat(200), "--next", "😀".repeat(500)]));
+  fs.mkdirSync(path.join(dir, ".brain", "shots"), { recursive: true });
+  fs.writeFileSync(path.join(dir, ".brain", "shots", "a.png"), "a");
+  ok(brain(dir, ["verifications", "add", slug, "--verdict", "FAIL", "--body", "x", "--shot", ".brain/shots/a.png"]));
+  const state = path.join(dir, ".review-state");
+  fs.mkdirSync(state);
+  const pin = { id: "p", shot: ".brain/shots/a.png", x: 1, y: 2, note: "n", at: "2026-01-01T00:00:00.000Z", shotSha256: null, sentAt: "2999-01-01T00:00:00.000Z" };
+  fs.writeFileSync(path.join(state, "sessions.json"), JSON.stringify({ sessions: {}, pins: { [`${path.join(dir, ".brain")}::${slug}`]: [pin] } }));
+  const c = ok(brain(dir, ["context"]), /^pins: /m);
+  assert.ok(Buffer.byteLength(c.out) <= 600, `${Buffer.byteLength(c.out)} bytes\n${c.out}`);
+});
+
+test("init --brain under directories that do not exist yet creates them", (t) => {
+  const dir = gitRepo(tmp(t));
+  ok(brain(dir, ["init", "--brain", "state/nested/.brain"]), /^ {2}brain: state\/nested\/\.brain$/m);
+  assert.ok(fs.existsSync(path.join(dir, "state", "nested", ".brain", "brain.db")));
+  ok(brain(dir, ["features", "--brain", "state/nested/.brain"]));
+});
+
+test("plans view: clipped prompts point at --full", async (t) => {
+  const dir = repoWithBrain(t);
+  fs.mkdirSync(path.join(dir, "plans"));
+  fs.writeFileSync(path.join(dir, "plans", "p.html"), "<title>P</title><p>x</p>");
+  const { openBrain, plans, close } = await import("../../lib/brain/index.js");
+  const b = openBrain(dir);
+  plans.upsert(b.db, { file: "plans/p.html", root: dir });
+  plans.addRound(b.db, "p", { prompts: [{ tag: "message", prompt: "short" }], root: dir });
+  close(b.db);
+  assert.doesNotMatch(ok(brain(dir, ["plans", "view", "p"])).out, /--full/);
+  const b2 = openBrain(dir);
+  plans.addRound(b2.db, "p", { prompts: [{ tag: "message", prompt: "long ".repeat(100) + "THE END" }], root: dir });
+  close(b2.db);
+  const v = ok(brain(dir, ["plans", "view", "p"]), /Prompts cut at 160 chars \(…\): brain plans view p --full/);
+  assert.doesNotMatch(v.out, /THE END/);
+  assert.doesNotMatch(ok(brain(dir, ["plans", "view", "p", "--full"]), /THE END/).out, /Prompts cut/);
+});
+
 test("Node < 24: context exits 0 silently; other commands exit 2", { skip: !fs.existsSync(NODE22) && "node 22 not installed" }, (t) => {
   const dir = repoWithBrain(t);
   const c = brain(dir, ["context"], { node: NODE22 });

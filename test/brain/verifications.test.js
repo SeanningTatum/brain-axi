@@ -136,3 +136,23 @@ test("latestAt: each feature's newest verification time, none for unverified fea
   assert.equal(m.get("g"), g1.at);
   assert.equal(m.has("h"), false);
 });
+
+test("a custom brain dir keeps its shots beside its DB (<brainDir>/shots), not .brain/shots", (t) => {
+  const root = tmpDir(t);
+  const b = create(root, { brain: ".state", gitignore: false });
+  t.after(() => close(b.db));
+  features.add(b.db, { slug: "f", name: "F" });
+  fs.mkdirSync(path.join(root, ".state", "shots"), { recursive: true });
+  fs.mkdirSync(path.join(root, ".brain", "shots"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".state", "shots", "a.png"), "a");
+  fs.writeFileSync(path.join(root, ".brain", "shots", "b.png"), "b");
+  const v = verifications.add(b.db, "f", { verdict: "PASS", body: "ok", shots: [".state/shots/a.png"], root, brainDir: b.brainDir });
+  assert.deepEqual(v.shots.map((s) => s.path), [".state/shots/a.png"]);
+  const e = throwsCode(
+    () => verifications.add(b.db, "f", { verdict: "PASS", body: "ok", shots: [".brain/shots/b.png"], root, brainDir: b.brainDir }),
+    "SHOT_OUTSIDE_SHOTS_DIR"
+  );
+  assert.match(e.message, /\.state\/shots\//);
+  assert.equal(verifications.shotsDirHint("f", { root, brainDir: b.brainDir }), ".state/shots/f/");
+  assert.equal(verifications.shotsDirHint("f", { root }), ".brain/shots/f/", "default stays .brain/shots");
+});
