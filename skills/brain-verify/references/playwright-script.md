@@ -17,7 +17,10 @@ throwaway Playwright script YOU scaffold, run, and delete. Scaffolding:
   it *.spec.* and never put it in the e2e/tests dir, so the CI suite can't
   pick it up.
 - Screenshot each asserted step straight into .brain/shots/<slug>/NN-name.png
-  (gitignored), then attach each file to the verdict with
+  (gitignored). In a git worktree, save into the MAIN checkout's
+  .brain/shots/<slug>/ instead (absolute path; every worktree shares that one
+  brain, and a worktree's own .brain/shots/ is refused — the CLI error prints
+  the right dir). Then attach each file to the verdict with
   `brain verifications add ... --shot <path>::<caption>`. Capture on PASS as
   well as FAIL — passing evidence is the point.
 - Delete the script when done. The screenshots and the recorded verdict are the

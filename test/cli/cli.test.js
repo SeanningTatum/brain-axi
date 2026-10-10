@@ -268,6 +268,33 @@ test("features, tasks, runs, verifications, ship: happy path and not-found", (t)
   ok(brain(dir, []), /^in-progress: none$/m);
 });
 
+test("worktree: --shot lands in the main checkout's .brain/shots/; check passes from both checkouts and after removal", (t) => {
+  const base = tmp(t);
+  const main = path.join(base, "main");
+  fs.mkdirSync(main);
+  gitRepo(main);
+  ok(brain(main, ["init"]));
+  ok(brain(main, ["features", "add", "auth", "--name", "Auth"]));
+  const wt = path.join(base, "wt");
+  git(main, "worktree", "add", "-q", wt, "-b", "wt-branch");
+  const mainShots = path.join(main, ".brain", "shots", "auth");
+
+  // The worktree's own .brain/shots/ is refused; the help names the main dir.
+  fs.mkdirSync(path.join(wt, ".brain", "shots", "auth"), { recursive: true });
+  fs.writeFileSync(path.join(wt, ".brain", "shots", "auth", "own.png"), "png");
+  const refused = failsWith(brain(wt, ["verifications", "add", "auth", "--verdict", "PASS", "--body", "x", "--shot", ".brain/shots/auth/own.png"]), 1, "SHOT_OUTSIDE_SHOTS_DIR");
+  assert.ok(refused.out.includes(mainShots + "/"), refused.out);
+
+  fs.mkdirSync(mainShots, { recursive: true });
+  fs.writeFileSync(path.join(mainShots, "form.png"), "png");
+  ok(brain(wt, ["verifications", "add", "auth", "--verdict", "PASS", "--body", "walked it", "--shot", path.join(mainShots, "form.png") + "::the form"]), /shots: 1/);
+  ok(brain(wt, ["verifications", "view", "auth"]), /\.brain\/shots\/auth\/form\.png,the form/);
+  ok(brain(wt, ["check"]), /^ok: true$/m);
+  ok(brain(main, ["check"]), /^ok: true$/m);
+  git(main, "worktree", "remove", "--force", wt);
+  ok(brain(main, ["check"]), /^ok: true$/m);
+});
+
 test("progress add --run links a run note; list shows it (#9)", (t) => {
   const dir = repoWithBrain(t);
   ok(brain(dir, ["features", "add", "auth", "--name", "Auth"]));

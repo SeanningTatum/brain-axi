@@ -108,7 +108,7 @@ POSTs are same-origin guarded: an `Origin`/`Referer` that is present must match 
 | `GET /session/<key>/context` | `planContext` + `{session}` + `execution` (when a feature is bound) |
 | `GET /session/<key>/health` | `{checks}` — `lib/brain` check rows |
 | `GET /session/<key>/asset/<rel>` | files next to the artifact (sandboxed) |
-| `GET /session/<key>/shot/<rel>`, `GET /watch/<f>/shot/<rel>?brain=` | a shot **recorded in brain.db**, served from the repo root (sandboxed) |
+| `GET /session/<key>/shot/<rel>`, `GET /watch/<f>/shot/<rel>?brain=` | a shot **recorded in brain.db**, served from the main checkout (`mainRoot` — shots live in its `.brain/shots/`, shared by every worktree; sandboxed) |
 | `GET /watch/<f>?brain=<abs .brain>` | dashboard page; 404 `{error, code, help}` on a bad brain or unknown feature |
 | `GET /watch/<f>/context?brain=` | `watchContext` |
 | `GET /watch-events/<f>?brain=` | SSE `context-update` |

@@ -35,7 +35,9 @@ implementer and a sub-agent is available, stop and hand this skill to one.
 
 Output is ONE verdict, recorded in brain.db: a markdown body you write to a
 scratch path and pass to `brain verifications add`, plus the screenshots it
-cites (files under `.brain/shots/<slug>/`, gitignored). Tool-agnostic about
+cites (files under `.brain/shots/<slug>/`, gitignored; in a git worktree,
+the MAIN checkout's `.brain/shots/<slug>/` — the CLI error prints the path).
+Tool-agnostic about
 the browser driver — Playwright is recommended and the pattern below assumes
 it, but any scriptable automation that can screenshot and read console/network
 events works the same way.

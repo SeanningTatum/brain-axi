@@ -7,7 +7,9 @@
 The body is a markdown file you write to a scratch path and record with
 `brain verifications add <slug> --verdict ... --body-from <file>` (see
 `persist-evidence.md`); it is stored in brain.db, not committed. Its Verdict
-line must agree with the `--verdict` flag. Structure (mirror this shape exactly — a reviewer skimming the doc should get
+line must agree with the `--verdict` flag. Evidence links below are
+`.brain/shots/<slug>/...`, relative to the MAIN checkout (from a worktree, the
+files live there too). Structure (mirror this shape exactly — a reviewer skimming the doc should get
 slug, date, verdict, the acceptance table, and the step tables without
 reading prose):
 

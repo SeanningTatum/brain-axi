@@ -105,7 +105,7 @@ THE LOOP
    reads to pick up exactly where you left off.
 
 3b. **On every visual test, pass AND fail — save the screenshot under
-   `.brain/shots/<slug>/`** (`NN-name.png`, or `E1-name.png` for an
+   `.brain/shots/<slug>/`** (a worktree: the MAIN checkout's) (`NN-name.png`, or `E1-name.png` for an
    error-path capture) and log the step with `runs append`. Screenshot the
    failure too, not just the success: a failing screenshot is often the
    single most useful artifact for whoever looks at this next, and "it

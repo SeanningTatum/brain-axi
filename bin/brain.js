@@ -1197,7 +1197,7 @@ const verifications = {
         "--verdict": { value: true, desc: "PASS | FAIL | BLOCKED (required)" },
         "--body": { value: true, desc: "the verifier's walk, verbatim (or --body-from)" },
         "--body-from": { value: true, desc: "read the body from a file, or - for stdin" },
-        "--shot": { value: true, repeat: true, desc: "screenshot path under .brain/shots/<feature>/ (gitignored; only the path + sha256 is recorded); `path::caption` adds a caption" },
+        "--shot": { value: true, repeat: true, desc: "screenshot under the MAIN checkout's .brain/shots/<feature>/ (gitignored, shared by every worktree; only the path + sha256 is recorded); `path::caption` adds a caption" },
         "--verified-by": { value: true, desc: "who verified (default feature-verifier)" },
         "--implemented-by": { value: true, desc: "who implemented (default: HEAD's author)" },
       },
@@ -1206,7 +1206,7 @@ const verifications = {
         'brain verifications add auth --verdict FAIL --body "step 3: 500 on submit"',
       ],
       run(ctx) {
-        const { db, root } = ctx.brain(), { flags } = ctx;
+        const { db, root, mainRoot } = ctx.brain(), { flags } = ctx;
         const slug = ctx.pos[0];
         if (flags.body !== undefined && flags["body-from"] !== undefined) usage("pass --body or --body-from, not both", ["brain verifications add --help"]);
         const shots = (flags.shot || []).map((s) => {
@@ -1220,6 +1220,8 @@ const verifications = {
           verifiedBy: flags["verified-by"],
           implementedBy: flags["implemented-by"],
           root,
+          mainRoot,
+          cwd: process.cwd(),
         });
         const help = [];
         if (v.dirty) help.push("The tree had uncommitted changes (dirty: true): commit, then re-verify for a clean receipt");
@@ -1344,8 +1346,8 @@ const check = {
   summary: "Integrity: SQLite integrity + foreign keys + search index + cross-entity rules + plan/shot file hashes",
   examples: ["brain check"],
   run(ctx) {
-    const { db, root } = ctx.brain();
-    const rows = L.check(db, { root });
+    const { db, root, mainRoot } = ctx.brain();
+    const rows = L.check(db, { root, mainRoot });
     const failed = rows.filter((r) => r.status !== "pass");
     print([
       kv("ok", !failed.length),
