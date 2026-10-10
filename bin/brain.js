@@ -1197,12 +1197,12 @@ const verifications = {
         "--verdict": { value: true, desc: "PASS | FAIL | BLOCKED (required)" },
         "--body": { value: true, desc: "the verifier's walk, verbatim (or --body-from)" },
         "--body-from": { value: true, desc: "read the body from a file, or - for stdin" },
-        "--shot": { value: true, repeat: true, desc: "screenshot path under the repo; `path::caption` adds a caption" },
+        "--shot": { value: true, repeat: true, desc: "screenshot path under .brain/shots/<feature>/ (gitignored; only the path + sha256 is recorded); `path::caption` adds a caption" },
         "--verified-by": { value: true, desc: "who verified (default feature-verifier)" },
         "--implemented-by": { value: true, desc: "who implemented (default: HEAD's author)" },
       },
       examples: [
-        'brain verifications add auth --verdict PASS --body-from verdict.md --shot shots/login.png::"login form"',
+        'brain verifications add auth --verdict PASS --body-from verdict.md --shot .brain/shots/auth/login.png::"login form"',
         'brain verifications add auth --verdict FAIL --body "step 3: 500 on submit"',
       ],
       run(ctx) {

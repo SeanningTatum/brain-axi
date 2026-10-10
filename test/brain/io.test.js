@@ -21,8 +21,9 @@ function rich(t) {
   fs.writeFileSync(path.join(root, "plan.html"), "<title>Plan</title>");
   plans.upsert(db, { file: "plan.html", feature: "kanban", root });
   plans.addRound(db, "plan", { prompts: [{ prompt: "p", tag: "decision", target: { a: [1, "2"], b: null } }], endedBy: "sean" });
-  fs.writeFileSync(path.join(root, "s.png"), "png");
-  verifications.add(db, "kanban", { verdict: "FAIL", body: "0.5 seconds", shots: [{ path: "s.png", caption: "cap" }], root });
+  fs.mkdirSync(path.join(root, ".brain", "shots"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".brain", "shots", "s.png"), "png");
+  verifications.add(db, "kanban", { verdict: "FAIL", body: "0.5 seconds", shots: [{ path: ".brain/shots/s.png", caption: "cap" }], root });
   verify.addCheck(db, { name: "unit", run: 'echo "a,b" | cat', stages: ["baseline", "verify"], timeout: 7 });
   verify.run(db, { root });
   return b;

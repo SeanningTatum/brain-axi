@@ -247,9 +247,12 @@ test("features, tasks, runs, verifications, ship: happy path and not-found", (t)
   assert.ok(endsWithHelp(bad.out));
 
   failsWith(brain(dir, ["features", "ship", "auth", "--evidence", "x"]), 1, "SHIP_REFUSED");
-  fs.writeFileSync(path.join(dir, "shot.png"), "png");
-  const v = ok(brain(dir, ["verifications", "add", "auth", "--verdict", "PASS", "--body", "walked it", "--shot", "shot.png::the form"]), /verdict: PASS/);
-  assert.match(v.out, /dirty: true/); // shot.png + .gitignore are uncommitted (#11)
+  fs.writeFileSync(path.join(dir, "loose.png"), "png");
+  failsWith(brain(dir, ["verifications", "add", "auth", "--verdict", "PASS", "--body", "x", "--shot", "loose.png"]), 1, "SHOT_OUTSIDE_SHOTS_DIR");
+  fs.mkdirSync(path.join(dir, ".brain", "shots", "auth"), { recursive: true });
+  fs.writeFileSync(path.join(dir, ".brain", "shots", "auth", "shot.png"), "png");
+  const v = ok(brain(dir, ["verifications", "add", "auth", "--verdict", "PASS", "--body", "walked it", "--shot", ".brain/shots/auth/shot.png::the form"]), /verdict: PASS/);
+  assert.match(v.out, /dirty: true/); // loose.png + .gitignore are uncommitted (#11)
   assert.match(v.out, /shots: 1/);
   assert.match(v.out, /commit: "?[0-9a-f]{7}/);
   failsWith(brain(dir, ["verifications", "add", "auth", "--verdict", "MAYBE", "--body", "x"]), 2, "INVALID_VERDICT");

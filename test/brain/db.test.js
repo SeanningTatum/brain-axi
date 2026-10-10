@@ -175,14 +175,15 @@ test("check: passes on a clean brain and flags unverified shipped features, open
   fs.writeFileSync(planFile, "<title>P</title>v1");
   plans.upsert(b.db, { file: "plan.html", root: b.root });
   features.add(b.db, { slug: "shot-feat", name: "Shot" });
-  fs.writeFileSync(path.join(b.root, "s.png"), "png");
-  verifications.add(b.db, "shot-feat", { verdict: "PASS", body: "ok", shots: ["s.png"], root: b.root });
+  fs.mkdirSync(path.join(b.root, ".brain", "shots"), { recursive: true });
+  fs.writeFileSync(path.join(b.root, ".brain", "shots", "s.png"), "png");
+  verifications.add(b.db, "shot-feat", { verdict: "PASS", body: "ok", shots: [".brain/shots/s.png"], root: b.root });
   fs.writeFileSync(planFile, "<title>P</title>v2");
-  fs.rmSync(path.join(b.root, "s.png"));
+  fs.rmSync(path.join(b.root, ".brain", "shots", "s.png"));
   const files = check(b.db, { root: b.root }).find((r) => r.check === "plan and shot files");
   assert.equal(files.status, "fail");
   assert.match(files.detail, /plan plan\.html changed/);
-  assert.match(files.detail, /shot s\.png is missing/);
+  assert.match(files.detail, /shot \.brain\/shots\/s\.png is missing/);
 });
 
 test("check: a long-lived connection sees no false FTS5 mismatch after another connection writes", (t) => {

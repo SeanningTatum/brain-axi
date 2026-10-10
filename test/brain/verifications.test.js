@@ -42,20 +42,22 @@ test("outside git: no commit, not dirty", (t) => {
   assert.equal(verifications.latestVerdict(db, "f").verdict, "BLOCKED");
 });
 
-test("shots are stored as path + sha256; a missing shot is refused", (t) => {
+test("shots are stored as path + sha256; missing or outside .brain/shots/ is refused", (t) => {
   const { db, root } = freshBrain(t);
   features.add(db, { slug: "f", name: "F" });
-  fs.mkdirSync(path.join(root, "shots"));
-  fs.writeFileSync(path.join(root, "shots", "a.png"), "A");
+  fs.mkdirSync(path.join(root, ".brain", "shots", "f"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".brain", "shots", "f", "a.png"), "A");
+  fs.writeFileSync(path.join(root, "loose.png"), "L");
   const v = verifications.add(db, "f", {
     verdict: "PASS", body: "ok", root,
-    shots: [{ path: path.join(root, "shots", "a.png"), caption: "home" }],
+    shots: [{ path: path.join(root, ".brain", "shots", "f", "a.png"), caption: "home" }],
   });
   assert.equal(v.shots.length, 1);
-  assert.equal(v.shots[0].path, "shots/a.png", "stored relative to root");
+  assert.equal(v.shots[0].path, ".brain/shots/f/a.png", "stored relative to root");
   assert.equal(v.shots[0].caption, "home");
   assert.match(v.shots[0].sha256, /^[0-9a-f]{64}$/);
-  throwsCode(() => verifications.add(db, "f", { verdict: "PASS", body: "ok", shots: ["shots/none.png"], root }), "SHOT_MISSING");
+  throwsCode(() => verifications.add(db, "f", { verdict: "PASS", body: "ok", shots: [".brain/shots/f/none.png"], root }), "SHOT_MISSING");
+  throwsCode(() => verifications.add(db, "f", { verdict: "PASS", body: "ok", shots: ["loose.png"], root }), "SHOT_OUTSIDE_SHOTS_DIR");
   assert.equal(verifications.list(db).length, 1, "nothing written on refusal");
 });
 
