@@ -172,7 +172,7 @@
       "id": "feat-011",
       "name": "skills-plugin — the method as skills, packaged as a Claude Code plugin",
       "slug": "skills-plugin",
-      "status": "in-progress",
+      "status": "shipped",
       "description": "Per plan 2026-10-10-2026-10-09-skills-plugin-sqlite (reviewed round 1, phases 1-3): the 10 playbooks move out of lib/review/playbooks.js into 11 superpowers-style skills (skills/brain*/SKILL.md, references/ on demand) that trigger by description and name their successor; `brain playbook <id>` prints the skill file; the 31KB brain skill becomes a router; brain context gains a one-line bootstrap; packaged as a Claude Code plugin (.claude-plugin/, hooks/, commands/) versioned with npm. Non-goals: codex/opencode skill install (Claude only for now), adopting obra/superpowers itself, any storage change (that is sqlite-engine).",
       "dependencies": [
         "core-cli",
@@ -181,7 +181,8 @@
       "owners": [
         "sean"
       ],
-      "doc": ".brain/features/skills-plugin/skills-plugin.md"
+      "doc": ".brain/features/skills-plugin/skills-plugin.md",
+      "evidence": "2026-10-10 verification PASS round 2 (features/skills-plugin/verifications/2026-10-10-r2.md, receipt bound to 680e9de; round 1 FAIL fixed in 449f0ed): 11 skills within caps, skill --check catches 8 breakage kinds, plugin validates+installs (11 skills, SessionStart hook), plugin-aware setup idempotent, context<=600B enforced, verify 4/4, check 18/18, skill-coverage 37/37, skill-routing 31/34=0.912 vs 0.294 no-plugin, held-out 8/8"
     },
     {
       "id": "feat-012",

@@ -21,6 +21,21 @@
 
 ---
 
+## 2026-10-10 — skills-plugin shipped on feat/skills-plugin (8 commits, not pushed); verification r1 FAIL -> r2 PASS; routing eval 0.912
+- branch: `feat/skills-plugin`
+- in-progress feature: none
+- run note: none
+- next: Push + PR (Greptile loop to 5/5); follow-ups: F10 playbooks.js import crash, routing misses (done outside brain, product, quick-fix), trim plugin cache; then answer brain export/CI Q for sqlite-engine
+
+---
+
+## 2026-10-10 — shipped skills-plugin: 2026-10-10 verification PASS round 2 (features/skills-plugin/verifications/2026-10-10-r2.md, receipt bound to 680e9de; r
+- branch: `feat/skills-plugin`
+- in-progress feature: none
+- run note: none
+
+---
+
 ## 2026-10-10 — Started skills-plugin (feat-011) on feat/skills-plugin: baseline verify 4/4, check green, skill-coverage 1.000; sqlite-engine (feat-012) registered planned
 - branch: `feat/skills-plugin`
 - in-progress feature: none
