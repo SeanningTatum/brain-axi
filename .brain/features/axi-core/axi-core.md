@@ -100,3 +100,11 @@ KEEP: `plans/*.html` (approved artifacts, path + hash), `lib/review` static asse
 2. Shots under `.brain/`: recommended, gitignore them too, so `git ls-files .brain` is empty.
 3. Phase 5 drop list (run notes, old checkpoints, verification docs, screenshots, review sessions): recommended, drop them. Eval run records are moved, never dropped.
 4. Bridge for phases 2–4: recommended, import at the end of phase 2 (or pin `brain-axi@0.2.0` until phase 5).
+
+## Decisions on e2e audit open questions (2026-10-10)
+
+- Evals: **cut entirely for now** (user). brain-ai/start/done/execute drop every eval step; no verify-check substitute, no eval tables. Eval run records still move byte-for-byte to `evals/`, never deleted.
+- History: drop in phase 5, git keeps it (user).
+- Screenshots under `.brain/`: gitignored with brain.db; `git ls-files .brain` ends empty (user).
+- npm publish 0.3.0: prepared in phase 6, **user confirms before `npm publish`** (user).
+- Bridge for phases 2–4: import at end of phase 2, dogfood on brain.db (recommended default).
