@@ -21,6 +21,21 @@
 
 ---
 
+## 2026-10-10 — Opened PR #21 for skills-plugin (plugin renamed brain-axi@SeanningTatum, installed locally); Greptile 5/5 on 13e64eb, 2 commits after
+- branch: `feat/skills-plugin`
+- in-progress feature: none
+- run note: none
+- next: Greptile confirm on PR head; merge #21; then axi-core phase 1 (lib/brain) on a new branch
+
+---
+
+## 2026-10-10 — PR opened for skills-plugin: https://github.com/SeanningTatum/brain-axi/pull/21
+- branch: `feat/skills-plugin`
+- in-progress feature: none
+- run note: none
+
+---
+
 ## 2026-10-10 — Planned axi-core (plans/2026-10-10-axi-architecture.html, reviewed r1, all recommended): skills -> thin AXI -> lib/brain SQLite; sqlite-engine cut
 - branch: `feat/skills-plugin`
 - in-progress feature: none
