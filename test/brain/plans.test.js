@@ -90,3 +90,17 @@ test("check flags a plan file changed after registration", (t) => {
   fs.appendFileSync(path.join(root, rel), "edit");
   assert.equal(check(db, { root }).find((r) => r.check === "plan and shot files").status, "fail");
 });
+
+test("re-registering an approved plan whose file changed drops the approval; an unchanged file keeps it", (t) => {
+  const { db, root } = freshBrain(t);
+  const rel = planFile(root);
+  plans.upsert(db, { file: rel, slug: "p", root });
+  plans.endSession(db, "p", { approvedBy: "sean" });
+  const same = plans.upsert(db, { file: rel, slug: "p", root });
+  assert.equal(same.status, "approved");
+  assert.equal(same.approved_by, "sean");
+  fs.appendFileSync(path.join(root, rel), "edit after approval");
+  const edited = plans.upsert(db, { file: rel, slug: "p", root });
+  assert.equal(edited.status, "in-review");
+  assert.equal(edited.approved_by, null);
+});

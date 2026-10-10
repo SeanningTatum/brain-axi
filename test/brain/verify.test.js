@@ -75,3 +75,22 @@ test("shipHint names the declared checks, never a hardcoded runner", (t) => {
   verify.addCheck(db, { name: "e2e", run: "make e2e", stages: ["verify"] });
   assert.match(verify.shipHint(db, "f")[0], /brain verify run --stage verify \(e2e: make e2e\)/);
 });
+
+test("a check printing more than 1 MiB still passes, with only the tail kept", (t) => {
+  const { db, root } = freshBrain(t);
+  verify.addCheck(db, { name: "loud", run: `node -e "process.stdout.write('x'.repeat(3 * 1024 * 1024) + '\\ndone\\n')"` });
+  const r = verify.run(db, { root });
+  assert.deepEqual([r.ok, r.results[0].status, r.results[0].exit], [true, "pass", 0]);
+  assert.match(r.results[0].tail, /done$/);
+});
+
+test("checks that already ran are recorded when onResult throws", (t) => {
+  const { db, root } = freshBrain(t);
+  verify.addCheck(db, { name: "a", run: "true" });
+  verify.addCheck(db, { name: "b", run: "true" });
+  assert.throws(
+    () => verify.run(db, { root, onResult: () => { throw new Error("display broke"); } }),
+    /display broke/
+  );
+  assert.deepEqual(verify.gateRuns(db).map((g) => [g.check, g.status]), [["a", "pass"]]);
+});

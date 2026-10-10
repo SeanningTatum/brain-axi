@@ -2,9 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 import {
-  openBrain, open, create, close, locate, loadMigrations, schemaVersion, isLegacyBrain, check,
+  openBrain, open, create, close, locate, migrate, loadMigrations, schemaVersion, isLegacyBrain, check,
   features, plans, verifications,
 } from "../../lib/brain/index.js";
 import { ensureGitignore } from "../../lib/brain/db.js";
@@ -195,4 +196,49 @@ test("check: a long-lived connection sees no false FTS5 mismatch after another c
   features.set(other, "a", { name: "A renamed" });
   features.add(other, { slug: "b", name: "B" });
   assert.deepEqual(check(b.db, { root: b.root }).filter((r) => r.status !== "pass"), []);
+});
+
+test("migrate re-reads the version under the write lock: a migration another process finished is not re-run", (t) => {
+  const b = freshBrain(t);
+  close(b.db);
+  const real = new DatabaseSync(b.dbPath);
+  t.after(() => real.close());
+  let stale = true;
+  // The first version read predates the other process's commit and says v0.
+  const racing = {
+    exec: (sql) => real.exec(sql),
+    prepare(sql) {
+      if (stale && /user_version/.test(sql)) {
+        stale = false;
+        return { get: () => ({ user_version: 0 }) };
+      }
+      return real.prepare(sql);
+    },
+  };
+  assert.deepEqual(migrate(racing, { dbPath: b.dbPath, backup: false }), { from: LATEST, to: LATEST, backup: null });
+  assert.equal(schemaVersion(real), LATEST);
+});
+
+test("concurrent creates: exactly one wins, the rest get BRAIN_EXISTS, and the brain survives", async (t) => {
+  const dir = tmpDir(t);
+  const lib = new URL("../../lib/brain/index.js", import.meta.url).href;
+  const script = `import(${JSON.stringify(lib)}).then((m) => {
+    try { m.close(m.create(process.argv[1], { gitignore: false }).db); console.log("ok"); }
+    catch (e) { console.log(e.code || e.message); }
+  });`;
+  const outs = await Promise.all(
+    Array.from({ length: 6 }, () =>
+      new Promise((resolve) => {
+        const p = spawn(process.execPath, ["-e", script, dir], { stdio: ["ignore", "pipe", "inherit"] });
+        let out = "";
+        p.stdout.on("data", (d) => (out += d));
+        p.on("exit", () => resolve(out.trim()));
+      })
+    )
+  );
+  assert.equal(outs.filter((o) => o === "ok").length, 1, outs.join(", "));
+  assert.deepEqual(outs.filter((o) => o !== "ok"), Array(5).fill("BRAIN_EXISTS"));
+  const db = open(path.join(dir, ".brain", "brain.db"));
+  t.after(() => close(db));
+  assert.equal(schemaVersion(db), LATEST);
 });

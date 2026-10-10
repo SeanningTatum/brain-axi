@@ -105,6 +105,28 @@ test("autoship:false skips the ship; closed features take no new tasks", (t) => 
   throwsCode(() => tasks.add(db, "f", { title: "late", acceptance: "x" }), "FEATURE_CLOSED");
 });
 
+test("closed features: no reopening done work, no claims, and closing a cut feature's last task does not ship it", (t) => {
+  const { db, root } = setup(t);
+  tasks.add(db, "f", { title: "a", acceptance: "b" });
+  tasks.set(db, "f", "t1", { status: "done", evidence: "x", autoship: false });
+  verifications.add(db, "f", { verdict: "PASS", body: "ok", root });
+  features.ship(db, "f", { evidence: "manual", root });
+  throwsCode(() => tasks.set(db, "f", "t1", { status: "open" }), "FEATURE_CLOSED", /reopened/);
+  throwsCode(() => tasks.set(db, "f", "t1", { status: "blocked" }), "FEATURE_CLOSED");
+  assert.equal(tasks.get(db, "f", "t1").status, "done");
+
+  features.add(db, { slug: "g", name: "G", status: "in-progress" });
+  tasks.add(db, "g", { title: "a", acceptance: "b" });
+  tasks.add(db, "g", { title: "c", acceptance: "d" });
+  tasks.set(db, "g", "t1", { status: "done", evidence: "x" });
+  features.set(db, "g", { status: "cut" });
+  throwsCode(() => tasks.claim(db, "g", { by: "bot" }), "FEATURE_CLOSED", /claimed/);
+  throwsCode(() => tasks.claim(db, "g", { key: "t2", by: "bot" }), "FEATURE_CLOSED");
+  const r = tasks.set(db, "g", "t2", { status: "cut" });
+  assert.equal(r.ship, null);
+  assert.equal(features.get(db, "g").status, "cut");
+});
+
 test("schema: task dependencies cannot cross features", (t) => {
   const { db } = setup(t);
   features.add(db, { slug: "g", name: "G" });

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { create, close, features, tasks, progress, runs, docs, plans, verifications, verify, search, io, check } from "../../lib/brain/index.js";
+import { create, open, close, features, tasks, progress, runs, docs, plans, verifications, verify, search, io, check } from "../../lib/brain/index.js";
 import { freshBrain, tmpDir, throwsCode } from "./helpers.js";
 
 // A brain with a row in every table, and awkward strings throughout.
@@ -84,4 +84,40 @@ test("an older dump without newer columns loads with defaults", (t) => {
   const f = features.get(db, "old");
   assert.equal(f.grandfathered, false);
   assert.equal(f.description, null);
+});
+
+test("exportAll reads one snapshot: a write landing mid-export cannot orphan child rows", (t) => {
+  const a = freshBrain(t);
+  features.add(a.db, { slug: "first", name: "First" });
+  const other = open(a.dbPath);
+  t.after(() => close(other));
+  let wrote = false;
+  // Another worktree adds a feature and its task right after the features table is read.
+  const racing = {
+    get isTransaction() {
+      return a.db.isTransaction;
+    },
+    exec: (sql) => a.db.exec(sql),
+    prepare(sql) {
+      const stmt = a.db.prepare(sql);
+      if (!/^SELECT \* FROM features /.test(sql)) return stmt;
+      return {
+        all: (...args) => {
+          const rows = stmt.all(...args);
+          if (!wrote) {
+            wrote = true;
+            features.add(other, { slug: "late", name: "Late" });
+            tasks.add(other, "late", { title: "x", acceptance: "y" });
+          }
+          return rows;
+        },
+      };
+    },
+  };
+  const dump = io.exportAll(racing);
+  assert.ok(wrote);
+  const b = create(tmpDir(t), { gitignore: false });
+  t.after(() => close(b.db));
+  const res = io.importAll(b.db, dump);
+  assert.deepEqual([res.rows.features, res.rows.tasks], [1, 0]);
 });
