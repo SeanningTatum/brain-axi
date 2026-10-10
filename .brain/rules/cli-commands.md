@@ -31,5 +31,5 @@
 2. Register in `COMMANDS`.
 3. Wire `--help` via `helpBlock`.
 4. Reject unknown flags (free via `parseArgs`).
-5. Update the router skill `skills/brain/SKILL.md`, then `brain skill --write`.
+5. Update the router skill `skills/brain/SKILL.md`, then `brain skill --check`.
 6. Verify: `node bin/brain.js x --brain .brain`, `echo $?`, `node bin/brain.js skill --check`.

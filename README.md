@@ -38,7 +38,7 @@ Install once. After that you rarely type `brain` — the agent does, because the
 
 ```mermaid
 flowchart LR
-    I["<b>Setup, once per repo</b><br/>npx skills add …--skill brain<br/>brain setup --app claude"]
+    I["<b>Setup, once per repo</b><br/>/plugin install brain@brain-axi<br/>npx -y brain-axi init"]
 
     I --> S
 
@@ -72,36 +72,30 @@ Don't drive `brain` by hand. **Install the skill and let a coding agent use it.*
 
 `brain` is built for agent ergonomics, not human ones — TOON output, a `help:` block teaching the next command on every result, exit codes as a contract. Those are affordances for an LLM shelling out mid-task, not a CLI you sit and type at. The whole design assumes an agent is the operator and you are the reader of what it wrote down.
 
-So the flow is: install the [`brain` skill](#quick-start) once, then just work normally. When you ask your agent to plan a feature, check what's in progress, or record where it left off, it discovers the right `brain` command from the skill and runs it — reading `.brain/` before a task, searching rules and recipes during, checkpointing progress and flipping feature status after. You get a durable project brain as a side effect of the agent doing its job; you rarely type `brain` yourself.
+So the flow is: install the [`brain` plugin](#quick-start) once, then just work normally. When you ask your agent to plan a feature, check what's in progress, or record where it left off, it discovers the right `brain` command from the skill and runs it — reading `.brain/` before a task, searching rules and recipes during, checkpointing progress and flipping feature status after. You get a durable project brain as a side effect of the agent doing its job; you rarely type `brain` yourself.
 
 Everything below documents the command surface for completeness — but reach for the skill first, and only run commands directly when you're debugging the CLI itself.
 
 ## Quick start
 
-**Recommended — install the skill, not the package:**
+**Claude Code — install the plugin (recommended):**
 
 ```sh
-npx skills add SeanningTatum/brain-axi --skill brain
+/plugin marketplace add SeanningTatum/brain-axi
+/plugin install brain@brain-axi
 ```
 
-This installs `.claude/skills/brain/SKILL.md` into your repo via the
-[Agent Skills](https://agentskills.io) format ([`npx skills`](https://github.com/vercel-labs/skills)
-— add `-g` for a global, cross-repo install). Any skill-aware agent
-loads it on demand and learns the whole command surface from it — no
-`package.json` dependency, no session hook required.
+The `brain` plugin ships the router skill, the ten `brain-*` phase skills (each is also a slash command), and a SessionStart hook that runs the plugin's own copy of `brain context` (no `npx`, no network, versions stay locked). Then, once per repo that has no `.brain/` yet:
 
-Two more skills ship from the same repo, install them the same way:
+```sh
+npx -y brain-axi init
+```
 
-| Skill | Install | What it's for |
-| --- | --- | --- |
-| `brain` | `npx skills add SeanningTatum/brain-axi --skill brain` | Operate an existing `.brain/` — the main one |
-| `init-brain` | `npx skills add SeanningTatum/brain-axi --skill init-brain` | Scaffold a `.brain/` into a repo that has none |
-| `brain-axi` | `npx skills add SeanningTatum/brain-axi --skill brain-axi` | The AXI standard itself — read it when building *any* agent-facing CLI, not just this one |
+If you previously copied the brain skill into `~/.claude/skills/brain` (or `.claude/skills/brain`), delete it to avoid a duplicate. If `brain setup --app claude` ever wrote a SessionStart hook into a repo's `.claude/settings.json`, re-running it once the plugin is installed removes that duplicate hook.
 
-`brain-axi` is vendored from [kunchenguid/axi](https://github.com/kunchenguid/axi)
-(MIT) so this repo's own rules resolve for anyone who clones it — see
-[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md). If you only want the standard
-and not this CLI, install it straight from the source: `npx skills add kunchenguid/axi`.
+**Other agents (codex, opencode, copilot):** `npx -y brain-axi setup --app codex|opencode` installs the context hook only. Skills are Claude Code-only for now; `brain playbook <id>` prints any skill's guidance for any agent.
+
+`brain-axi` (the AXI standard itself, vendored from [kunchenguid/axi](https://github.com/kunchenguid/axi) under MIT so this repo's own rules resolve for anyone who clones it; see [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md)) is repo-dev tooling, not part of the plugin. If you only want the standard: `npx skills add kunchenguid/axi`.
 
 **Or run the CLI straight from a checkout**, no skill involved:
 
@@ -135,7 +129,7 @@ help[7]:
 
 <img src="https://raw.githubusercontent.com/SeanningTatum/brain-axi/main/docs/assets/home.png" alt="Screenshot of the brain home dashboard TOON output in a terminal" width="620">
 
-No `.brain/` yet? Scaffold one from a base template with the `init-brain` skill, or hand-roll the [layout below](#the-brain-layout).
+No `.brain/` yet? Scaffold one with `npx -y brain-axi init`, or hand-roll the [layout below](#the-brain-layout).
 
 ## Commands
 
@@ -189,7 +183,7 @@ Every command supports `--help` (self-documenting) and a global `--brain <path>`
 |---|---|
 | `brain context` | Compact dashboard used by session-start hooks (silent, exit 0, outside a brain repo) |
 | `brain setup --app <claude\|codex\|opencode\|copilot\|all>` | Install a SessionStart hook that injects `brain context` |
-| `brain skill [--write\|--check]` | Generate/verify the installable agent skill (`.claude/skills/brain/SKILL.md`); `--check` is CI-friendly |
+| `brain skill [--check]` | Print the router skill; `--check` validates the `skills/` tree and plugin files (CI-friendly) |
 | `brain check` | Run deterministic harness invariant checks (CI-usable: exit 1 on any failure) |
 
 **Exit codes**: `0` success (including no-ops), `1` operation error, `2` usage error. Errors print to stdout as `error:` + `help:` lines — stdout is always the parseable payload, stderr stays diagnostics-only.
@@ -209,8 +203,8 @@ An empty result is still a definitive answer — no ambiguity about whether the 
 
 Two complementary paths — install either or both:
 
-1. **Agent skill (recommended — this is the `npx skills add` install above)** — on-demand, zero per-session token cost, static guidance only. If you generated it yourself instead of installing from GitHub: `brain skill --write` writes `.claude/skills/brain/SKILL.md`; `brain skill --check` exits 1 if the committed file has drifted from the CLI's real commands — wire it into CI.
-2. **Session hook (ambient, always-on)** — `brain setup --app claude` (or `codex` / `opencode` / `copilot` / `all`). Every new agent session in the repo starts with the compact `brain context` dashboard: live feature state, last checkpoint, next step. Re-running repairs the hook path after a reinstall; repeated runs are no-ops. Requires a local checkout (this hook shells out to the CLI directly, so it needs `brain` resolvable — either on `PATH` or as a project devDependency).
+1. **Agent skills (recommended — the Claude Code plugin above)** — on-demand, zero per-session token cost, static guidance only. `brain skill --check` exits 1 if the `skills/` tree or the plugin files drift from the CLI's real commands — wire it into CI.
+2. **Session hook (ambient, always-on)** — `brain setup --app claude` (or `codex` / `opencode` / `copilot` / `all`). Every new agent session in the repo starts with the compact `brain context` dashboard: live feature state, last checkpoint, next step. Re-running repairs the hook path after a reinstall; repeated runs are no-ops. With the plugin installed you do not need this for Claude Code (`setup --app claude` then removes its own duplicate). Requires a local checkout (this hook shells out to the CLI directly, so it needs `brain` resolvable — either on `PATH` or as a project devDependency).
 
 ## Plan review
 
@@ -273,4 +267,4 @@ See `.brain/HARNESS.md` in a scaffolded brain for the 5-subsystem harness model 
 - **TOON, not JSON or prose.** Token-efficient for agents to parse and for you to eyeball; see [toonformat.dev](https://toonformat.dev/).
 - **Contextual disclosure.** Every command teaches the next command through its own `help:` output — an agent with zero prior knowledge of `brain` can still use it correctly.
 - **Exit codes are the contract.** `0`/`1`/`2` are meaningful and stable; scripts and CI can depend on them.
-- **Idempotent by default.** Re-running `setup`, `skill --write`, or `set-status` to the same state is always a safe no-op.
+- **Idempotent by default.** Re-running `setup` or `set-status` to the same state is always a safe no-op.

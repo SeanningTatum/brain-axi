@@ -77,7 +77,7 @@ function evaluate(c) {
     return {
       pass: hit,
       output: hit ? `found: ${a.value}` : `NOT FOUND: ${a.value}`,
-      notes: hit ? "" : `the skills/ tree never mentions "${a.value}" — add it to the router (skills/brain/SKILL.md) or the owning phase skill, then \`brain skill --write\``,
+      notes: hit ? "" : `the skills/ tree never mentions "${a.value}" — add it to the router (skills/brain/SKILL.md) or the owning phase skill`,
     };
   }
   // Command coverage: the skill may name a command in either invocation form
@@ -89,7 +89,7 @@ function evaluate(c) {
     return {
       pass: !!hit,
       output: hit ? `found: ${hit}` : `NOT FOUND (any of): ${values.join(" | ")}`,
-      notes: hit ? "" : `the skills/ tree names this command in no invocation form — add it to the router (skills/brain/SKILL.md) then \`brain skill --write\``,
+      notes: hit ? "" : `the skills/ tree names this command in no invocation form — add it to the router (skills/brain/SKILL.md)`,
     };
   }
   if (a.type === "not_contains") {

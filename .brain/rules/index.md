@@ -48,6 +48,6 @@ in one of them alone is an invariant the other can contradict.
 - New command / flag / dispatch change → `cli-commands.md` (and update the router skill `skills/brain/SKILL.md`)
 - New HTTP route, session field, or persistence shape → `review-server.md` + `docs/REVIEW-ARCHITECTURE.md`
 - New postMessage type or SDK behavior → `review-browser.md` + `docs/REVIEW-ARCHITECTURE.md`
-- New/changed AI guidance, eval command, or `.brain/evals/` shape → `ai-work.md` (and `skill --write`)
-- New/changed product or UX planning guidance, or a plan-section renumber → `planning-ux.md` (and `skill --write`)
+- New/changed AI guidance, eval command, or `.brain/evals/` shape → `ai-work.md` (and `skill --check`)
+- New/changed product or UX planning guidance, or a plan-section renumber → `planning-ux.md` (and `skill --check`)
 - Pattern deprecated → mark `> DEPRECATED` block + replacement pointer (do not silent-delete)

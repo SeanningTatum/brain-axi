@@ -15,7 +15,7 @@ evals/<suite>/
 
 | Suite | Kind | What it measures |
 |-------|------|------------------|
-| [`skill-coverage`](skill-coverage/) | assertions | `.claude/skills/brain/SKILL.md` names every command, states the TOON contract and the AI rules, and invents no tooling this repo lacks |
+| [`skill-coverage`](skill-coverage/) | assertions | `skills/` tree (router + phase skills) names every command, states the TOON contract and the AI rules, and invents no tooling this repo lacks |
 
 ## Rules that bind here
 

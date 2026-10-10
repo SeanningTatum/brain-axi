@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "brain-axi",
+  "description": "The brain agent-harness skills for Claude Code.",
+  "owner": { "name": "Sean Stuart Urgel" },
+  "plugins": [
+    {
+      "name": "brain",
+      "source": "./",
+      "description": "Skills and session context for the .brain agent harness.",
+      "category": "development",
+      "tags": ["agents", "harness", "workflow"]
+    }
+  ]
+}

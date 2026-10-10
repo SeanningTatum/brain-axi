@@ -5196,8 +5196,41 @@ function readJsonSafe(p) {
 const isBrainHookCommand = (cmd) =>
   typeof cmd === "string" && /(^|[/\\"'\s])brain(\.js)?"? context$/.test(cmd);
 
+// Is the `brain` Claude Code plugin installed? Reads installed_plugins.json
+// under CLAUDE_CONFIG_DIR (default ~/.claude); missing/malformed => false.
+function brainPluginInstalled() {
+  const dir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude");
+  try {
+    const data = JSON.parse(fs.readFileSync(path.join(dir, "plugins", "installed_plugins.json"), "utf8"));
+    const plugins = data && typeof data.plugins === "object" && data.plugins ? data.plugins : {};
+    return Object.keys(plugins).some((k) => k.startsWith("brain@"));
+  } catch {
+    return false;
+  }
+}
+
 function setupClaude(repoRoot, command) {
   const settingsPath = path.join(repoRoot, ".claude", "settings.json");
+  if (brainPluginInstalled()) {
+    // The plugin's hooks/hooks.json supplies the context hook; drop our duplicate.
+    const cur = readJsonSafe(settingsPath);
+    const list = Array.isArray(cur.hooks?.SessionStart) ? cur.hooks.SessionStart : null;
+    let removed = false;
+    if (list) {
+      for (const m of list) {
+        if (!Array.isArray(m.hooks)) continue;
+        const kept = m.hooks.filter((h) => !isBrainHookCommand(h.command));
+        if (kept.length !== m.hooks.length) { removed = true; m.hooks = kept; }
+      }
+      if (removed) {
+        cur.hooks.SessionStart = list.filter((m) => !(Array.isArray(m.hooks) && m.hooks.length === 0));
+        if (!cur.hooks.SessionStart.length) delete cur.hooks.SessionStart;
+        if (!Object.keys(cur.hooks).length) delete cur.hooks;
+        fs.writeFileSync(settingsPath, JSON.stringify(cur, null, 2) + "\n");
+      }
+    }
+    return { path: settingsPath, action: removed ? "plugin installed — removed duplicate settings hook" : "plugin installed (no-op)", plugin: true };
+  }
   const settings = readJsonSafe(settingsPath);
   settings.hooks = settings.hooks || {};
   settings.hooks.SessionStart = settings.hooks.SessionStart || [];
@@ -5303,12 +5336,14 @@ function cmdSetup(argv) {
   const targets = flags.app === "all" ? ["claude", "codex", "opencode", "copilot"] : [flags.app];
 
   const rows = [];
+  let claudeNoPlugin = false;
   for (const app of targets) {
     const r =
       app === "claude" ? setupClaude(repoRoot, command)
       : app === "codex" ? setupCodex(repoRoot, command)
       : app === "copilot" ? setupCopilot(command)
       : setupOpencode(command);
+    if (app === "claude" && !r.plugin) claudeNoPlugin = true;
     rows.push({ app, action: r.action, file: collapseHome(r.path), note: r.note || "" });
   }
   print([
@@ -5316,7 +5351,8 @@ function cmdSetup(argv) {
     ...toonTable("setup", rows, ["app", "action", "file", "note"]),
     ...toonList("help", [
       "New sessions in this repo now start with compact brain context",
-      "Run `brain skill --write` to also ship an installable agent skill (on-demand, no per-session cost)",
+      ...(claudeNoPlugin ? ["Install the plugin instead: /plugin marketplace add SeanningTatum/brain-axi then /plugin install brain@brain-axi"] : []),
+      "Skills are Claude Code-only for now; `brain playbook <id>` prints any skill for other agents",
     ]),
   ]);
 }
@@ -5390,52 +5426,60 @@ function validateSkillsTree() {
   return problems;
 }
 
+// Validate the Claude Code plugin packaging: .claude-plugin/plugin.json,
+// marketplace.json, hooks/hooks.json. Returns problems.
+function validatePluginFiles() {
+  const problems = [];
+  const root = path.dirname(SKILLS_DIR);
+  const load = (rel) => {
+    const f = path.join(root, rel);
+    if (!fs.existsSync(f)) return void problems.push(`${rel}: missing`);
+    try { return JSON.parse(fs.readFileSync(f, "utf8")); }
+    catch (e) { return void problems.push(`${rel}: invalid JSON (${e.message})`); }
+  };
+  const pkg = load("package.json");
+  const plugin = load(".claude-plugin/plugin.json");
+  if (plugin) {
+    if (plugin.name !== "brain") problems.push(`.claude-plugin/plugin.json: name is "${plugin.name}", expected "brain"`);
+    if (pkg && plugin.version !== pkg.version)
+      problems.push(`.claude-plugin/plugin.json: version "${plugin.version}" does not match package.json "${pkg.version}"`);
+  }
+  const market = load(".claude-plugin/marketplace.json");
+  if (market && !(Array.isArray(market.plugins) && market.plugins.some((p) => p && p.name === "brain")))
+    problems.push('.claude-plugin/marketplace.json: does not list plugin "brain"');
+  const hooks = load("hooks/hooks.json");
+  if (hooks) {
+    const entries = Array.isArray(hooks.hooks?.SessionStart) ? hooks.hooks.SessionStart : [];
+    const ok = entries.some((m) => (m.hooks || []).some((h) => typeof h.command === "string" && /bin\/brain\.js"? context\b/.test(h.command)));
+    if (!ok) problems.push("hooks/hooks.json: no SessionStart hook runs `bin/brain.js context`");
+  }
+  return problems;
+}
+
 function cmdSkill(argv) {
   const spec = {
-    "--write": { value: false, desc: "write .claude/skills/brain/SKILL.md at the repo root" },
-    "--check": { value: false, desc: "exit 1 if the committed skill file is stale or the skills/ tree is invalid (for CI)" },
+    "--check": { value: false, desc: "exit 1 if the skills/ tree or the Claude Code plugin files (.claude-plugin/, hooks/) are invalid (for CI)" },
   };
   const { flags } = parseArgs(argv, spec, "skill");
   if (flags.help)
-    helpBlock("skill", "Print, write, or check the installable agent skill (skills/brain/SKILL.md) for this CLI", spec,
-      ["brain skill", "brain skill --write", "brain skill --check"]);
+    helpBlock("skill", "Print the router skill (skills/brain/SKILL.md), or validate the skills/ tree and plugin packaging", spec,
+      ["brain skill", "brain skill --check"]);
   const content = skillContent();
-  if (!flags.write && !flags.check) {
+  if (!flags.check) {
     process.stdout.write(content);
     return;
   }
-  const brain = findBrain(flags.brain);
-  const skillPath = path.join(path.dirname(brain), ".claude", "skills", "brain", "SKILL.md");
-  if (flags.check) {
-    const problems = validateSkillsTree();
-    const stale = !(fs.existsSync(skillPath) && fs.readFileSync(skillPath, "utf8") === content);
-    if (!stale && !problems.length) {
-      print([`skill: ${path.relative(process.cwd(), skillPath)} is up to date; skills/ tree valid`]);
-      return;
-    }
-    print([
-      `error: ${stale ? `${path.relative(process.cwd(), skillPath)} is stale or missing` : "skills/ tree invalid"}`,
-      ...(problems.length ? toonList("problems", problems) : []),
-      ...toonList("help", [
-        ...(stale ? ["Run `brain skill --write` to regenerate it from skills/brain/SKILL.md"] : []),
-        ...(problems.length ? ["Fix the skills/ problems listed above, then re-run `brain skill --check`"] : []),
-      ]),
-    ]);
-    process.exit(1);
-  }
-  const existed = fs.existsSync(skillPath) && fs.readFileSync(skillPath, "utf8") === content;
-  if (existed) {
-    print([`skill: ${path.relative(process.cwd(), skillPath)} already up to date (no-op)`]);
+  const problems = [...validateSkillsTree(), ...validatePluginFiles()];
+  if (!problems.length) {
+    print(["skill: skills/ tree and plugin files (.claude-plugin/, hooks/) are valid"]);
     return;
   }
-  fs.mkdirSync(path.dirname(skillPath), { recursive: true });
-  fs.writeFileSync(skillPath, content);
   print([
-    "skill:",
-    kv("file", path.relative(process.cwd(), skillPath), 2),
-    kv("action", "written", 2),
-    ...toonList("help", ["Install the router and phase skills with: npx skills add <owner>/<repo> (the skills/ tree)"]),
+    "error: skills/ tree or plugin files invalid",
+    ...toonList("problems", problems),
+    ...toonList("help", ["Fix the problems listed above, then re-run `brain skill --check`"]),
   ]);
+  process.exit(1);
 }
 
 // ---------------------------------------------------------------------------

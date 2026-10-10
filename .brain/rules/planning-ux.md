@@ -51,7 +51,7 @@ Section numbers are cross-referenced from inside the playbook text, from the `ai
 - **Every interactive wireframe control carries `data-brain-action`** — the same rule decision cards follow. Without it, annotate mode's click interception (`shouldSkip` in `lib/review/sdk.js`) swallows the click as an element annotation.
 - **Product decision cards reuse `queueDecision` verbatim** — same `decision-card` class, same queueKey discipline, same `data-brain-action` rule. A second queuing path is a second thing to keep in sync.
 - **Every product decision card carries a recommendation with a rationale.** A card that lists options and takes no position is the planner outsourcing its job to the reviewer.
-- **Re-run `node bin/brain.js skill --check`** after any playbook edit, and `skill --write` when it reports stale.
+- **Re-run `node bin/brain.js skill --check`** after any playbook edit; fix the router/skills it reports.
 
 ## Don't
 
@@ -63,7 +63,7 @@ Section numbers are cross-referenced from inside the playbook text, from the `ai
 
 ## Update triggers
 
-- New or renumbered plan section → this doc's numbering table + every cross-reference in `PLAYBOOKS.plan`, `PLAYBOOKS.ai`, `skillContent()`, `.brain/rules/ai-work.md`, then `skill --write`
+- New or renumbered plan section → this doc's numbering table + every cross-reference in `PLAYBOOKS.plan`, `PLAYBOOKS.ai`, `skillContent()`, `.brain/rules/ai-work.md`, then `skill --check`
 - New `.wf-*` class or kit change → `PLAYBOOKS.ux` section 1 + plan §0's style block guidance
 - Annotation behaviour changes in `lib/review/sdk.js` → `PLAYBOOKS.ux` section 6 (it documents the real `shouldSkip` / pin-drop rules; stale text there is worse than none) + `.brain/rules/review-browser.md`
 - Plan snapshot naming (`vN.html`) or location changes → `listSnapshots` + `PLAYBOOKS.verify` §5b + the `plans view` help line + `skillContent()`
