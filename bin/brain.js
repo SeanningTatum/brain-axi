@@ -3859,10 +3859,9 @@ function cmdContext(argv) {
       "features",
       `${list.features.length} total (${Object.entries(counts).map(([s, n]) => `${n} ${s}`).join(", ")})`
     ),
-    kv("in-progress", inProgress.length ? inProgress.map((f) => f.slug).join(", ") : "none"),
   ];
   // Free text, clipped below so the block stays within CONTEXT_CAP.
-  const free = {};
+  const free = { "in-progress": inProgress.length ? inProgress.map((f) => f.slug).join(", ") : "none" };
   if (progress.entries.length) {
     const top = progress.entries[0];
     free["last-checkpoint"] = `${top.date} — ${top.summary}`;
@@ -3874,8 +3873,9 @@ function cmdContext(argv) {
     ...toonList("help", ["Run `brain` for the full dashboard, `brain progress` for the latest checkpoint"]),
   ];
   const render = () => [...lines, ...Object.entries(free).map(([k, v]) => kv(k, v)), ...tail];
-  for (const key of ["next", "last-checkpoint"]) {
-    const over = Buffer.byteLength(render().join("\n")) - CONTEXT_CAP;
+  // Budget covers the whole block incl. the trailing newline print() adds.
+  for (const key of ["next", "last-checkpoint", "in-progress"]) {
+    const over = Buffer.byteLength(render().join("\n") + "\n") - CONTEXT_CAP;
     if (over <= 0 || !free[key]) continue;
     const chars = [...free[key]];
     free[key] = chars.slice(0, Math.max(20, chars.length - over - 8)).join("") + "…";
