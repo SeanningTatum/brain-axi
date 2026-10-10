@@ -405,6 +405,8 @@ test("export → import → export is byte-identical; import refuses a non-empty
   failsWith(brain(src, ["export", "--out", ".brain/brain.db-wal"]), 2, "USAGE");
   fs.symlinkSync(path.join(src, ".brain", "brain.db"), path.join(src, "alias.db"));
   failsWith(brain(src, ["export", "--out", "alias.db"]), 2, "USAGE");
+  fs.linkSync(path.join(src, ".brain", "brain.db"), path.join(src, "hard.db")); // same inode, different realpath
+  failsWith(brain(src, ["export", "--out", "hard.db"]), 2, "USAGE");
   assert.ok(fs.readFileSync(path.join(src, ".brain", "brain.db")).subarray(0, 16).equals(live.subarray(0, 16)), "brain.db untouched");
   const ex = ok(brain(src, ["export"]), /file: .brain\/export\.toon/);
   assert.match(ex.out, /features,1/);
@@ -426,6 +428,34 @@ test("export → import → export is byte-identical; import refuses a non-empty
   const bad = gitRepo(tmp(t));
   failsWith(brain(bad, ["import", "-"], { input: "nope\n" }), 1, "IMPORT_PARSE");
   assert.ok(!fs.existsSync(path.join(bad, ".brain", "brain.db")), "a failed import leaves no brain.db behind");
+  // A failure after parsing (schema too new) also leaves nothing: the import
+  // ran in a private staging dir, removed without touching .brain/brain.db.
+  failsWith(brain(bad, ["import", "-"], { input: d1.out.replace(/^schema: \d+$/m, "schema: 999") }), 1, "IMPORT_VERSION");
+  assert.deepEqual(fs.readdirSync(path.join(bad, ".brain")), [], "no brain.db and no staging dir left");
+  ok(brain(dst, ["check"]), /^ok: true$/m);
+  assert.ok(!fs.readdirSync(path.join(dst, ".brain")).some((n) => n.startsWith(".import-")), "staging dir removed after success");
+});
+
+test("argv: `--` ends flag parsing; an inherited property is not a subcommand (exit 2)", (t) => {
+  const dir = repoWithBrain(t);
+  ok(brain(dir, ["docs", "set", "rules", "flags"], { input: "# Flags\n\nuse --help-me carefully\n" }));
+  const r = ok(brain(dir, ["search", "--", "--help-me"]), /^query: "?--help-me"?$/m);
+  assert.doesNotMatch(r.out, /^command: /m, "searched, not help");
+  failsWith(brain(dir, ["features", "toString"]), 2, "USAGE");
+  failsWith(brain(dir, ["tasks", "constructor"]), 1, "NOT_FOUND"); // `tasks list constructor`: a feature slug, not INTERNAL
+});
+
+test("context stays ≤ 600 bytes even when the brain path alone is longer", (t) => {
+  let deep = tmp(t);
+  // ~480-char brain path: under SQLite's 512-byte path limit, over the cap's budget.
+  for (let i = 0; i < 4; i++) deep = path.join(deep, `${"d".repeat(99)}${i}`);
+  fs.mkdirSync(deep, { recursive: true });
+  ok(brain(deep, ["init"]));
+  const outside = tmp(t);
+  const c = ok(brain(outside, ["context", "--brain", path.join(deep, ".brain")]), /^brain: "?…/m);
+  assert.ok(Buffer.byteLength(c.out) <= 600, `${Buffer.byteLength(c.out)} bytes`);
+  assert.match(c.out, /\.brain"?$/m);
+  assert.ok(endsWithHelp(c.out));
 });
 
 test("stdout carries no stderr noise on success; diagnostics go to stderr", (t) => {

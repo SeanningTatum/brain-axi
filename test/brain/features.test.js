@@ -227,3 +227,14 @@ test("ship warning: autoship (closing the last task) returns it on the ship outc
   assert.equal(r.ship.outcome, "shipped");
   assert.match(r.ship.warning.message, /dirty tree/);
 });
+
+test("autoship never overrides a cut made after the task closed (newer decision wins)", (t) => {
+  const { db, root } = freshBrain(t);
+  features.add(db, { slug: "a", name: "A" });
+  verifications.add(db, "a", { verdict: "PASS", body: "ok", root });
+  features.set(db, "a", { status: "cut" });
+  const r = features.ship(db, "a", { evidence: "autoship: t1", root, autoship: true });
+  assert.equal(r.outcome, "skipped-cut");
+  assert.equal(features.get(db, "a").status, "cut");
+  assert.equal(progress.list(db, { feature: "a" }).length, 0, "no shipping checkpoint");
+});

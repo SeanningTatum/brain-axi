@@ -146,8 +146,12 @@ function parseArgs(argv, spec, label) {
   const pos = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (!a.startsWith("--") || a === "--") {
-      if (a !== "--") pos.push(a);
+    if (a === "--") {
+      pos.push(...argv.slice(i + 1)); // everything after -- is positional
+      break;
+    }
+    if (!a.startsWith("--")) {
+      pos.push(a);
       continue;
     }
     const eq = a.indexOf("=");
@@ -267,7 +271,8 @@ const context = {
     const { db, brainDir } = ctx.brain();
     const st = L.features.stats(db);
     const last = L.progress.latest(db);
-    const head = [kv("brain", rel(brainDir)), kv("features", statsLine(st))];
+    const brainPath = rel(brainDir);
+    const head = [kv("brain", brainPath), kv("features", statsLine(st))];
     const free = { "in-progress": st.in_progress || "none" };
     if (last) {
       free["last-checkpoint"] = `${last.at.slice(0, 10)} — ${last.summary}`;
@@ -283,6 +288,12 @@ const context = {
       if (over <= 0 || !free[key]) continue;
       const chars = [...free[key]];
       free[key] = chars.slice(0, Math.max(20, chars.length - over - 8)).join("") + "…";
+    }
+    // A very long brain path (deep worktree) still fits: keep its tail.
+    const over = Buffer.byteLength(render().join("\n") + "\n") - CONTEXT_CAP;
+    if (over > 0) {
+      const chars = [...brainPath];
+      head[0] = kv("brain", "…" + chars.slice(Math.min(chars.length - 1, over + 8)).join(""));
     }
     print(render());
   },
@@ -312,7 +323,15 @@ const exportCmd = {
         }
       }
     };
-    if (["", "-wal", "-shm"].some((s) => real(out) === real(dbPath + s)))
+    const sameFile = (a, b) => {
+      try {
+        const x = fs.statSync(a), y = fs.statSync(b);
+        return x.dev === y.dev && x.ino === y.ino; // a hard link to the DB too
+      } catch {
+        return false;
+      }
+    };
+    if (["", "-wal", "-shm"].some((s) => real(out) === real(dbPath + s) || sameFile(out, dbPath + s)))
       usage(`--out ${ctx.flags.out} is the live database; pick another file`, ["brain export --out backup.toon"]);
     fs.writeFileSync(out, dump);
     const counts = L.io.TABLES.map((t) => ({ table: t, rows: (dump.match(new RegExp(`^${t}\\[(\\d+)\\]`, "m")) || [0, 0])[1] * 1 }));
@@ -332,27 +351,51 @@ const importCmd = {
   run(ctx) {
     const text = readInput(ctx.pos[0], "<file>");
     let b;
-    let created = false;
+    let staging = null;
     try {
       b = L.openBrain(process.cwd(), { brain: ctx.flags.brain });
     } catch (e) {
       if (!L.isBrainError(e, "NO_DB")) throw e;
-      const { brainDir } = L.locate(process.cwd(), { brain: ctx.flags.brain });
-      b = L.create(path.dirname(brainDir), { brain: brainDir });
-      created = true;
+      // No brain.db yet: import into a PRIVATE staging DB and publish it with
+      // an atomic link only on success. A failed import deletes only its own
+      // staging dir — never a brain.db another process may be writing to.
+      const loc = L.locate(process.cwd(), { brain: ctx.flags.brain });
+      fs.mkdirSync(loc.brainDir, { recursive: true });
+      staging = fs.mkdtempSync(path.join(loc.brainDir, ".import-"));
+      const staged = path.join(staging, "brain.db");
+      try {
+        fs.closeSync(fs.openSync(staged, "wx"));
+        b = { ...loc, staged, db: L.open(staged) };
+      } catch (err) {
+        fs.rmSync(staging, { recursive: true, force: true });
+        throw err;
+      }
     }
     let res;
     try {
       res = L.io.importAll(b.db, text);
+      if (staging) b.db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); // every page in the main file before it is linked
     } catch (e) {
-      // Drop the brain.db this command created — unless another process has
-      // written to it meanwhile (that is how IMPORT_NOT_EMPTY can happen here).
-      const untouched = created && L.io.TABLES.every((t) => !b.db.prepare(`SELECT 1 FROM ${t} LIMIT 1`).get());
       L.close(b.db);
-      if (untouched) for (const s of ["", "-wal", "-shm"]) fs.rmSync(b.dbPath + s, { force: true });
+      if (staging) fs.rmSync(staging, { recursive: true, force: true });
       throw e;
     }
     L.close(b.db);
+    if (staging) {
+      try {
+        fs.linkSync(b.staged, b.dbPath); // fails with EEXIST rather than replace a brain.db made meanwhile
+      } catch (e) {
+        if (e.code !== "EEXIST") throw e;
+        fail("BRAIN_EXISTS", `${rel(b.dbPath)} was created by another process during the import; it was left untouched`, [
+          "Run `brain` to see its state",
+          "To restore into it, it must be empty: move it aside, then `brain import <file>`",
+        ]);
+      } finally {
+        fs.rmSync(staging, { recursive: true, force: true });
+      }
+      L.db.ensureGitignore(b.mainRoot, b.brainDir);
+    }
+    const created = !!staging;
     print([
       ...group("import", { db: rel(b.dbPath), created, "format-version": res.version, schema: res.schema }),
       ...toonTable("tables", Object.entries(res.rows).filter(([, n]) => n).map(([table, rows]) => ({ table, rows })), ["table", "rows"], 2),
@@ -1133,8 +1176,10 @@ const review = {
           fail("SERVER_BAD_RESPONSE", "malformed response from the review server", [`Run \`brain review poll ${file}\` again`]);
         }
         recordPoll(db, root, abs, data);
-        await ackPoll(reviewPort(flags), key, data);
+        // Print first, then ack: a CLI killed in between leaves the batch
+        // unacked, so it is redelivered (and the batch_id dedups the round).
         print(renderPoll(data, file, flags));
+        await ackPoll(reviewPort(flags), key, data);
       },
     },
     end: {
@@ -1150,7 +1195,7 @@ const review = {
         let plan = rv.planForFile(db, root, path.resolve(file));
         if (!plan && flags["approved-by"] !== undefined) plan = L.plans.upsert(db, { file: path.resolve(file), root });
         if (plan) L.plans.upsert(db, { file: path.resolve(file), slug: plan.slug, root });
-        const ended = plan ? L.plans.endSession(db, plan.slug, { approvedBy: flags["approved-by"] }) : null;
+        const ended = plan ? L.plans.endSession(db, plan.slug, { approvedBy: flags["approved-by"], root }) : null;
         let server = "no session";
         try {
           const res = await fetch(`http://127.0.0.1:${reviewPort(flags)}/api/end`, {
@@ -1447,8 +1492,10 @@ function resolve(name, argv) {
   const cmd = COMMANDS[name];
   if (!cmd.subs) return { label: name, leaf: cmd, rest: argv };
   const first = argv[0];
-  if (first !== undefined && cmd.subs[first]) return { label: `${name} ${first}`, leaf: cmd.subs[first], rest: argv.slice(1) };
-  if (argv.includes("--help") && (first === undefined || first.startsWith("--"))) return groupHelp(name, cmd), null;
+  if (first !== undefined && Object.hasOwn(cmd.subs, first)) return { label: `${name} ${first}`, leaf: cmd.subs[first], rest: argv.slice(1) };
+  const dd = argv.indexOf("--");
+  const flagPart = dd === -1 ? argv : argv.slice(0, dd);
+  if (flagPart.includes("--help") && (first === undefined || first.startsWith("--"))) return groupHelp(name, cmd), null;
   if (first !== undefined && !first.startsWith("--") && !cmd.default)
     usage(`unknown subcommand \`${first}\` for \`brain ${name}\``, [`valid: ${Object.keys(cmd.subs).join(", ")}`]);
   return { label: `${name} ${cmd.default}`, leaf: cmd.subs[cmd.default], rest: argv };

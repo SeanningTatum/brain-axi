@@ -109,3 +109,19 @@ test("checks that already ran are recorded when onResult throws", (t) => {
   );
   assert.deepEqual(verify.gateRuns(db).map((g) => [g.check, g.status]), [["a", "pass"]]);
 });
+
+test("a check's stderr and stdout keep their order in the tail (one stream, not stdout then stderr)", (t) => {
+  const { db, root } = freshBrain(t);
+  verify.addCheck(db, { name: "mixed", run: "echo first >&2; echo second; echo third >&2" });
+  const r = verify.run(db, { root });
+  assert.equal(r.results[0].tail, "first\nsecond\nthird");
+});
+
+test("each finished check is recorded before the next one starts", (t) => {
+  const { db, root } = freshBrain(t);
+  verify.addCheck(db, { name: "a", run: "true" });
+  verify.addCheck(db, { name: "b", run: "false" });
+  const seen = [];
+  verify.run(db, { root, onResult: (r) => seen.push([r.check, verify.gateRuns(db).length]) });
+  assert.deepEqual(seen, [["a", 1], ["b", 2]]);
+});

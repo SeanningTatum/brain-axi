@@ -105,7 +105,7 @@ POSTs are same-origin guarded: an `Origin`/`Referer` that is present must match 
 
 | Route | Purpose |
 |---|---|
-| `GET /health`, `POST /shutdown` | liveness / exit (broadcasts `chrome-reload` first) |
+| `GET /health`, `POST /shutdown` | liveness / exit (broadcasts `chrome-reload` first; same-origin guarded) |
 | `POST /api/open` `{file, plan?, feature?, reopen?, brain?, root?}` | validate against brain.db (feature must exist), open/revive the session → `{key, url, status, plan, feature}` or `{refused, reason, key, url}` |
 | `GET /api/poll?key=&reply=` | long-poll; `reply` posts an agent chat line first. 15 s whitespace heartbeat |
 | `POST /api/feedback` `{key, prompts, end?, dom_snapshot?}` | browser queues prompts (409 on an ended session) → `{ok, queued}` |
@@ -117,7 +117,7 @@ POSTs are same-origin guarded: an `Origin`/`Referer` that is present must match 
 | `GET /session/<key>/artifact` | the plan with one injected `<script src="/session/<key>/sdk.js" data-brain-ui>` and a strict CSP (self + inline only) |
 | `GET /session/<key>/context` | `planContext` + `{session}` + `execution` (when a feature is bound) |
 | `GET /session/<key>/health` | `{checks}` — `lib/brain` check rows |
-| `GET /session/<key>/asset/<rel>` | files next to the artifact (sandboxed) |
+| `GET /session/<key>/asset/<rel>`, `GET /session/<key>/<rel>` | files next to the artifact (sandboxed); the second form is what the artifact's own relative `src`/`href` resolve to (matched last, after every named session route) |
 | `GET /session/<key>/shot/<rel>`, `GET /watch/<f>/shot/<rel>?brain=` | a shot **recorded in brain.db**, served from the main checkout (`mainRoot` — shots live in its `.brain/shots/`, shared by every worktree; sandboxed) |
 | `GET /watch/<f>?brain=<abs .brain>` | dashboard page; 404 `{error, code, help}` on a bad brain or unknown feature |
 | `GET /watch/<f>/context?brain=` | `watchContext` |
@@ -169,9 +169,9 @@ replaces the queued item. Opened standalone, the SDK is a safe no-op.
 
 ## Security invariants
 
-1. Loopback bind only; same-origin guard on every browser-facing POST.
+1. Loopback bind only; a request whose `Host` is not `127.0.0.1`/`localhost`/`[::1]` gets 421 before any route (DNS rebinding); same-origin guard on every browser-facing POST, `/shutdown` included.
 2. Artifact iframe sandboxed without `allow-same-origin`; CSP allows no remote origin.
-3. `asset/` routes are realpath-contained; shot routes serve only paths recorded in brain.db.
+3. Artifact-file routes are realpath-contained; shot routes serve only paths recorded in brain.db.
 4. Every browser-supplied object is normalized at the boundary.
 5. The injected SDK tag is the only artifact mutation.
 6. CLI stdout is TOON only; the server logs to stderr (`server.log`).

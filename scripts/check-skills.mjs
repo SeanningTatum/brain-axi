@@ -73,7 +73,8 @@ function cliSurface(names) {
   for (const cmd of names) {
     const text = helpOf([cmd]);
     if (text === null) return { error: `bin/brain.js ${cmd} --help failed` };
-    const entry = { flags: new Set(flagsIn(text)), subs: new Map() };
+    const def = /^default: brain \S+ = brain \S+ (\S+)$/m.exec(text);
+    const entry = { flags: new Set(flagsIn(text)), subs: new Map(), default: def ? def[1] : null };
     for (const row of helpRows(text, /^subcommands\[\d+\]\{name,summary\}:$/)) {
       const sub = row.split(",")[0].replace(/^"|"$/g, "");
       const subText = helpOf([cmd, sub]);
@@ -99,6 +100,7 @@ function cliSurface(names) {
 function codeRegions(text) {
   const out = [];
   let fenced = false;
+  let cont = null; // a code line ending in `\`: the next line continues it
   let para = []; // consecutive prose lines: [{ line, lineNo }]
   const flush = () => {
     if (!para.length) return;
@@ -111,6 +113,14 @@ function codeRegions(text) {
   };
   text.split("\n").forEach((line, i) => {
     const lineNo = i + 1;
+    // Shell continuation: `brain x \` + `  --flag` is ONE command, so a flag
+    // on a continuation line is checked against the command it belongs to.
+    if (cont && line.trim() && !/^\s*```/.test(line)) {
+      cont.text = cont.text.replace(/\\\s*$/, " ") + line.trim();
+      if (!/\\\s*$/.test(line)) cont = null;
+      return;
+    }
+    cont = null;
     if (/^\s*```/.test(line)) {
       flush();
       fenced = !fenced;
@@ -118,7 +128,9 @@ function codeRegions(text) {
     }
     if (fenced || /^ {4,}(?:\$ )?(?:npx -y )?brain(?:-axi)?(?: |$)/.test(line)) {
       flush();
-      return void out.push({ text: line, lineNo });
+      const region = { text: line, lineNo };
+      if (/\\\s*$/.test(line)) cont = region;
+      return void out.push(region);
     }
     if (!line.trim()) return flush();
     para.push({ line, lineNo });
@@ -192,7 +204,8 @@ function checkCommandRefs(problems, files, surface) {
         }
         let allowed = new Set([...entry.flags, "--help", "--brain"]);
         if (entry.subs.size) {
-          const subs = ref.subs.length ? ref.subs : [...entry.subs.keys()];
+          // No subcommand named: the CLI routes to the default one, so only its flags count.
+          const subs = ref.subs.length ? ref.subs : entry.default ? [entry.default] : [...entry.subs.keys()];
           for (const s of ref.subs)
             if (!entry.subs.has(s)) problems.push(`${where}: names \`brain ${ref.cmd} ${s}\`, which is not a subcommand (\`brain ${ref.cmd} --help\` lists ${[...entry.subs.keys()].join(", ")})`);
           for (const s of subs) for (const f of entry.subs.get(s) || []) allowed.add(f);
@@ -294,21 +307,35 @@ function checkPluginFiles(problems) {
   }
 }
 
-const found = [];
-checkSkillsTree(found);
-checkPluginFiles(found);
-const problems = [...new Set(found)]; // a span can match two scanners (`npx -y brain-axi x`)
-const q = (s) => (/[",:]|^\s|\s$/.test(s) ? JSON.stringify(s) : s);
-if (!problems.length) {
-  process.stdout.write("check-skills: skills/ tree and plugin files (.claude-plugin/, hooks/) are valid\n");
-} else {
-  process.stdout.write(
-    [
-      "error: skills/ tree or plugin files invalid",
-      `problems[${problems.length}]:`,
-      ...problems.map((p) => "  " + q(p)),
-      "help[1]: Fix the problems listed above, then re-run `node scripts/check-skills.mjs`",
-    ].join("\n") + "\n"
-  );
-  process.exitCode = 1;
+// Importable for tests (test/check-skills.test.js); runs only as a script.
+export { cliCommands, cliSurface, checkCommandRefs };
+
+function main() {
+  const found = [];
+  checkSkillsTree(found);
+  checkPluginFiles(found);
+  const problems = [...new Set(found)]; // a span can match two scanners (`npx -y brain-axi x`)
+  const q = (s) => (/[",:]|^\s|\s$/.test(s) ? JSON.stringify(s) : s);
+  if (!problems.length) {
+    process.stdout.write("check-skills: skills/ tree and plugin files (.claude-plugin/, hooks/) are valid\n");
+  } else {
+    process.stdout.write(
+      [
+        "error: skills/ tree or plugin files invalid",
+        `problems[${problems.length}]:`,
+        ...problems.map((p) => "  " + q(p)),
+        "help[1]: Fix the problems listed above, then re-run `node scripts/check-skills.mjs`",
+      ].join("\n") + "\n"
+    );
+    process.exitCode = 1;
+  }
 }
+
+const invoked = (() => {
+  try {
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+})();
+if (invoked) main();

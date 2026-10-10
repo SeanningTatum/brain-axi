@@ -345,3 +345,47 @@ test("review: sessions saved by a pre-0.3 server (state.json) survive the upgrad
   ok(brain(["review", "open", "plans/auth.html", "--no-open", "--reopen"]), /^ {2}status: open$/m);
   assert.ok(fs.existsSync(path.join(state, "sessions.json")));
 });
+
+// Raw request with a chosen Host header (fetch will not let a test spoof it).
+function rawRequest(port, { method = "GET", path: p = "/health", headers = {} } = {}) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: "127.0.0.1", port, method, path: p, headers }, (res) => {
+      let body = "";
+      res.on("data", (c) => (body += c));
+      res.on("end", () => resolve({ status: res.statusCode, body }));
+    });
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+test("server: a foreign Host (DNS rebinding) is refused on every route; /shutdown refuses a cross-origin POST", async (t) => {
+  const { port, brain, ok } = await setup(t);
+  ok(brain(["review", "open", "plans/auth.html", "--no-open"]));
+  assert.equal((await rawRequest(port, { headers: { host: `localhost:${port}` } })).status, 200);
+  assert.equal((await rawRequest(port, { headers: { host: `rebind.evil.example:${port}` } })).status, 421);
+  const evil = await rawRequest(port, {
+    method: "POST",
+    path: "/shutdown",
+    headers: { host: `rebind.evil.example:${port}`, origin: `http://rebind.evil.example:${port}` },
+  });
+  assert.equal(evil.status, 421);
+  const cross = await rawRequest(port, { method: "POST", path: "/shutdown", headers: { host: `127.0.0.1:${port}`, origin: "http://evil.example" } });
+  assert.equal(cross.status, 403);
+  assert.equal((await rawRequest(port)).status, 200, "still running");
+});
+
+test("review: an agent end after a user End keeps the user latch; relative artifact assets resolve", async (t) => {
+  const { base, dir, brain, ok, post } = await setup(t);
+  fs.writeFileSync(path.join(dir, "plans", "diagram.svg"), "<svg xmlns='http://www.w3.org/2000/svg'/>");
+  const open = ok(brain(["review", "open", "plans/auth.html", "--no-open"]));
+  const key = urlOf(open.out).split("/").pop();
+  // src="diagram.svg" inside /session/<key>/artifact resolves to /session/<key>/diagram.svg
+  const asset = await fetch(`${base}/session/${key}/diagram.svg`);
+  assert.equal(asset.status, 200);
+  assert.equal(asset.headers.get("content-type"), "image/svg+xml");
+  assert.equal((await fetch(`${base}/session/${key}/..%2F..%2FREADME.md`)).status, 404, "sandboxed to the artifact's dir");
+  assert.equal((await post("/api/end", { key, by: "user" }, { origin: base })).status, 200);
+  ok(brain(["review", "end", "plans/auth.html"]));
+  ok(brain(["review", "open", "plans/auth.html", "--no-open"]), /^refused: /m);
+});

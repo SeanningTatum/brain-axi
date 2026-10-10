@@ -117,3 +117,17 @@ test("re-registering an approved plan whose file changed drops the approval; an 
   assert.equal(edited.status, "in-review");
   assert.equal(edited.approved_by, null);
 });
+
+test("approving a plan edited during review stamps the approved file's hash; a re-register keeps the approval", (t) => {
+  const { db, root } = freshBrain(t);
+  const rel = planFile(root);
+  plans.upsert(db, { file: rel, slug: "p", root });
+  fs.appendFileSync(path.join(root, rel), "edited during review");
+  const approved = plans.endSession(db, "p", { approvedBy: "sean", root });
+  const sha = crypto.createHash("sha256").update(fs.readFileSync(path.join(root, rel))).digest("hex");
+  assert.equal(approved.sha256, sha);
+  assert.equal(check(db, { root }).find((r) => r.check === "plan and shot files").status, "pass");
+  const again = plans.upsert(db, { file: rel, slug: "p", root });
+  assert.equal(again.status, "approved");
+  assert.equal(again.approved_by, "sean");
+});
