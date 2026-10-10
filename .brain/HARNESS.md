@@ -157,6 +157,6 @@ Editing this file, hooks, `feature_list.json` schema, the `.brain` layout, or ad
 ## Further reading
 
 - [`docs/REVIEW-ARCHITECTURE.md`](../docs/REVIEW-ARCHITECTURE.md) — binding contract for `brain review` (shapes, HTTP API, security invariants, all addenda).
-- [`.claude/skills/brain-axi/SKILL.md`](../.claude/skills/brain-axi/SKILL.md) — the `brain-axi` skill: AXI ergonomic standards for agent-facing CLIs. Read before changing any agent-facing surface.
+- AXI standard — upstream [kunchenguid/axi](https://github.com/kunchenguid/axi) (`npx skills add kunchenguid/axi`): ergonomic standards for agent-facing CLIs. Read before changing any agent-facing surface.
 - [Anthropic — Effective harnesses for long-running agents](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents/) — origin of the 5-subsystem framing: progress cursor, one feature at a time, verify before done.
 - [Anthropic — Harness design for long-running apps](https://www.anthropic.com/engineering/harness-design-long-running-apps) — the generator/evaluator split, sprint contracts, graded quality criteria, and the principle behind §6: every component encodes an assumption about what the model can't do on its own, and those assumptions go stale as models improve.

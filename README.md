@@ -95,7 +95,7 @@ If you previously copied the brain skill into `~/.claude/skills/brain` (or `.cla
 
 **Other agents (codex, opencode, copilot):** `npx -y brain-axi setup --app codex|opencode` installs the context hook only. Skills are Claude Code-only for now; `brain playbook <id>` prints any skill's guidance for any agent.
 
-`brain-axi` (the AXI standard itself, vendored from [kunchenguid/axi](https://github.com/kunchenguid/axi) under MIT so this repo's own rules resolve for anyone who clones it; see [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md)) is repo-dev tooling, not part of the plugin. If you only want the standard: `npx skills add kunchenguid/axi`.
+The CLI follows the AXI standard for agent-facing CLIs: [kunchenguid/axi](https://github.com/kunchenguid/axi) (`npx skills add kunchenguid/axi`).
 
 **Or run the CLI straight from a checkout**, no skill involved:
 
