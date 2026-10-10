@@ -7,3 +7,11 @@ node_modules/
 # The CAS critical-section lock is released in a finally, but a SIGKILL mid-write
 # can leak one. It is transient by definition and never shared state.
 .brain/features/*/tasks.json.lock
+
+# brain-axi local state
+.brain/brain.db
+.brain/brain.db-wal
+.brain/brain.db-shm
+.brain/brain.db.bak-v*
+.brain/export.toon
+.brain/shots/
