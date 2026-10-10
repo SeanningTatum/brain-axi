@@ -1,5 +1,5 @@
 {
-  "name": "brain",
+  "name": "brain-axi",
   "version": "0.2.0",
   "description": "Skills and session context for the .brain agent harness: orient, plan, execute, verify, and checkpoint work in repos that keep a .brain/ directory.",
   "author": { "name": "Sean Stuart Urgel" },

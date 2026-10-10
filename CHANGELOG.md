@@ -12,8 +12,8 @@ as a Claude Code plugin. Plan: `plans/2026-10-09-skills-plugin-sqlite.html` (pha
 
 ### Added
 
-- **Claude Code plugin `brain`.** `/plugin marketplace add SeanningTatum/brain-axi`, then
-  `/plugin install brain@brain-axi`. Ships 11 skills and a SessionStart hook that runs the
+- **Claude Code plugin `brain-axi`** (marketplace `SeanningTatum`). `/plugin marketplace add SeanningTatum/brain-axi`, then
+  `/plugin install brain-axi@SeanningTatum` (skills appear as `/brain-axi:brain-plan`, …). Ships 11 skills and a SessionStart hook that runs the
   plugin's own `bin/brain.js context` (no npx, no network).
 - **Skills `skills/brain` (router) + `skills/brain-<id>`** for start, grill, plan, product, ux, ai,
   execute, verify, done, write. Each SKILL.md is capped (router 6144 B, phase 10240 B), ends in a

@@ -38,7 +38,7 @@ Install once. After that you rarely type `brain` — the agent does, because the
 
 ```mermaid
 flowchart LR
-    I["<b>Setup, once per repo</b><br/>/plugin install brain@brain-axi<br/>npx -y brain-axi init"]
+    I["<b>Setup, once per repo</b><br/>/plugin install brain-axi@SeanningTatum<br/>npx -y brain-axi init"]
 
     I --> S
 
@@ -82,7 +82,7 @@ Everything below documents the command surface for completeness — but reach fo
 
 ```sh
 /plugin marketplace add SeanningTatum/brain-axi
-/plugin install brain@brain-axi
+/plugin install brain-axi@SeanningTatum
 ```
 
 The `brain` plugin ships the router skill, the ten `brain-*` phase skills (each is also a slash command), and a SessionStart hook that runs the plugin's own copy of `brain context` (no `npx`, no network, versions stay locked). Then, once per repo that has no `.brain/` yet:

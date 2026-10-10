@@ -5227,7 +5227,7 @@ function brainPluginInstalled(repoRoot) {
   try {
     const data = JSON.parse(fs.readFileSync(path.join(dir, "plugins", "installed_plugins.json"), "utf8"));
     const plugins = data && typeof data.plugins === "object" && data.plugins ? data.plugins : {};
-    const keys = Object.keys(plugins).filter((k) => k.startsWith("brain@"));
+    const keys = Object.keys(plugins).filter((k) => k.startsWith(`${PLUGIN_NAME}@`));
     const layers = [
       path.join(dir, "settings.json"),
       path.join(repoRoot, ".claude", "settings.json"),
@@ -5387,7 +5387,7 @@ function cmdSetup(argv) {
     ...toonTable("setup", rows, ["app", "action", "file", "note"]),
     ...toonList("help", [
       "New sessions in this repo now start with compact brain context",
-      ...(claudeNoPlugin ? ["Install the plugin instead: /plugin marketplace add SeanningTatum/brain-axi then /plugin install brain@brain-axi"] : []),
+      ...(claudeNoPlugin ? [`Install the plugin instead: /plugin marketplace add SeanningTatum/brain-axi then /plugin install ${PLUGIN_NAME}@${MARKETPLACE_NAME}`] : []),
       "Skills are Claude Code-only for now; `brain playbook <id>` prints any skill for other agents",
     ]),
   ]);
@@ -5398,6 +5398,10 @@ function cmdSetup(argv) {
 // ---------------------------------------------------------------------------
 
 const SKILLS_DIR = fileURLToPath(new URL("../skills/", import.meta.url));
+// Claude Code plugin identity: install id `${PLUGIN_NAME}@${MARKETPLACE_NAME}`; skills are
+// namespaced `${PLUGIN_NAME}:<skill>`. Not "brain" — that collides with other plugins named brain.
+const PLUGIN_NAME = "brain-axi";
+const MARKETPLACE_NAME = "SeanningTatum";
 const ROUTER_CAP = 6144; // bytes — the router is read on every session
 const PHASE_CAP = 10240; // bytes — a phase skill; long material goes to references/
 
@@ -5476,13 +5480,13 @@ function validatePluginFiles() {
   const pkg = load("package.json");
   const plugin = load(".claude-plugin/plugin.json");
   if (plugin) {
-    if (plugin.name !== "brain") problems.push(`.claude-plugin/plugin.json: name is "${plugin.name}", expected "brain"`);
+    if (plugin.name !== PLUGIN_NAME) problems.push(`.claude-plugin/plugin.json: name is "${plugin.name}", expected "${PLUGIN_NAME}"`);
     if (pkg && plugin.version !== pkg.version)
       problems.push(`.claude-plugin/plugin.json: version "${plugin.version}" does not match package.json "${pkg.version}"`);
   }
   const market = load(".claude-plugin/marketplace.json");
-  if (market && !(Array.isArray(market.plugins) && market.plugins.some((p) => p && p.name === "brain")))
-    problems.push('.claude-plugin/marketplace.json: does not list plugin "brain"');
+  if (market && !(Array.isArray(market.plugins) && market.plugins.some((p) => p && p.name === PLUGIN_NAME)))
+    problems.push(`.claude-plugin/marketplace.json: does not list plugin "${PLUGIN_NAME}"`);
   const hooks = load("hooks/hooks.json");
   if (hooks) {
     const entries = Array.isArray(hooks.hooks?.SessionStart) ? hooks.hooks.SessionStart : [];
