@@ -5408,7 +5408,7 @@ const PHASE_CAP = 10240; // bytes — a phase skill; long material goes to refer
 function skillContent() {
   const file = path.join(SKILLS_DIR, "brain", "SKILL.md");
   if (!fs.existsSync(file)) opError(`missing ${path.relative(process.cwd(), file)}`, ["The router skill is the source of `brain skill`; restore it from git"]);
-  return fs.readFileSync(file, "utf8");
+  return fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n");
 }
 
 // Validate the skills/ tree: frontmatter, size caps, `## Next` successors,
@@ -5425,7 +5425,7 @@ function validateSkillsTree() {
       problems.push(`${rel}: missing`);
       continue;
     }
-    const raw = fs.readFileSync(file, "utf8");
+    const raw = fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n"); // CRLF checkouts
     const fm = /^---\n([\s\S]*?)\n---\n/.exec(raw);
     if (!fm) {
       problems.push(`${rel}: missing frontmatter`);
@@ -5453,7 +5453,7 @@ function validateSkillsTree() {
   }
   const routerFile = path.join(SKILLS_DIR, "brain", "SKILL.md");
   if (fs.existsSync(routerFile)) {
-    const router = fs.readFileSync(routerFile, "utf8");
+    const router = fs.readFileSync(routerFile, "utf8").replace(/\r\n/g, "\n");
     for (const c of Object.keys(COMMANDS)) {
       const re = new RegExp("(?:`|brain(?:-axi)? )" + c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?![A-Za-z0-9-])");
       if (!re.test(router)) problems.push(`skills/brain/SKILL.md: router never names command "${c}"`);
