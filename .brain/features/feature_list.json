@@ -203,7 +203,7 @@
       "id": "feat-013",
       "name": "axi-core — skills over a thin AXI over a SQLite library",
       "slug": "axi-core",
-      "status": "planned",
+      "status": "in-progress",
       "description": "Per plan 2026-10-10-2026-10-10-axi-architecture (reviewed round 1, all decisions at recommended): three layers only. lib/brain/ owns brain.db (node:sqlite, node>=24, FTS5, WAL, worktree-shared, numbered migrations via user_version with .bak) and exposes plain per-domain functions; bin/brain.js becomes a thin dispatcher with 15 commands (init, context, export/import, features, tasks, progress, runs, docs, plans, review, watch, verifications, verify, search, check); review + watch UIs re-plumbed onto lib/brain; skills name real commands; evals become repo-dev; node:test replaces check-state-invariants; this repo brain rebuilt from live parts. Cut: playbook, skill, setup, metrics, timeline, evals; folded: brief, receipt, pr, shots.",
       "dependencies": [
         "skills-plugin"
