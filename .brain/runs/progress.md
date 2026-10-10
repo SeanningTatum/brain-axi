@@ -21,6 +21,14 @@
 
 ---
 
+## 2026-10-10 — Paused fresh-brain bug fixes (stashed); 13 test-run findings recorded in features/axi-core/axi-core.md for mapping onto axi-core
+- branch: `feat/skills-plugin`
+- in-progress feature: none
+- run note: none
+- next: Sub-agent maps the 13 findings onto axi-core phases (covered/add/fix-now-in-#21/obsolete); then decide #21 merge + Greptile confirm on its HEAD
+
+---
+
 ## 2026-10-10 — Opened PR #21 for skills-plugin (plugin renamed brain-axi@SeanningTatum, installed locally); Greptile 5/5 on 13e64eb, 2 commits after
 - branch: `feat/skills-plugin`
 - in-progress feature: none
