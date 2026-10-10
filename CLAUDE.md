@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `brain-axi` is an **AXI CLI** (`brain`) plus a **Claude Code plugin** that give coding agents durable project memory. The memory is one SQLite file, `.brain/brain.db`, in the target repo (gitignored). Agents run the CLI via shell (`brain <cmd>` or `npx -y brain-axi <cmd>`) to read and write features, tasks, checkpoints, run notes, docs, plans, verifications and declared checks. It is a tool agents use, not a library, so agent ergonomics are the product. Read the AXI standard (upstream [kunchenguid/axi](https://github.com/kunchenguid/axi); `npx skills add kunchenguid/axi`) before changing any agent-facing surface.
 
-Node **>=24** (the brain lives in the built-in `node:sqlite` with FTS5). Zero npm dependencies, no build step, no bundler, no lint config, no third-party test framework (`node:test` only). `package.json` declares only the `brain` bin.
+Node **>=24** (the brain lives in the built-in `node:sqlite` with FTS5). Zero npm dependencies, no build step, no bundler, no lint config, no third-party test framework (`node:test` only). `package.json` declares only the `brain` bin and a `files` allowlist (`bin/`, `lib/`, `skills/`, `hooks/`, `.claude-plugin/`, README, CHANGELOG) — nothing repo-dev (`scripts/`, `test/`, `evals*/`, `plans/`, `docs/`) ships to npm.
 
 ## Architecture: three layers plus the UIs
 
@@ -22,7 +22,7 @@ Repo-dev only (not part of the CLI): `scripts/check-skills.mjs`, `scripts/eval-*
 
 ```bash
 node bin/brain.js                         # dashboard; every command supports --help
-node --test                               # all tests (test/brain, test/cli, test/review)
+node --test                               # all tests (test/brain, test/cli, test/review, test/acceptance.test.js)
 node scripts/check-skills.mjs             # skills tree + plugin files + skills name only real commands/flags
 node bin/brain.js verify run              # this repo's declared checks (test, check-skills, harness)
 node bin/brain.js check                   # integrity: SQLite, FKs, search index, cross-entity rules, file hashes

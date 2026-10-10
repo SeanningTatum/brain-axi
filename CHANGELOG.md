@@ -41,6 +41,14 @@ each other; a database gives those for free. Plan: `plans/2026-10-10-axi-archite
   `verify add` and `NO_CHECKS` when nothing is declared.
 - **`scripts/check-skills.mjs`** replaces `brain skill --check` and additionally fails when a
   skill names a command, subcommand or flag the CLI's `--help` does not list.
+- **`test/acceptance.test.js`** automates the plan's "old brain gone" checklist: no tracked
+  `.brain/` files, no markdown-era paths or cut commands in shipped surfaces (the
+  `LEGACY_BRAIN` detector's two marker-file names are the one documented exception), the
+  old-architecture files absent, the npm tarball limited to the allowlist, `.gitignore`
+  coverage, and a fresh-repo walk that leaves only `brain.db*`, `export.toon` and shots.
+- **`files` allowlist in `package.json`**: npm ships `bin/`, `lib/`, `skills/`, `hooks/`,
+  `.claude-plugin/`, README and CHANGELOG only (0.2.x also shipped `scripts/`, `evals-plugin/`,
+  `plans/` and `docs/`).
 
 ### Changed
 
@@ -58,6 +66,8 @@ each other; a database gives those for free. Plan: `plans/2026-10-10-axi-archite
 - `lib/state.js`, `lib/review/{brain-data,store,evals,playbooks}.js`,
   `scripts/check-{state-invariants,playbook-refs}.mjs`, `docs/HARNESS-INTEROP.md`, and the
   `docs/assets` captures of the old CLI output.
+- `scripts/import-legacy-brain.mjs`, the one-off bridge that imported this repo's markdown
+  brain into `brain.db` (never shipped).
 
 ### Migration
 
