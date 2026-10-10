@@ -10,7 +10,7 @@ _Last updated: 2026-07-14_
 2. **stderr = diagnostics / banners only.** Waiting messages, warnings, server logs go to stderr.
 3. **Zero runtime dependencies.** No npm installs. Node stdlib only (`fs`, `path`, `crypto`, `http`, `child_process`, `url`).
 4. **Every command result ends with a `help:` list** guiding the next action (AXI contextual disclosure).
-5. **`brain skill --check` must stay green.** The generated skill text (`skillContent()`) mirrors the real commands; drift exits 1.
+5. **`brain skill --check` must stay green.** The agent skills (`skills/`; `skillContent()` returns the router `skills/brain/SKILL.md`) mirror the real commands and the `skills/` tree must validate (caps, `## Next`, references, every `COMMANDS` name in the router); drift exits 1.
 
 ## `bin/brain.js` layering (top to bottom)
 
@@ -30,7 +30,7 @@ Every command:
 - Emits TOON via `print()` and **ends with a `help:` list** of next actions.
 - Uses `usageError`/`opError` for failures; returns exit 0 for success and no-ops.
 
-New command checklist: add function → register in `COMMANDS` → give `--help` via `helpBlock` → reject unknown flags → return TOON + `help:` list → update `skillContent()` → verify `brain skill --check` green.
+New command checklist: add function → register in `COMMANDS` → give `--help` via `helpBlock` → reject unknown flags → return TOON + `help:` list → update the router skill `skills/brain/SKILL.md` → verify `brain skill --check` green.
 
 ## Data model (inside a target `.brain/`)
 
@@ -49,7 +49,7 @@ Contract: [`docs/REVIEW-ARCHITECTURE.md`](../../docs/REVIEW-ARCHITECTURE.md) —
 | `brain-data.js` | Brain read/write: plans, timeline, screenshots, verifications, review rounds, execution readers, `brainCheck`. Read-compat both layouts. |
 | `chrome.html` / `chrome.js` | Review chrome page + client: iframe host, composer, brain sidebar, SSE handling. |
 | `sdk.js` | Injected artifact SDK: annotations, scroll, compact-outline snapshot, layout audit, `window.brain.queuePrompt`. No-op safe standalone. |
-| `playbooks.js` | `PLAYBOOKS` map (`plan`, `execute`, `verify`) — full markdown runbooks served by `brain playbook`. |
+| `playbooks.js` | `PLAYBOOKS` map — loads each `skills/brain-<id>/SKILL.md` body (+ its `references/` list) for `brain playbook <id> [--ref <topic>]`. |
 
 Browser files are plain ES2020, no frameworks. Server/store/data are Node ESM, zero-dep.
 

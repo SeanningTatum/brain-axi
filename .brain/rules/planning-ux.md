@@ -17,7 +17,7 @@ Read when: editing the `product` or `ux` playbook, adding/renumbering a section 
 | Verify §5b + verdict table | `PLAYBOOKS.verify` | Reconcile shipped screenshots against the approved `vN.html` snapshot; undisclosed differences fail |
 | Snapshot surfacing | `listSnapshots` in `lib/review/brain-data.js` + `cmdPlansView` | Per-round `snapshot:` path in `brain plans view`, plus the help line pointing at the frozen copy |
 | Regression check | `scripts/check-playbook-refs.mjs` (declared in `verify.json`, stages baseline + verify) | Every playbook section cross-reference resolves, every `.wf-*` class an example uses is defined by the kit, every backticked `playbook <id>` exists |
-| Skill playbook index | `skillContent()` in `bin/brain.js` | Eight playbook rows + the conditional-section map in the plan-review flow |
+| Skill phase table | `skills/brain/SKILL.md` (router) + `skills/brain-plan/` | The phase-skill table + the conditional-section map in the plan skill |
 
 ## The plan artifact's section numbering (0-16)
 

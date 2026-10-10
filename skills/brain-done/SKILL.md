@@ -1,15 +1,15 @@
 ---
 name: brain-done
-description: "before declaring any task complete — full verify, harness invariants, coherence"
+description: "Use before declaring any task complete, opening a PR, or shipping a feature — full brain verify, brain check, doc coherence for every changed path, then close state: checkpoint, ship with evidence, record the PR."
 ---
 TERMINATION CHECK PLAYBOOK
 ==========================
 
 You are about to declare a task complete. This is the bookend that closes the
-state `brain playbook start` opened — full verify, harness invariants, and a
+state the `brain-start` skill (`brain playbook start` if skills are unavailable) opened — full verify, harness invariants, and a
 brain-coherence pass, before a single "looks done to me" claim leaves this
 session. The rule this playbook exists to enforce, ported from the execution
-loop (`brain playbook execute`): every claim below is something you actually
+loop (the `brain-execute` skill (`brain playbook execute` if skills are unavailable)): every claim below is something you actually
 ran and read back, never something you expect to be true. A red row you
 didn't look at is not a passed check — it's an unchecked one.
 
@@ -42,7 +42,7 @@ walked, golden path + at least one error path + edge probes — driven in a
 real browser for what a browser can reach, each non-browser criterion run as
 its named command — screenshots (or command + exit code + output), quality
 scores against their floors, a Verdict line. That full standard lives in
-`brain playbook verify` — read and follow it there; this playbook does not
+the `brain-verify` skill (`brain playbook verify` if skills are unavailable) — read and follow it there; this playbook does not
 duplicate it. Confirm it landed with `brain verifications <slug>`, then open
 the newest doc — the highest round (`<date>-rN.md` is newer than
 `<date>.md`) — and hold three:
@@ -73,7 +73,7 @@ did, run
 
     brain verify --stage evals
 
-and hold all four of the following — read `brain playbook ai` for the
+and hold all four of the following — read the `brain-ai` skill (`brain playbook ai` if skills are unavailable) for the
 reasoning:
 
 - **The suite was re-run after your LAST edit**, not three edits ago. Report
@@ -100,21 +100,7 @@ report as a known gap. Do not report the change as verified.
 2c. PRODUCT CLAIMS — STILL TRUE?
 -------------------------------------------------------------------------------
 
-Skip if the approved plan had no product brief (internal work). Otherwise
-re-read what the plan claimed (`brain plans view <slug>`) and hold three:
-
-- **The success metric was actually observed**, not assumed. State the
-  before/after, or state plainly that it has not been measured yet and when
-  it will be. A metric written at plan time and never checked is a metric
-  that was decorative.
-- **The non-goals held.** If something you declined got built anyway, say so
-  — quietly widening scope past what a human approved is the failure this
-  check exists to catch. The reverse counts too: a scope tier the reviewer
-  approved that did NOT ship is an unshipped promise, not a detail.
-- **The shipped UI matches the approved mockups.** If the plan carried
-  wireframes (`brain playbook ux`), compare them against the verification
-  screenshots from step 2. Differences are fine — undisclosed differences are
-  not. Name each one and why it changed.
+Skip if the approved plan had no product brief (internal work). Otherwise hold three claims — the success metric actually observed, the non-goals held, the shipped UI matching the approved mockups. Read `references/product-claims.md` (`brain playbook done --ref product-claims`) before skipping this step.
 
 -------------------------------------------------------------------------------
 3. HARNESS INVARIANTS
@@ -147,7 +133,7 @@ not let it pass silently as "probably fine."
 5. CLOSE STATE
 -------------------------------------------------------------------------------
 
-Everything written in this step follows `brain playbook write` — it owns the
+Everything written in this step follows the `brain-write` skill (`brain playbook write` if skills are unavailable) — it owns the
 slots and the register for each artifact below.
 
 - Final step of record: `brain runs append <slug> --step "..." --observed
@@ -191,3 +177,8 @@ A task is done only when ALL of the following are true, not "mostly true":
 If anything above is unmet, do not declare the task done — say exactly what's
 blocking instead. A partial "done" reported as complete is worse than an
 honest "blocked on X."
+
+## Next
+
+- Terminal — nothing follows. The task is closed once state is recorded.
+- While recording checkpoints, evidence, and the PR, use the `brain-write` skill.

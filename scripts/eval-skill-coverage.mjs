@@ -2,7 +2,7 @@
 // scripts/eval-skill-coverage.mjs — the runner for the `skill-coverage` eval
 // suite. This is the reference implementation of the runner contract that
 // `brain evals run` expects, and deliberately the simplest possible one:
-// deterministic string assertions over a document, no model call, no deps.
+// deterministic string assertions over the skills/ tree, no model call, no deps.
 //
 // Contract (see `brain playbook ai` and .brain/rules/ai-work.md):
 //   - read the golden set from the suite directory
@@ -20,20 +20,33 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const suiteDir = path.join(repoRoot, ".brain", "evals", "skill-coverage");
-const skillPath = path.join(repoRoot, ".claude", "skills", "brain", "SKILL.md");
+const skillsDir = path.join(repoRoot, "skills");
 
 function fail(message) {
   process.stderr.write(`eval-skill-coverage: ${message}\n`);
   process.exit(1);
 }
 
-if (!fs.existsSync(skillPath)) fail(`missing ${path.relative(repoRoot, skillPath)} — run \`brain skill --write\` first`);
+// The prompt under test is the WHOLE skills/ tree: the router plus every
+// brain-* phase skill and each skill's references/. Concatenated in sorted
+// path order, so one document answers "does the skill system say X anywhere".
+function skillFiles(dir) {
+  const out = [];
+  for (const e of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) out.push(...skillFiles(p));
+    else if (!e.name.startsWith(".")) out.push(p);
+  }
+  return out;
+}
+
+if (!fs.existsSync(skillsDir)) fail("missing skills/ — the agent skill tree is the prompt under test");
 if (!fs.existsSync(path.join(suiteDir, "cases.jsonl"))) fail("missing cases.jsonl");
 
 // Markdown wraps; meaning does not. Collapsing whitespace stops a soft line
 // break inside `brain verify --stage baseline` from reading as a missing
 // contract — a false negative that would train everyone to ignore this suite.
-const skill = fs.readFileSync(skillPath, "utf8").replace(/\s+/g, " ");
+const skill = skillFiles(skillsDir).map((f) => fs.readFileSync(f, "utf8")).join("\n").replace(/\s+/g, " ");
 
 let cases;
 try {
@@ -64,7 +77,7 @@ function evaluate(c) {
     return {
       pass: hit,
       output: hit ? `found: ${a.value}` : `NOT FOUND: ${a.value}`,
-      notes: hit ? "" : `SKILL.md never mentions "${a.value}" — regenerate with \`brain skill --write\` after updating skillContent()`,
+      notes: hit ? "" : `the skills/ tree never mentions "${a.value}" — add it to the router (skills/brain/SKILL.md) or the owning phase skill, then \`brain skill --write\``,
     };
   }
   // Command coverage: the skill may name a command in either invocation form
@@ -76,7 +89,7 @@ function evaluate(c) {
     return {
       pass: !!hit,
       output: hit ? `found: ${hit}` : `NOT FOUND (any of): ${values.join(" | ")}`,
-      notes: hit ? "" : `SKILL.md names this command in no invocation form — update skillContent() then \`brain skill --write\``,
+      notes: hit ? "" : `the skills/ tree names this command in no invocation form — add it to the router (skills/brain/SKILL.md) then \`brain skill --write\``,
     };
   }
   if (a.type === "not_contains") {
@@ -84,7 +97,7 @@ function evaluate(c) {
     return {
       pass: !hit,
       output: hit ? `PRESENT (must not be): ${a.value}` : `absent as required: ${a.value}`,
-      notes: hit ? `SKILL.md references "${a.value}", which does not exist in this repo` : "",
+      notes: hit ? `the skills/ tree references "${a.value}", which does not exist in this repo` : "",
     };
   }
   return { pass: false, output: "", notes: `unknown assert type "${a.type}"` };

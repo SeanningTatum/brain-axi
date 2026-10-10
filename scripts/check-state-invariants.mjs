@@ -3296,8 +3296,9 @@ function writeTasksFile(brain, slug, tasks) {
 // and the golden + error + edge layers still bind, via commands.
 // ---------------------------------------------------------------------------
 {
+  // A playbook is its SKILL.md body plus references/ — `full` is the whole standard.
   const { PLAYBOOKS } = await import("../lib/review/playbooks.js");
-  const v = PLAYBOOKS.verify.content;
+  const v = PLAYBOOKS.verify.full;
   ok("verify playbook: has a CLI-ONLY FEATURES clause", /CLI-ONLY FEATURES\./.test(v));
   ok("verify playbook: the app-reachable step is skipped for CLI-only features",
     /Confirm the app is reachable[\s\S]{0,200}Skip this for a CLI-only feature/.test(v));
@@ -3306,7 +3307,7 @@ function writeTasksFile(brain, slug, tasks) {
   ok("verify playbook: the header allows a CLI-only Base URL", /\*\*Base URL\*\*:.*n\/a — CLI-only/.test(v));
   ok("verify playbook: screenshot rule names the non-browser evidence", /Every asserted state gets a screenshot \(for a criterion no browser can\s+reach/.test(v));
   for (const id of ["execute", "done"]) {
-    const c = PLAYBOOKS[id]?.content || "";
+    const c = PLAYBOOKS[id]?.full || "";
     ok(`${id} playbook: 'driven in a real browser' is scoped to what a browser can reach`,
       !/driven in a[\s\n]+real browser(?![\s\n]+for what a browser can reach)/.test(c), id);
   }

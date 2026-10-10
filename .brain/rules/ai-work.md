@@ -12,7 +12,7 @@ Read when: editing the `ai` playbook, adding/altering an AI branch inside anothe
 | CLI verbs | `cmdEvals` in `bin/brain.js` | `evals` list/view/cases/runs/run/record/golden — TOON output + `help:` lists only |
 | The gate | `cmdVerifyEvals` in `bin/brain.js` | `brain verify --stage evals`: runs every suite, records, applies `gateVerdict`, exits 1 |
 | Checkpoint stamp | `cmdProgressAdd` `--eval` | Reads score/delta/frozen/cost out of the run record — never from the caller |
-| Dogfood suite | `.brain/evals/skill-coverage/` + `scripts/eval-skill-coverage.mjs` | Scores the generated skill: command coverage, contracts, no fabricated tooling |
+| Dogfood suite | `.brain/evals/skill-coverage/` + `scripts/eval-skill-coverage.mjs` | Scores the whole `skills/` tree (router + phase skills + references, concatenated): command coverage, contracts, no fabricated tooling |
 
 Boundaries that matter: **`evals.js` never spawns, writes prompts, or calls a model** — execution lives in `bin/brain.js`, model calls live in the project's own runner. `evals` is a stage of `brain verify` but NOT a legal stage inside `verify.json` (`VERIFY_STAGES` vs `ALL_VERIFY_STAGES`): gate logic belongs in brain, not in a shell string.
 
@@ -25,8 +25,8 @@ Boundaries that matter: **`evals.js` never spawns, writes prompts, or calls a mo
 | Start §3, §5 | `PLAYBOOKS.start` | Read `.brain/evals/` state; take an eval baseline before editing prompts |
 | Execute step 3b | `PLAYBOOKS.execute` | Re-run the suite per prompt change; record per-case delta; a red frozen case kills the change |
 | Done §2b + DoD | `PLAYBOOKS.done` | Suite re-run after the last edit, no failing frozen case, every fixed bug encoded as a frozen case, human eval feedback answered |
-| Skill "AI work" | `skillContent()` in `bin/brain.js` | Same contract, condensed, plus the full `brain evals` command surface and the runner/adapter envelope |
-| Verify docs | `skillContent()` verify section | `--stage evals` is the gate and is opt-in; `evals` is not a verify.json stage |
+| Skill "AI work" | `skills/brain/SKILL.md` (router) + `skills/brain-ai/` | Same contract, condensed, plus the full `brain evals` command surface and the runner/adapter envelope |
+| Verify docs | `skills/brain-verify/` + `skills/brain-done/` | `--stage evals` is the gate and is opt-in; `evals` is not a verify.json stage |
 
 ## Do
 

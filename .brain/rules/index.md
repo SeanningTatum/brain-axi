@@ -18,8 +18,8 @@ Domain-specific do/don't rules organized by **layer of `brain-axi`**. Terse, act
 | 2 | [`cli-commands.md`](cli-commands.md) | `bin/brain.js` commands, flags, dispatch, skill sync | Adding/renaming a command or flag |
 | 3 | [`review-server.md`](review-server.md) | `lib/review/server.js`, `store.js`, `brain-data.js` | HTTP routes, sessions, persistence, trust boundary |
 | 4 | [`review-browser.md`](review-browser.md) | `lib/review/chrome.{html,js}`, `sdk.js` | Chrome UI, injected SDK, postMessage, sandbox |
-| 5 | [`ai-work.md`](ai-work.md) | `lib/review/playbooks.js` (the `ai` playbook + AI branches), `skillContent()` | Editing AI guidance; building the evals subsystem |
-| 6 | [`planning-ux.md`](planning-ux.md) | `lib/review/playbooks.js` (the `product` + `ux` playbooks, plan §3/§6/§7), `skillContent()` | Editing product/UX planning guidance; renumbering plan sections |
+| 5 | [`ai-work.md`](ai-work.md) | `lib/review/playbooks.js` + `skills/brain-ai/` (the `ai` playbook + AI branches), the router skill | Editing AI guidance; building the evals subsystem |
+| 6 | [`planning-ux.md`](planning-ux.md) | `lib/review/playbooks.js` + `skills/brain-product/`, `skills/brain-ux/` (plan §3/§6/§7), the router skill | Editing product/UX planning guidance; renumbering plan sections |
 | 7 | [`state.md`](state.md) | `lib/state.js` — feature-list schema, verdict parser, atomic writes, receipts | Changing what a valid `.brain` state IS; adding an invariant; any durable write; writing or judging a verification (independence, acceptance rows, quality floors) |
 
 ## Layer dependency direction
@@ -45,7 +45,7 @@ in one of them alone is an invariant the other can contradict.
 ## Update triggers
 
 - New output convention → `toon-axi.md`
-- New command / flag / dispatch change → `cli-commands.md` (and update `skillContent()`)
+- New command / flag / dispatch change → `cli-commands.md` (and update the router skill `skills/brain/SKILL.md`)
 - New HTTP route, session field, or persistence shape → `review-server.md` + `docs/REVIEW-ARCHITECTURE.md`
 - New postMessage type or SDK behavior → `review-browser.md` + `docs/REVIEW-ARCHITECTURE.md`
 - New/changed AI guidance, eval command, or `.brain/evals/` shape → `ai-work.md` (and `skill --write`)

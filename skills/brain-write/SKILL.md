@@ -1,6 +1,6 @@
 ---
 name: brain-write
-description: "writing anything into the brain — checkpoints, run notes, feature docs, verdicts, commit bodies"
+description: "Use whenever writing anything into the brain — progress checkpoints, run notes, feature docs, verification verdicts, commit bodies. The register: specific, verbatim, dated; what never goes in."
 ---
 WRITTEN RECORD PLAYBOOK
 =======================
@@ -71,7 +71,7 @@ the load-bearing mechanism buried mid-clause.
   invariant worth asserting".
 - **Quote command output; never paraphrase it.** "301/301 tests, exit 0" is
   evidence. "tests pass" is a claim. This is the same rule
-  `brain playbook execute` applies to every --observed string, and it applies
+  the `brain-execute` skill (`brain playbook execute` if skills are unavailable) applies to every --observed string, and it applies
   to prose for the same reason.
 - **Aphorisms are for the plan artifact, not the record.** A plan argues; a
   record reports. The sentence you are proud of usually belongs in the plan.
@@ -133,7 +133,7 @@ changed — with the evidence, not the adjective.
 
 --- 4.4 VERIFICATION DOC ---
 
-Owned by `brain playbook verify`; the register rules here apply to its prose.
+Owned by the `brain-verify` skill (`brain playbook verify` if skills are unavailable); the register rules here apply to its prose.
 The Verdict line is parsed by `brain check` — write it exactly as that
 playbook specifies and do not editorialize on the same line. One Verdict per
 doc: a re-walk after a FAIL is a new `<date>-rN.md` doc, never a second
@@ -159,7 +159,11 @@ why this shape, what you rejected, what would break if someone undid it.
 
 Plan artifacts. A plan is persuasion — it argues that a thing is worth
 building, and it is read once, start to finish, by a person deciding. That is
-the opposite job, and `brain playbook plan` owns it.
+the opposite job, and the `brain-plan` skill (`brain playbook plan` if skills are unavailable) owns it.
 
 If you are unsure which you are writing: a record answers "what happened", a
 plan answers "what should we do". Only one of them is allowed a good sentence.
+
+## Next
+
+- Used from the `brain-execute` skill (run notes, checkpoints) and the `brain-done` skill (close-out checkpoint, ship evidence, PR record); no successor of its own.

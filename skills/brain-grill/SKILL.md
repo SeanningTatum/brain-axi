@@ -1,13 +1,13 @@
 ---
 name: brain-grill
-description: "before writing a plan that will carry any decision — interview the human, memory-checked"
+description: "Use before writing any plan, proposal, or design that carries a decision — when the user says 'let's design/plan X' or 'how should we…'. Checks the brain for already-settled answers, then interviews the human in numbered rounds with recommendations."
 ---
 GRILLING PLAYBOOK
 =================
 
 You are about to write a plan and you do not yet know enough to write a good
 one. This playbook is the interview that runs BEFORE the artifact exists.
-`brain playbook plan` writes the thing; this one works out what the thing
+the `brain-plan` skill (`brain playbook plan` if skills are unavailable) writes the thing; this one works out what the thing
 should be. Run it whenever the plan you are about to write will carry a
 decision card — which is nearly always, and the exception is the change so
 small it has nothing to decide.
@@ -170,3 +170,7 @@ The artifact is then reviewed as usual: `brain review <plan.html>`, then
   the human that the rounds are not worth reading closely.
 - **The round is a wall of prose.** Six numbered questions with lettered
   options is scannable. Six paragraphs is a document, and it gets skimmed.
+
+## Next
+
+- Settled answers in hand: use the `brain-plan` skill to write the artifact.

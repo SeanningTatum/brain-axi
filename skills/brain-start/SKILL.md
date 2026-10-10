@@ -1,6 +1,6 @@
 ---
 name: brain-start
-description: "starting any non-trivial task — frame it, read the brain, baseline, open state"
+description: "Use when starting any non-trivial task, bug fix, or feature in a repo with .brain/ — before editing code: read brain state, frame intent and scope, check policy, run the baseline, claim the feature and open a checkpoint."
 ---
 TASK KICKOFF PLAYBOOK
 =====================
@@ -12,7 +12,7 @@ that lets the next session (or the next poll of this one) pick up where you
 left off. Follow the seven steps below in order; do not start editing before
 step 7's readiness statement.
 
-Two principles carry over from the execution loop (`brain playbook execute`)
+Two principles carry over from the execution loop (the `brain-execute` skill (`brain playbook execute` if skills are unavailable))
 because they govern reading state exactly the way that one governs writing
 it:
 
@@ -71,7 +71,7 @@ dependency bump, CI config. Otherwise add two more sentences:
 
 Two sentences here, not a brief. The full standard — problem + evidence,
 success-metric fallback ladder, non-goals, scope tiers, prior art — lives in
-`brain playbook product` and belongs in the plan artifact, not in kickoff.
+the `brain-product` skill (`brain playbook product` if skills are unavailable) and belongs in the plan artifact, not in kickoff.
 The point of doing it now is that a task you cannot frame this way is a task
 whose "done" nobody can check.
 
@@ -93,7 +93,7 @@ conventions — the brain's rules/codebase docs are the source of truth for
 generic project of this shape would look like.
 
 **If this task touches prompts, models, or agents**, read
-`brain playbook ai` now as well, and run `brain evals` — the suites, their
+the `brain-ai` skill (`brain playbook ai` if skills are unavailable) now as well, and run `brain evals` — the suites, their
 case counts, their last score, and whether any is stale or regressed — the
 same way you just read the feature tracker. A prompt change made without knowing which
 suite measures it — and what that suite last scored — is the AI equivalent of
@@ -160,8 +160,8 @@ Before writing a line of code, state one line:
 Only after this line — and no user redirect in response to it — start
 working.
 
-**If the next act is a plan, that is not code.** Run `brain playbook grill`
-before `brain playbook plan`: it interviews the human while the design can
+**If the next act is a plan, that is not code.** Run the `brain-grill` skill (`brain playbook grill` if skills are unavailable)
+before the `brain-plan` skill (`brain playbook plan` if skills are unavailable): it interviews the human while the design can
 still change, and checks the brain for an already-settled answer before asking
 anything. Skip it only for a change with nothing to decide.
 
@@ -186,3 +186,8 @@ DEFINITION OF READY
 
 Anything unchecked means you are not ready to start — go back and do that
 step, don't skip straight to editing.
+
+## Next
+
+- Plan needed (the change carries a decision): use the `brain-grill` skill, then `brain-plan`.
+- No plan needed (the shape is settled): use the `brain-execute` skill.
