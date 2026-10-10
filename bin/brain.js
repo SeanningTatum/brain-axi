@@ -47,6 +47,12 @@ function print(lines) {
   process.stdout.write(lines.join("\n") + "\n");
 }
 
+// print, resolved once stdout has handed the bytes to the OS (a slow pipe
+// reader may leave them buffered in this process until then).
+function printFlushed(lines) {
+  return new Promise((resolve, reject) => process.stdout.write(lines.join("\n") + "\n", (e) => (e ? reject(e) : resolve())));
+}
+
 // A CLI-level failure (bad flags, missing args). Library failures arrive as
 // BrainError; both carry { code, message, help[], exitCode }.
 class CliError extends Error {
@@ -940,8 +946,10 @@ const plans = {
       spec: { "--full": { desc: "do not truncate prompts" } },
       examples: ["brain plans view 2026-10-10-axi-architecture"],
       run(ctx) {
-        const { db } = ctx.brain();
+        const { db, root } = ctx.brain();
         const p = L.plans.get(db, ctx.pos[0]);
+        // file_path is checkout-relative; `review open` resolves from the cwd.
+        const reopen = path.relative(process.cwd(), path.resolve(root, p.file_path)) || p.file_path;
         const prompts = p.reviews.flatMap((r) =>
           r.prompts.map((x) => ({ round: r.round, tag: x.tag, prompt: ctx.flags.full ? x.prompt : clip(x.prompt) }))
         );
@@ -953,7 +961,7 @@ const plans = {
           ...toonTable("prompts", prompts, ["round", "tag", "prompt"]),
           ...toonList("help", [
             ...(clipped ? [`Prompts cut at ${CELL_LIMIT} chars (…): brain plans view ${p.slug} --full`] : []),
-            `Reopen it for review: brain review open ${p.file_path}`,
+            `Reopen it for review: brain review open ${reopen}`,
           ]),
         ]);
       },
@@ -1215,9 +1223,9 @@ const review = {
           fail("SERVER_BAD_RESPONSE", "malformed response from the review server", [`Run \`brain review poll ${file}\` again`]);
         }
         recordPoll(db, root, abs, data);
-        // Print first, then ack: a CLI killed in between leaves the batch
-        // unacked, so it is redelivered (and the batch_id dedups the round).
-        print(renderPoll(data, file, flags));
+        // Print (flushed) first, then ack: a CLI killed in between leaves the
+        // batch unacked, so it is redelivered (and the batch_id dedups the round).
+        await printFlushed(renderPoll(data, file, flags));
         await ackPoll(reviewPort(flags), key, data);
       },
     },
@@ -1265,11 +1273,13 @@ const watch = {
   spec: { "--no-open": { desc: "do not open the system browser" }, ...REVIEW_PORT_FLAG },
   examples: ["brain watch auth", "brain watch auth --no-open"],
   async run(ctx) {
-    const { db, brainDir } = ctx.brain();
+    const { db, brainDir, root, mainRoot } = ctx.brain();
     const f = L.features.lookup(db, ctx.pos[0]);
     const port = reviewPort(ctx.flags);
     await ensureServer(port);
-    const url = `http://127.0.0.1:${port}/watch/${encodeURIComponent(f.slug)}?brain=${encodeURIComponent(brainDir)}`;
+    // From a worktree, `root` makes the dashboard check plans in this checkout.
+    const rootQs = root && mainRoot && path.resolve(root) !== path.resolve(mainRoot) ? `&root=${encodeURIComponent(root)}` : "";
+    const url = `http://127.0.0.1:${port}/watch/${encodeURIComponent(f.slug)}?brain=${encodeURIComponent(brainDir)}${rootQs}`;
     print([
       ...group("watch", { feature: f.slug, status: f.status, url }),
       ...toonList("help", [
@@ -1346,7 +1356,7 @@ const verifications = {
         "--verdict": { value: true, desc: "PASS | FAIL | BLOCKED (required)" },
         "--body": { value: true, desc: "the verifier's walk, verbatim (or --body-from)" },
         "--body-from": { value: true, desc: "read the body from a file, or - for stdin" },
-        "--shot": { value: true, repeat: true, desc: "screenshot under the MAIN checkout's .brain/shots/<feature>/ (gitignored, shared by every worktree; only the path + sha256 is recorded); `path::caption` adds a caption" },
+        "--shot": { value: true, repeat: true, desc: "screenshot under the brain's shots/<feature>/ (.brain/shots/ by default, <brainDir>/shots/ with --brain; the MAIN checkout's, gitignored, shared by every worktree; only the path + sha256 is recorded); `path::caption` adds a caption" },
         "--verified-by": { value: true, desc: "who verified (default feature-verifier)" },
         "--implemented-by": { value: true, desc: "who implemented (default: HEAD's author)" },
       },

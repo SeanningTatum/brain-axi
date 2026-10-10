@@ -320,3 +320,47 @@ test("concurrent creates: exactly one wins, the rest get BRAIN_EXISTS, and the b
   t.after(() => close(db));
   assert.equal(schemaVersion(db), LATEST);
 });
+
+test("locate: from a worktree subdir, the main checkout's nested .brain wins over its root .brain", (t) => {
+  const base = tmpDir(t);
+  const main = path.join(base, "main");
+  fs.mkdirSync(path.join(main, "packages", "app"), { recursive: true });
+  gitRepo(main);
+  fs.writeFileSync(path.join(main, "packages", "app", "x.txt"), "x");
+  git(main, "add", ".");
+  git(main, "commit", "-q", "-m", "app");
+  fs.mkdirSync(path.join(main, ".brain"));
+  fs.mkdirSync(path.join(main, "packages", "app", ".brain"));
+  const wt = path.join(base, "wt");
+  git(main, "worktree", "add", "-q", wt, "-b", "wt-branch");
+  // The worktree has no .brain/ dirs (gitignored state is never checked out).
+  const loc = locate(path.join(wt, "packages", "app"));
+  assert.equal(loc.brainDir, path.join(fs.realpathSync(main), "packages", "app", ".brain"));
+  assert.equal(loc.root, fs.realpathSync(wt));
+  assert.equal(locate(wt).brainDir, path.join(fs.realpathSync(main), ".brain"));
+});
+
+test("create: a failed .gitignore write removes the reserved brain.db, so a retry works", (t) => {
+  const root = gitRepo(tmpDir(t));
+  fs.mkdirSync(path.join(root, ".gitignore")); // writeFileSync -> EISDIR
+  assert.throws(() => create(root), /EISDIR/);
+  assert.ok(!fs.existsSync(path.join(root, ".brain", "brain.db")), "no half-made brain.db left behind");
+  fs.rmdirSync(path.join(root, ".gitignore"));
+  const b = create(root);
+  t.after(() => close(b.db));
+  assert.ok(fs.existsSync(b.dbPath));
+});
+
+test("check: a file rewritten after a passing check is still flagged (hash cache keys on size+mtime)", (t) => {
+  const b = freshBrain(t);
+  const planFile = path.join(b.root, "plan.html");
+  fs.writeFileSync(planFile, "<title>P</title>v1");
+  plans.upsert(b.db, { file: "plan.html", root: b.root });
+  const files = () => check(b.db, { root: b.root }).find((r) => r.check === "plan and shot files");
+  assert.equal(files().status, "pass");
+  assert.equal(files().status, "pass", "a second (cached) check still passes");
+  fs.writeFileSync(planFile, "<title>P</title>v2"); // same size
+  const later = new Date(Date.now() + 5000);
+  fs.utimesSync(planFile, later, later);
+  assert.equal(files().status, "fail");
+});

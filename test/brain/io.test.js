@@ -123,3 +123,16 @@ test("exportAll reads one snapshot: a write landing mid-export cannot orphan chi
   const res = io.importAll(b.db, dump);
   assert.deepEqual([res.rows.features, res.rows.tasks], [1, 0]);
 });
+
+test("import refuses a dump whose task dependencies form a cycle, and writes nothing", (t) => {
+  const a = freshBrain(t);
+  features.add(a.db, { slug: "k", name: "K" });
+  tasks.add(a.db, "k", { title: "a", acceptance: "x" });
+  tasks.add(a.db, "k", { title: "b", acceptance: "x", dependsOn: ["t1"] });
+  const dump = io.exportAll(a.db).replace("task_deps[1]{task_id,depends_on}:\n  2,1", "task_deps[2]{task_id,depends_on}:\n  2,1\n  1,2");
+  assert.match(dump, /task_deps\[2\]/);
+  const b = create(tmpDir(t), { gitignore: false });
+  t.after(() => close(b.db));
+  throwsCode(() => io.importAll(b.db, dump), "IMPORT_PARSE", /task_deps has a dependency cycle/);
+  assert.equal(b.db.prepare("SELECT count(*) AS n FROM tasks").get().n, 0);
+});

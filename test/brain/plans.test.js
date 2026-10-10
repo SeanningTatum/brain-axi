@@ -131,3 +131,14 @@ test("approving a plan edited during review stamps the approved file's hash; a r
   assert.equal(again.status, "approved");
   assert.equal(again.approved_by, "sean");
 });
+
+test("addRound: a retried batch returns its round even after the snapshot file is gone", (t) => {
+  const { db, root } = freshBrain(t);
+  plans.upsert(db, { file: planFile(root), slug: "p1", root });
+  const snap = path.join(root, "snap.html");
+  fs.writeFileSync(snap, "<p>dom</p>");
+  plans.addRound(db, "p1", { prompts: [{ prompt: "once" }], batchId: "b-1", snapshotPath: "snap.html", root });
+  fs.rmSync(snap);
+  const again = plans.addRound(db, "p1", { prompts: [{ prompt: "once" }], batchId: "b-1", snapshotPath: "snap.html", root });
+  assert.deepEqual(again, { slug: "p1", round: 1, status: "in-review", duplicate: true });
+});

@@ -280,6 +280,15 @@ test("plans view: clipped prompts point at --full", async (t) => {
   const v = ok(brain(dir, ["plans", "view", "p"]), /Prompts cut at 160 chars \(…\): brain plans view p --full/);
   assert.doesNotMatch(v.out, /THE END/);
   assert.doesNotMatch(ok(brain(dir, ["plans", "view", "p", "--full"]), /THE END/).out, /Prompts cut/);
+  // The reopen hint resolves from the caller's directory, not the repo root.
+  ok(brain(dir, ["plans", "view", "p"]), /Reopen it for review: brain review open plans\/p\.html/);
+  ok(brain(path.join(dir, "plans"), ["plans", "view", "p"]), /Reopen it for review: brain review open p\.html/);
+});
+
+test("verifications add --help names the brain's own shots dir for custom --brain dirs", () => {
+  const r = brain(os.tmpdir(), ["verifications", "add", "--help"]);
+  assert.equal(r.code, 0);
+  assert.match(r.out, /<brainDir>\/shots\/ with --brain/);
 });
 
 test("Node < 24: context exits 0 silently; other commands exit 2", { skip: !fs.existsSync(NODE22) && "node 22 not installed" }, (t) => {

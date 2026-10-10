@@ -120,7 +120,7 @@ POSTs are same-origin guarded: an `Origin`/`Referer` that is present must match 
 | `GET /session/<key>/health` | `{checks}` — `lib/brain` check rows |
 | `GET /session/<key>/asset/<rel>`, `GET /session/<key>/<rel>` | files next to the artifact (sandboxed); the second form is what the artifact's own relative `src`/`href` resolve to (matched last, after every named session route) |
 | `GET /session/<key>/shot/<rel>`, `GET /watch/<f>/shot/<rel>?brain=` | a shot **recorded in brain.db**, served from the main checkout (`mainRoot` — shots live in its `.brain/shots/`, shared by every worktree; sandboxed) |
-| `GET /watch/<f>?brain=<abs .brain>` | dashboard page; 404 `{error, code, help}` on a bad brain or unknown feature |
+| `GET /watch/<f>?brain=<abs .brain>[&root=<abs worktree>]` | dashboard page; 404 `{error, code, help}` on a bad brain or unknown feature. `root` (set by `brain watch` from a worktree, carried into every dashboard fetch) checks plan files in that checkout; ignored unless it is a checkout of the brain's repo |
 | `GET /watch/<f>/context?brain=` | `watchContext` |
 | `GET /watch-events/<f>?brain=` | SSE `context-update` |
 | `POST /watch/<f>/annotate[/delete|/send]?brain=` | pin add `{shot, x, y, note}` / delete `{id}` / mark sent |
@@ -143,8 +143,10 @@ Poll payloads (wire contract unchanged; `batch` and `redelivered` are additive):
   the CLI's writes) and sends `context-update`. The baseline is taken at bind time, and
   every new stream gets one `context-update` so a page that fetched before connecting
   catches up. The same tick also compares a size+mtime signature of the brain's recorded
-  shot files, so a shot replaced or deleted with no brain.db write (pins turn superseded,
-  file health changes) still sends `context-update`. Pin writes broadcast directly (they are not in brain.db) — to the feature's
+  shot files (distinct paths, re-read only when `data_version` moves; one stat per file
+  per tick), so a shot replaced or deleted with no brain.db write (pins turn superseded,
+  file health changes) still sends `context-update`. A brain no page is bound to and
+  untouched for 5 minutes has its handle closed (reopened on the next request). Pin writes broadcast directly (they are not in brain.db) — to the feature's
   dashboard and to every review tab on the same brain.
 
 ## Payloads (context.js)

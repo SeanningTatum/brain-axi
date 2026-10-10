@@ -150,3 +150,13 @@ test("withSuperseded: a pin goes superseded when its shot changes or disappears"
   fs.rmSync(abs);
   assert.equal(withSuperseded([pin], root)[0].superseded, true);
 });
+
+test("executionContext / planContext: a shot path recorded in two rounds is one carousel entry, newest caption", (t) => {
+  const { db, root } = seeded(t);
+  L.verifications.add(db, "auth", { verdict: "PASS", body: "again", shots: [{ path: ".brain/shots/01-login.png", caption: "login v2" }], root });
+  assert.deepEqual(executionContext(db, root, "auth").shots, [{ rel: ".brain/shots/01-login.png", caption: "login v2" }]);
+  const shots = planContext(db, root, "auth").screenshots;
+  assert.equal(shots.length, 1);
+  assert.equal(shots[0].caption, "login v2");
+  assert.equal(shotsFor(db, "auth").length, 2, "shotsFor itself still lists every recorded row");
+});

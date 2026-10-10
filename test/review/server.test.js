@@ -71,7 +71,7 @@ async function setup(t) {
   t.after(() => fetch(`${base}/shutdown`, { method: "POST" }).catch(() => {}));
   const post = (p, body, headers = {}) =>
     fetch(base + p, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
-  return { dir, port, base, brain, ok, post, state, brainDir: path.join(dir, ".brain") };
+  return { dir, port, base, brain, ok, post, state, env, brainDir: path.join(dir, ".brain") };
 }
 
 test("review round trip: open → feedback → poll records a round → reply → end --approved-by", async (t) => {
@@ -493,4 +493,31 @@ test("review: an agent end after a user End keeps the user latch; relative artif
   assert.equal((await post("/api/end", { key, by: "user" }, { origin: base })).status, 200);
   ok(brain(["review", "end", "plans/auth.html"]));
   ok(brain(["review", "open", "plans/auth.html", "--no-open"]), /^refused: /m);
+});
+
+test("watch from a worktree: the dashboard checks plan files in that worktree (root=), shots stay in main", async (t) => {
+  const { dir, base, ok, env, brainDir } = await setup(t);
+  const wt = path.join(path.dirname(dir), path.basename(dir) + "-wt");
+  git(dir, "worktree", "add", "-q", wt, "-b", "wt-branch");
+  t.after(() => fs.rmSync(wt, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(wt, "plans"), { recursive: true });
+  fs.writeFileSync(path.join(wt, "plans", "wt-only.html"), "<title>WT</title><p>x</p>");
+  const L = await import("../../lib/brain/index.js");
+  const b = L.openBrain(wt);
+  L.plans.upsert(b.db, { file: "plans/wt-only.html", root: wt });
+  L.close(b.db);
+  const r = spawnSync(process.execPath, [BIN, "watch", "auth", "--no-open"], { cwd: wt, env, encoding: "utf8", timeout: 20000 });
+  ok({ code: r.status, out: r.stdout, err: r.stderr });
+  const url = urlOf(r.stdout);
+  const qs = url.slice(url.indexOf("?"));
+  assert.equal(new URLSearchParams(qs).get("root"), fs.realpathSync(wt));
+  assert.equal(new URLSearchParams(qs).get("brain"), brainDir);
+  const files = (c) => c.checks.find((x) => x.check === "plan and shot files");
+  const ctx = await (await fetch(`${base}/watch/auth/context${qs}`)).json();
+  assert.equal(files(ctx).status, "pass", JSON.stringify(files(ctx)));
+  // Without root= (or with a root outside this repo) it falls back to main, where the plan is missing.
+  const mainCtx = await (await fetch(`${base}/watch/auth/context?brain=${encodeURIComponent(brainDir)}&root=${encodeURIComponent(os.tmpdir())}`)).json();
+  assert.match(files(mainCtx).detail, /plan plans\/wt-only\.html is missing/);
+  const page = await (await fetch(url)).text();
+  assert.ok(page.includes(`root: "${encodeURIComponent(fs.realpathSync(wt))}"`), "dashboard carries root into its fetches");
 });

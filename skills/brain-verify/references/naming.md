@@ -4,7 +4,8 @@
 2. NAMING CONVENTION — screenshot files
 -------------------------------------------------------------------------------
 
-Screenshot FILES live under `.brain/shots/<slug>/` (gitignored by `brain init`).
+Screenshot FILES live under `.brain/shots/<slug>/` (`<brainDir>/shots/<slug>/`
+with a custom `--brain` dir; gitignored by `brain init`).
 brain stores each as path + sha256 on the verdict; `brain check` re-hashes
 them, so do not edit or overwrite a file a recorded verdict cites.
 

@@ -10,9 +10,10 @@
    is in no commit: it shows in `brain verifications view`, and you should
    re-take it (the next round) after committing so the receipt is clean.
 
-1. Save each screenshot under `.brain/shots/<slug>/` (naming: `naming.md`).
-   In a git worktree, that is the MAIN checkout's `.brain/shots/<slug>/` (pass
-   its absolute path); a worktree's own `.brain/shots/` is refused with
+1. Save each screenshot under `<brainDir>/shots/<slug>/` — `.brain/shots/<slug>/`
+   by default; with `--brain .state`, `.state/shots/<slug>/` (naming: `naming.md`).
+   In a git worktree, that is the MAIN checkout's shots dir (pass its absolute
+   path); a worktree's own `.brain/shots/` is refused with
    SHOT_OUTSIDE_SHOTS_DIR, and the error prints the right dir.
 
 2. Write the verdict body (structure: `verdict-doc.md`) to a scratch file
