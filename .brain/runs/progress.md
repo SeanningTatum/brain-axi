@@ -21,6 +21,22 @@
 
 ---
 
+## 2026-10-10 — Started skills-plugin (feat-011) on feat/skills-plugin: baseline verify 4/4, check green, skill-coverage 1.000; sqlite-engine (feat-012) registered planned
+- branch: `feat/skills-plugin`
+- in-progress feature: none
+- run note: none
+- next: Phase 1: move playbooks into skills/brain-<id>/SKILL.md, brain playbook byte-identical
+
+---
+
+## 2026-10-10 — Planned skills-plugin + sqlite-engine (plans/2026-10-09-skills-plugin-sqlite.html): reviewed round 1, 9 decisions confirmed; brain.db gitignored, Claude-only, re-scaffold this brain
+- branch: `main`
+- in-progress feature: none
+- run note: none
+- next: Open feat skills-plugin (phases 1-3) via brain-start; answer open Q on brain export/backup + CI check before phase 4
+
+---
+
 ## 2026-09-29 — Merged evaluator-separation W1-W4 clean + integrate pass; verify 4/4, check/strict exit 0 (independence row skip), 459 invariants, evals 37/37
 - branch: `feat/evaluator-separation`
 - in-progress feature: none

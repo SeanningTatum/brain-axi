@@ -1,6 +1,6 @@
 {
   "$schema": "Machine-readable feature state tracker. Source of truth for status; per-feature MD docs are source of truth for design/runtime.",
-  "updated": "2026-09-29",
+  "updated": "2026-10-10",
   "policy": {
     "one_in_progress_at_a_time": true,
     "definition_of_done": "implementation complete + verify-done passed (CLI invoked against .brain, exit codes + TOON eyeballed, stderr diagnostics-only) + feature MD updated + brain skill --check green + brain coherent",
@@ -167,6 +167,36 @@
         "sean"
       ],
       "doc": ".brain/features/plan-phase/plan-phase.md"
+    },
+    {
+      "id": "feat-011",
+      "name": "skills-plugin — the method as skills, packaged as a Claude Code plugin",
+      "slug": "skills-plugin",
+      "status": "in-progress",
+      "description": "Per plan 2026-10-10-2026-10-09-skills-plugin-sqlite (reviewed round 1, phases 1-3): the 10 playbooks move out of lib/review/playbooks.js into 11 superpowers-style skills (skills/brain*/SKILL.md, references/ on demand) that trigger by description and name their successor; `brain playbook <id>` prints the skill file; the 31KB brain skill becomes a router; brain context gains a one-line bootstrap; packaged as a Claude Code plugin (.claude-plugin/, hooks/, commands/) versioned with npm. Non-goals: codex/opencode skill install (Claude only for now), adopting obra/superpowers itself, any storage change (that is sqlite-engine).",
+      "dependencies": [
+        "core-cli",
+        "plan-phase"
+      ],
+      "owners": [
+        "sean"
+      ],
+      "doc": ".brain/features/skills-plugin/skills-plugin.md"
+    },
+    {
+      "id": "feat-012",
+      "name": "sqlite-engine — node:sqlite storage for new brains, FTS5 search",
+      "slug": "sqlite-engine",
+      "status": "planned",
+      "description": "Per plan 2026-10-10-2026-10-09-skills-plugin-sqlite (phases 4-5): storage interface with files + sqlite backends; new brains get a gitignored .brain/brain.db (everything incl. docs; plan HTML + screenshots as path+hash), worktrees share the main checkout DB via git common dir, WAL; node >=24 for FTS5; this repo brain re-scaffolded on the DB. Open before start: brain export/import for backup + CI check.",
+      "dependencies": [
+        "skills-plugin",
+        "state-integrity"
+      ],
+      "owners": [
+        "sean"
+      ],
+      "doc": ".brain/features/sqlite-engine/sqlite-engine.md"
     }
   ]
 }
