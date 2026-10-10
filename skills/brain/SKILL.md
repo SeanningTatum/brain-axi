@@ -48,6 +48,6 @@ A request for a plan, proposal, design, or approach review is never answered in 
 - `docs list|view|set|rm`, `search "<q>" [--kind doc]` — rules, recipes, codebase docs; full-text search over everything.
 - `check` — integrity + cross-entity rules (exit 1 on fail). `verify list|add|run [--stage bootstrap|baseline|verify] [--only <name>]` — declared project checks.
 - `review open|poll|end <plan.html>` (`end --approved-by <who>` headless), `plans list|view` — human plan review and history.
-- `verifications list|view|add <slug> --verdict PASS|FAIL|BLOCKED --body-from <f> [--shot <img>]` — verdicts stamped with the commit. `watch <slug>` — live dashboard.
+- `verifications list|view|add <slug> --verdict PASS|FAIL|BLOCKED --body-from <f> [--shot <img>]` — verdicts stamped with the commit; `view` lists the human's sent screenshot pins (act on `open` ones). `watch <slug>` — live dashboard.
 
 Record state with `brain-write`; never paste verbatim output into a checkpoint (it goes to `runs append --observed`).

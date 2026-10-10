@@ -49,6 +49,8 @@ events works the same way.
 - Read the feature and its doc first: `brain features view <slug>` (read the
   doc, `tasks`, and the latest verdict). Know what the golden path and error
   handling are SUPPOSED to be before you go looking.
+- `brain verifications view <slug>` lists screenshot pins the human SENT from
+  `brain watch`: each `open` pin is a criterion row; re-capture its shot.
 - Collect the contract. Every acceptance criterion is a row you must walk:
   - the approved plan's phases — `brain plans view <plan-slug>` (read
     `file:`, `sha256:`, `status:`, `approved_by:`); read the acceptance

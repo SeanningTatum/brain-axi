@@ -157,6 +157,13 @@ Poll payloads (wire contract unchanged; `batch` and `redelivered` are additive):
   truncated, task, author, at}]}]` (observed capped at 8000 chars; `file` is the
   `brain runs view` command) + `pr: {url, opened_at} | null` + `checks[{check, status, detail}]`.
 - A pin is `superseded` once its shot file is gone or its sha256 changed since the pin.
+- The CLI reads pins (never writes them) through `readPins(brainDir, feature?)` from
+  `server.js` — read-only, never creates the state dir, corrupt store = no pins.
+  `brain verifications view <f>` lists the feature's SENT pins (`pins` table: shot, pin
+  position, note, created, sent, state `open|superseded|re-verified` — re-verified = a
+  verification round was recorded after it was sent) and only counts unsent ones
+  (`draft_pins`: still being drafted); `brain context` adds a `pins:` line counting sent
+  open pins.
 
 ## postMessage (chrome ⇄ sdk)
 

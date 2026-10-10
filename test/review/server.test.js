@@ -13,6 +13,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { readPins } from "../../lib/review/server.js";
 
 const BIN = fileURLToPath(new URL("../../bin/brain.js", import.meta.url));
 
@@ -250,6 +251,77 @@ test("watch: context, recorded shots only, pins, and a context-update when the C
   const rdeadline = Date.now() + 3000;
   while (revEvents.join("").split("event: context-update").length <= rbefore && Date.now() < rdeadline) await new Promise((r) => setTimeout(r, 50));
   assert.ok(revEvents.join("").split("event: context-update").length > rbefore, "no context-update on the review tab after a pin write");
+});
+
+test("pins reach the agent: only sent pins show on verifications view; context counts sent open ones", async (t) => {
+  const { base, brain, ok, post, brainDir, state } = await setup(t);
+  fs.mkdirSync(path.join(brainDir, "shots"), { recursive: true });
+  fs.writeFileSync(path.join(brainDir, "shots", "01-login.png"), "png-a");
+  fs.writeFileSync(path.join(brainDir, "shots", "02-home.png"), "png-b");
+  ok(brain(["verifications", "add", "auth", "--verdict", "PASS", "--body", "walked", "--shot", ".brain/shots/01-login.png", "--shot", ".brain/shots/02-home.png"]));
+  const url = urlOf(ok(brain(["watch", "auth", "--no-open"])).out);
+  const qs = url.slice(url.indexOf("?"));
+  const pin = (shot, note, x = 10, y = 20) => post(`/watch/auth/annotate${qs}`, { shot, x, y, note });
+  // Unsent pins are drafts: no table, no context line, just a count.
+  assert.equal((await pin(".brain/shots/01-login.png", "draft only")).status, 200);
+  let v = ok(brain(["verifications", "view", "auth"]));
+  assert.doesNotMatch(v.out, /^pins\[/m);
+  assert.match(v.out, /^draft_pins: "1 unsent/m);
+  assert.doesNotMatch(ok(brain(["context"])).out, /^pins:/m);
+  // Send → the agent sees it; a second sent pin whose shot is later replaced
+  // reads as superseded and is not counted.
+  assert.equal((await pin(".brain/shots/02-home.png", "logo, too big", 55.55, null)).status, 200);
+  assert.deepEqual(await (await post(`/watch/auth/annotate/send${qs}`, {})).json(), { ok: true, sent: 2 });
+  assert.equal((await pin(".brain/shots/01-login.png", "a later draft")).status, 200);
+  fs.writeFileSync(path.join(brainDir, "shots", "02-home.png"), "png-b-recaptured");
+  v = ok(brain(["verifications", "view", "auth"]));
+  assert.match(v.out, /^pins\[2\]\{shot,pin,note,created,sent,state\}:$/m);
+  assert.match(v.out, /^ {2}\.brain\/shots\/01-login\.png,"10%,20%",draft only,"[^"]+","[^"]+",open$/m);
+  assert.match(v.out, /^ {2}\.brain\/shots\/02-home\.png,none,"logo, too big",.*,superseded$/m);
+  assert.match(v.out, /^draft_pins: "1 unsent/m);
+  assert.match(v.out, /Act on the 1 sent open pin .*re-capture its shot, then re-verify: brain verifications add auth/);
+  assert.doesNotMatch(v.out, /Ship it/);
+  const c = ok(brain(["context"]));
+  assert.match(c.out, /^pins: "1 sent screenshot pin open \(auth\) — act on them: brain verifications view auth"$/m);
+  assert.ok(Buffer.byteLength(c.out) <= 600, c.out);
+  // A later verification round closes the open pin (the agent acted on it).
+  await new Promise((r) => setTimeout(r, 5));
+  ok(brain(["verifications", "add", "auth", "--verdict", "PASS", "--body", "fixed the clipped button"]));
+  v = ok(brain(["verifications", "view", "auth"]));
+  assert.match(v.out, /,re-verified$/m);
+  assert.match(v.out, /Ship it/);
+  assert.doesNotMatch(ok(brain(["context"])).out, /^pins:/m);
+  // The CLI only reads: sessions.json is byte-identical after its reads.
+  const before = fs.readFileSync(path.join(state, "sessions.json"), "utf8");
+  ok(brain(["verifications", "view", "auth"]));
+  ok(brain(["context"]));
+  assert.equal(fs.readFileSync(path.join(state, "sessions.json"), "utf8"), before);
+  void base;
+});
+
+test("readPins: filters by brain and feature, tags feature, never creates the state dir, survives a corrupt store", (t) => {
+  const dir = tmp(t);
+  const saved = process.env.BRAIN_AXI_STATE_DIR;
+  t.after(() => (saved === undefined ? delete process.env.BRAIN_AXI_STATE_DIR : (process.env.BRAIN_AXI_STATE_DIR = saved)));
+  const state = path.join(dir, "state");
+  process.env.BRAIN_AXI_STATE_DIR = state;
+  const brainDir = path.join(dir, ".brain");
+  fs.mkdirSync(path.join(brainDir, "shots"), { recursive: true });
+  fs.writeFileSync(path.join(brainDir, "shots", "a.png"), "a");
+  assert.deepEqual(readPins(brainDir), []);
+  assert.equal(fs.existsSync(state), false, "a read never creates the state dir");
+  fs.mkdirSync(state);
+  const pin = (id, extra = {}) => ({ id, shot: ".brain/shots/a.png", x: 1, y: 2, note: id, at: "2026-01-01T00:00:00.000Z", shotSha256: null, sentAt: null, ...extra });
+  fs.writeFileSync(path.join(state, "sessions.json"), JSON.stringify({ sessions: {}, pins: {
+    [`${brainDir}::auth`]: [pin("p1", { sentAt: "2026-01-02T00:00:00.000Z" }), null, "junk"],
+    [`${brainDir}::billing`]: [pin("p2", { shot: ".brain/shots/gone.png" })],
+    [`${brainDir}-other::auth`]: [pin("p3")],
+    [`${brainDir}::bad`]: "not a list",
+  } }));
+  assert.deepEqual(readPins(brainDir, "auth").map((p) => [p.id, p.feature, p.superseded, p.sentAt]), [["p1", "auth", false, "2026-01-02T00:00:00.000Z"]]);
+  assert.deepEqual(readPins(brainDir).map((p) => [p.id, p.feature, p.superseded]), [["p1", "auth", false], ["p2", "billing", true]]);
+  fs.writeFileSync(path.join(state, "sessions.json"), "{ truncated");
+  assert.deepEqual(readPins(brainDir), []);
 });
 
 test("watch: a brain.db replaced on disk (restore) sends context-update and serves the new file", async (t) => {

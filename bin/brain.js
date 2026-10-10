@@ -267,12 +267,20 @@ const init = {
 const context = {
   summary: `Compact session-start context (≤ ${CONTEXT_CAP} B); silent outside a brain — used by the plugin's SessionStart hook`,
   examples: ["brain context"],
-  run(ctx) {
-    const { db, brainDir } = ctx.brain();
+  async run(ctx) {
+    const { db, brainDir, mainRoot } = ctx.brain();
     const st = L.features.stats(db);
     const last = L.progress.latest(db);
     const brainPath = rel(brainDir);
     const head = [kv("brain", brainPath), kv("features", statsLine(st))];
+    // Sent, still-open screenshot pins are the reviewer's settled asks.
+    const pins = sentOpenPins(db, await readPinsSafe(brainDir, null, mainRoot));
+    if (pins.length) {
+      const feats = [...new Set(pins.map((p) => p.feature))];
+      const first = [...feats[0]].length > 40 ? [...feats[0]].slice(0, 39).join("") + "…" : feats[0];
+      const where = feats.length > 1 ? `${first} +${feats.length - 1} more` : first;
+      head.push(kv("pins", `${pins.length} sent screenshot pin${pins.length > 1 ? "s" : ""} open (${where}) — act on them: brain verifications view ${feats.length === 1 && first === feats[0] ? first : "<feature>"}`));
+    }
     const free = { "in-progress": st.in_progress || "none" };
     if (last) {
       free["last-checkpoint"] = `${last.at.slice(0, 10)} — ${last.summary}`;
@@ -298,6 +306,26 @@ const context = {
     print(render());
   },
 };
+
+// Screenshot pins from the watch dashboard (review server's store). A pin is
+// a settled ask only once "Send to Claude" stamped sentAt; unsent pins are
+// drafts. A broken store never breaks the CLI: it reads as no pins.
+async function readPinsSafe(brainDir, feature, mainRoot) {
+  try {
+    return (await reviewModules()).readPins(brainDir, feature, { mainRoot });
+  } catch (e) {
+    if (process.env.BRAIN_DEBUG) process.stderr.write(`brain: pins unreadable: ${e.message}\n`);
+    return [];
+  }
+}
+// Each sent pin's state: superseded (its shot file was replaced or removed),
+// re-verified (a verification round was recorded after it was sent — the
+// agent acted on it), else open — the reviewer's ask still stands.
+function pinStates(db, pins) {
+  const latest = L.verifications.latestAt(db);
+  return pins.map((p) => ({ ...p, state: p.superseded ? "superseded" : (latest.get(p.feature) || "") > p.sentAt ? "re-verified" : "open" }));
+}
+const sentOpenPins = (db, pins) => pinStates(db, pins.filter((p) => p.sentAt)).filter((p) => p.state === "open");
 
 const exportCmd = {
   summary: "Write a deterministic TOON dump of the whole brain (default .brain/export.toon, gitignored)",
@@ -931,14 +959,15 @@ function reviewPort(flags) {
   return Number.isInteger(n) && n > 0 ? n : REVIEW_DEFAULT_PORT;
 }
 
-// The review server owns the session key and its state dir (~/.brain-axi, or
-// BRAIN_AXI_STATE_DIR); context.js owns the plan-by-file lookup. Loaded
-// lazily — only review/watch need them.
+// The review server owns the session key, its state dir (~/.brain-axi, or
+// BRAIN_AXI_STATE_DIR) and the screenshot-pin store (read here via
+// readPins; only the server writes pins); context.js owns the plan-by-file
+// lookup. Loaded lazily — only review/watch/pins need them.
 let RV;
 async function reviewModules() {
   if (!RV) {
     const [server, context] = await Promise.all([import("../lib/review/server.js"), import("../lib/review/context.js")]);
-    RV = { stateDir: server.stateDir, sessionKey: server.sessionKey, api: server.REVIEW_API, planForFile: context.planForFile };
+    RV = { stateDir: server.stateDir, sessionKey: server.sessionKey, api: server.REVIEW_API, planForFile: context.planForFile, readPins: server.readPins };
   }
   return RV;
 }
@@ -1265,22 +1294,37 @@ const verifications = {
       },
     },
     view: {
-      summary: "One verification (latest round unless --round) with its body and shots",
+      summary: "One verification (latest round unless --round) with its body and shots, plus the feature's sent screenshot pins from `brain watch`",
       args: [ARG.feature], min: 1, max: 1,
       spec: { "--round": { value: true, desc: "round number (default: latest)" }, "--full": { desc: "print the whole body" } },
       examples: ["brain verifications view auth", "brain verifications view auth --round 1 --full"],
-      run(ctx) {
-        const { db } = ctx.brain();
+      async run(ctx) {
+        const { db, brainDir, mainRoot } = ctx.brain();
         const v = L.verifications.get(db, ctx.pos[0], posInt(ctx.flags.round, "--round"));
         const b = block("body", v.body, { full: !!ctx.flags.full });
+        // The feature's screenshot pins (all rounds). Only sent pins are a
+        // settled ask; unsent ones are still being drafted in `brain watch`.
+        const all = await readPinsSafe(brainDir, v.feature, mainRoot);
+        const sent = pinStates(db, all.filter((p) => p.sentAt));
+        const open = sent.filter((p) => p.state === "open");
+        const pos = (p) => (p.x == null || p.y == null ? "none" : `${p.x}%,${p.y}%`);
         print([
           ...kvs({ feature: v.feature, round: v.round, verdict: v.verdict, commit: v.commit, dirty: v.dirty,
             verified_by: v.verified_by, implemented_by: v.implemented_by, at: v.at }),
           ...b.lines,
           ...toonTable("shots", v.shots, ["path", "caption", "sha256"]),
+          ...(sent.length
+            ? toonTable("pins", sent.map((p) => ({ shot: p.shot, pin: pos(p), note: p.note || "", created: p.at || "", sent: p.sentAt,
+                state: p.state })), ["shot", "pin", "note", "created", "sent", "state"])
+            : []),
+          ...(all.length > sent.length ? [kv("draft_pins", `${all.length - sent.length} unsent (still being drafted in brain watch — not an ask yet)`)] : []),
           ...toonList("help", [
             ...(b.truncated ? [`Run \`brain verifications view ${v.feature} --round ${v.round} --full\` for the whole body`] : []),
-            v.verdict === "PASS" ? `Ship it: brain features ship ${v.feature} --evidence "..."` : `Fix, then re-verify: brain verifications add ${v.feature} --verdict ...`,
+            ...(open.length
+              ? [`Act on the ${open.length} sent open pin${open.length > 1 ? "s" : ""} (the reviewer's asks): fix each, re-capture its shot, then re-verify: brain verifications add ${v.feature} --verdict ... --shot <path>`]
+              : []),
+            ...(!open.length && v.verdict === "PASS" ? [`Ship it: brain features ship ${v.feature} --evidence "..."`] : []),
+            ...(v.verdict !== "PASS" && !open.length ? [`Fix, then re-verify: brain verifications add ${v.feature} --verdict ...`] : []),
           ]),
         ]);
       },

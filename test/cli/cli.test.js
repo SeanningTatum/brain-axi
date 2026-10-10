@@ -202,6 +202,32 @@ test("context: ≤ 600 bytes in a brain, silent outside one", (t) => {
   assert.equal(out.out, "");
 });
 
+test("screenshot pins: a long slug and long next still fit context's 600 B; a corrupt pin store reads as no pins", (t) => {
+  const dir = repoWithBrain(t);
+  const slug = "a-very-long-feature-slug-that-goes-on-and-on-forever";
+  ok(brain(dir, ["features", "add", slug, "--name", "Long"]));
+  ok(brain(dir, ["features", "add", "other", "--name", "Other"]));
+  ok(brain(dir, ["progress", "add", "--summary", "s".repeat(200), "--next", "n".repeat(500)]));
+  fs.mkdirSync(path.join(dir, ".brain", "shots"), { recursive: true });
+  fs.writeFileSync(path.join(dir, ".brain", "shots", "a.png"), "a");
+  ok(brain(dir, ["verifications", "add", slug, "--verdict", "FAIL", "--body", "x", "--shot", ".brain/shots/a.png"]));
+  const state = path.join(dir, ".review-state");
+  fs.mkdirSync(state);
+  const brainDir = path.join(dir, ".brain");
+  const pin = { id: "p", shot: ".brain/shots/a.png", x: 1, y: 2, note: "fix, please", at: "2026-01-01T00:00:00.000Z", shotSha256: null, sentAt: "2999-01-01T00:00:00.000Z" };
+  fs.writeFileSync(path.join(state, "sessions.json"), JSON.stringify({ sessions: {}, pins: { [`${brainDir}::${slug}`]: [pin], [`${brainDir}::other`]: [pin] } }));
+  const c = ok(brain(dir, ["context"]), /^pins: "2 sent screenshot pins open \(a-very-long-feature-slug-that-goes-on-a… \+1 more\) — act on them: brain verifications view <feature>"$/m);
+  assert.ok(Buffer.byteLength(c.out) <= 600, `${Buffer.byteLength(c.out)} bytes`);
+  const v = ok(brain(dir, ["verifications", "view", slug]), /^pins\[1\]/m);
+  assert.match(v.out, /Act on the 1 sent open pin/);
+  assert.doesNotMatch(v.out, /^draft_pins:/m);
+  fs.writeFileSync(path.join(state, "sessions.json"), "{ not json");
+  assert.doesNotMatch(ok(brain(dir, ["context"])).out, /^pins:/m);
+  const v2 = ok(brain(dir, ["verifications", "view", slug]), /Fix, then re-verify/);
+  assert.doesNotMatch(v2.out, /^pins\[/m);
+  assert.equal(v2.err, "");
+});
+
 test("Node < 24: context exits 0 silently; other commands exit 2", { skip: !fs.existsSync(NODE22) && "node 22 not installed" }, (t) => {
   const dir = repoWithBrain(t);
   const c = brain(dir, ["context"], { node: NODE22 });

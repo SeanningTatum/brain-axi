@@ -63,7 +63,8 @@ THE LOOP
    `--no-open` and print its URL). It shows feature status, checkpoints,
    run steps, verification verdicts, screenshots, and PR state — live, as
    every command below writes state. The human watches execution there
-   instead of asking you for progress reports.
+   instead of asking you for progress reports. Screenshot pins they SEND
+   from it show on `brain verifications view <slug>` — act on `open` ones.
 
    If the approved plan has more than one phase, seed it as tasks now:
    `brain tasks add <slug> --title "..." --acceptance "..." --verify "..."`

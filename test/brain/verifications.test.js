@@ -122,3 +122,17 @@ test("errors: bad verdict, empty body, unknown feature; schema CHECKs", (t) => {
   rejectsRaw(db, "INSERT INTO verifications (feature_id, verdict, round, body, commit_sha, verified_by, at) VALUES (1, 'PASS', 1, 'b', 'HEAD', 'v', 'x')");
   rejectsRaw(db, "INSERT INTO verifications (feature_id, verdict, round, body, verified_by, at) VALUES (99, 'PASS', 1, 'b', 'v', 'x')");
 });
+
+test("latestAt: each feature's newest verification time, none for unverified features", (t) => {
+  const { db, root } = freshBrain(t);
+  features.add(db, { slug: "f", name: "F" });
+  features.add(db, { slug: "g", name: "G" });
+  features.add(db, { slug: "h", name: "H" });
+  verifications.add(db, "f", { verdict: "FAIL", body: "1", root });
+  const f2 = verifications.add(db, "f", { verdict: "PASS", body: "2", root });
+  const g1 = verifications.add(db, "g", { verdict: "BLOCKED", body: "1", root });
+  const m = verifications.latestAt(db);
+  assert.equal(m.get("f"), f2.at);
+  assert.equal(m.get("g"), g1.at);
+  assert.equal(m.has("h"), false);
+});
