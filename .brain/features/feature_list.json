@@ -188,8 +188,8 @@
       "id": "feat-012",
       "name": "sqlite-engine — node:sqlite storage for new brains, FTS5 search",
       "slug": "sqlite-engine",
-      "status": "planned",
-      "description": "Per plan 2026-10-10-2026-10-09-skills-plugin-sqlite (phases 4-5): storage interface with files + sqlite backends; new brains get a gitignored .brain/brain.db (everything incl. docs; plan HTML + screenshots as path+hash), worktrees share the main checkout DB via git common dir, WAL; node >=24 for FTS5; this repo brain re-scaffolded on the DB. Open before start: brain export/import for backup + CI check.",
+      "status": "cut",
+      "description": "Per plan 2026-10-10-2026-10-09-skills-plugin-sqlite (phases 4-5): storage interface with files + sqlite backends; new brains get a gitignored .brain/brain.db (everything incl. docs; plan HTML + screenshots as path+hash), worktrees share the main checkout DB via git common dir, WAL; node >=24 for FTS5; this repo brain re-scaffolded on the DB. Open before start: brain export/import for backup + CI check. CUT 2026-10-10: superseded by axi-core (plan 2026-10-10-2026-10-10-axi-architecture).",
       "dependencies": [
         "skills-plugin",
         "state-integrity"
@@ -198,6 +198,20 @@
         "sean"
       ],
       "doc": ".brain/features/sqlite-engine/sqlite-engine.md"
+    },
+    {
+      "id": "feat-013",
+      "name": "axi-core — skills over a thin AXI over a SQLite library",
+      "slug": "axi-core",
+      "status": "planned",
+      "description": "Per plan 2026-10-10-2026-10-10-axi-architecture (reviewed round 1, all decisions at recommended): three layers only. lib/brain/ owns brain.db (node:sqlite, node>=24, FTS5, WAL, worktree-shared, numbered migrations via user_version with .bak) and exposes plain per-domain functions; bin/brain.js becomes a thin dispatcher with 15 commands (init, context, export/import, features, tasks, progress, runs, docs, plans, review, watch, verifications, verify, search, check); review + watch UIs re-plumbed onto lib/brain; skills name real commands; evals become repo-dev; node:test replaces check-state-invariants; this repo brain rebuilt from live parts. Cut: playbook, skill, setup, metrics, timeline, evals; folded: brief, receipt, pr, shots.",
+      "dependencies": [
+        "skills-plugin"
+      ],
+      "owners": [
+        "sean"
+      ],
+      "doc": ".brain/features/axi-core/axi-core.md"
     }
   ]
 }

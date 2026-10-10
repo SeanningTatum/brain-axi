@@ -1,0 +1,574 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>brain-axi architecture</title>
+<style>
+  :root {
+    --bg: #faf9f5; --surface: #ffffff; --fg: #141413; --fg-secondary: #3d3d3a;
+    --muted: #73726c; --border: #dedcd1; --highlight: #fff7ca; --accent: #d97757;
+    --space-2: 8px; --space-3: 16px; --space-4: 24px; --space-6: 40px;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 16px; background: var(--bg); color: var(--fg); line-height: 1.6;
+    max-width: 72ch; margin: 0 auto; padding: var(--space-6) var(--space-4);
+  }
+  h1, h2, h3 { font-family: Charter, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    font-weight: 600; line-height: 1.25; color: var(--fg); }
+  h1 { font-size: 1.75em; }
+  h2 { font-size: 1.3em; font-weight: 500; margin-top: var(--space-6);
+    border-bottom: 1px solid var(--border); padding-bottom: var(--space-2); }
+  h3 { font-size: 1.05em; font-weight: 500; }
+  p, li { color: var(--fg-secondary); }
+  mark, .highlight { background: var(--highlight); color: var(--fg); padding: 0 2px; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88em;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
+  pre.cmd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: var(--space-3); overflow-x: auto; line-height: 1.5; }
+  .chip { display: inline-block; padding: 2px 10px; border-radius: 999px;
+    font-size: 0.8em; font-weight: 600; border: 1px solid var(--border); }
+  .chip-status-draft { background: var(--surface); color: var(--muted); }
+  .chip-high { color: var(--accent); border-color: var(--accent); }
+  .chip-med { color: var(--fg-secondary); }
+  .chip-low { color: var(--muted); }
+  .decision-card { background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: var(--space-4); margin: var(--space-4) 0; }
+  table { width: 100%; border-collapse: collapse; margin: var(--space-3) 0;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border);
+    vertical-align: top; font-size: 0.95em; }
+  tr:last-child td { border-bottom: none; }
+  .tag-recommended { color: var(--accent); font-weight: 600; }
+  .btn-queue, .btn-approve, .btn-request-changes { border: none; border-radius: 10px;
+    padding: 8px 16px; font-weight: 600; cursor: pointer; font-size: 0.95em; }
+  .btn-queue, .btn-approve { background: var(--fg); color: #fff; }
+  .btn-request-changes { background: transparent; color: var(--fg); border: 1px solid var(--border); }
+  .queue-ack { margin-left: var(--space-3); font-size: 0.9em; color: var(--muted); }
+  .checklist { list-style: none; padding: 0; }
+  .checklist li { margin: var(--space-2) 0; }
+  pre.mermaid { text-align: center; }
+  pre.mermaid svg { display: block; margin: 0 auto; }
+  .skill-grid { display: grid; grid-template-columns: 1fr; gap: var(--space-3); margin: var(--space-4) 0; }
+  .skill { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: var(--space-3); }
+  .skill h3 { margin: 0 0 4px 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.98em; }
+  .skill p { margin: 4px 0; font-size: 0.93em; }
+  .skill .meta { font-size: 0.82em; color: var(--muted); }
+  .item-x, .item-restore, .list-add-btn { cursor: pointer; border: 1px solid var(--border);
+    background: var(--surface); border-radius: 6px; font-size: 0.85em; padding: 1px 8px; color: var(--fg-secondary); }
+  [data-item-text] { cursor: text; }
+  .item-removed { opacity: 0.5; }
+  .item-removed [data-item-text] { text-decoration: line-through; }
+  .item-badge { font-size: 0.75em; color: var(--muted); margin-left: 6px; font-style: italic; }
+  .item-badge-proposed { color: var(--accent); }
+  .item-proposed { border-left: 2px dashed var(--accent); padding-left: 6px; }
+  .list-add-row { display: flex; gap: 8px; margin-top: var(--space-2); }
+  .list-add-input { flex: 1; padding: 6px 10px; border: 1px solid var(--border);
+    border-radius: 6px; background: var(--surface); color: var(--fg); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>brain-axi, simplified: skills → AXI → SQLite library</h1>
+  <div>
+    <span>2026-10-10</span> ·
+    <span>feature: (new) axi-core (absorbs sqlite-engine, feat-012)</span> ·
+    <span class="chip chip-low">tier: full</span> ·
+    <span class="chip chip-status-draft">reviewed</span> ·
+    <span>round 1</span>
+  </div>
+</header>
+
+<section id="tldr">
+  <h2>TL;DR</h2>
+  <p>Three layers and nothing else. <mark>Skills</mark> hold the method and hand off in sequence. <mark>The AXI</mark> (<code>bin/brain.js</code>)
+  is a thin shell over the library: parse args, call one function, print TOON with <code>help:</code> next steps. <mark>The library</mark>
+  (<code>lib/brain/</code>) owns a SQLite database and exposes plain functions, one module per domain, with numbered migrations so it can be upgraded.
+  The two browser UIs stay, as clients of the same library. 25 commands become 15; about 6–7k lines of file parsing, invariant scripting and dead
+  commands go.</p>
+</section>
+
+<section id="product-brief">
+  <h2>Product brief</h2>
+  <h3>Problem + evidence</h3>
+  <ul>
+    <li><strong>Method and data are mixed together.</strong> Even after skills-plugin, the CLI still carries method commands (<code>playbook</code>, <code>skill</code>, <code>brief</code>,
+      <code>timeline</code>, <code>metrics</code>, <code>receipt</code>, <code>pr</code>, <code>setup</code>). Your 2026-10-10 question: "what is playbook.js for when we can have it as part of the skill now?"</li>
+    <li><strong>Storage logic is spread across 4 places.</strong> <code>bin/brain.js</code> (5,562 lines), <code>lib/state.js</code> (1,023), <code>lib/review/brain-data.js</code> (1,792) and
+      <code>lib/review/store.js</code> (244) each parse <code>.brain/</code> files. <code>state.js</code>'s own header says two readers disagreed about the meaning of a Verdict line.</li>
+    <li><strong>Invariants are checked after the fact.</strong> <code>scripts/check-state-invariants.mjs</code> is 3,325 lines asserting file-format rules that a schema enforces when the write happens.</li>
+  </ul>
+  <h3>User + job</h3>
+  <p>The <strong>agent</strong> following a brain-* skill needs a small, stable set of commands whose TOON it can read and act on. <strong>Sean</strong> maintains it and needs
+  to change behavior in one place: a library function, a migration or a skill, without hunting through layers.</p>
+  <h3>Success metric</h3>
+  <ul>
+    <li>Commands: 25 → 15 top-level (counted from <code>COMMANDS</code>).</li>
+    <li><code>bin/brain.js</code> ≤ 1,500 lines, with no <code>fs</code> calls on <code>.brain/</code> content (grep-checked). Every state read or write goes through <code>lib/brain/*</code>.</li>
+    <li>Nothing outside <code>lib/brain/</code> imports <code>node:sqlite</code> (grep-checked).</li>
+    <li>skill-routing eval re-run on the new surface: ≥ 0.9 non-held-out (baseline 0.912).</li>
+  </ul>
+  <h3>Non-goals</h3>
+  <ul>
+    <li>No migration for existing file brains in other repos (settled: new brains only). This repo gets a one-off live-parts import.</li>
+    <li>No codex/opencode support (settled: Claude only).</li>
+    <li>No new features inside the UIs. They are re-plumbed onto the library, not redesigned.</li>
+  </ul>
+  <h3>Scope tiers</h3>
+  <table>
+    <thead><tr><th>Tier</th><th>Delivers</th><th>Phases</th></tr></thead>
+    <tbody>
+      <tr><td><strong>thin</strong></td><td>Library + new AXI surface on SQLite; UIs temporarily disabled</td><td>1–2</td></tr>
+      <tr><td><strong>complete</strong> <span class="tag-recommended">(recommended)</span></td><td>+ UIs on the library, skills rewritten for the new surface, this repo's brain rebuilt</td><td>1–5</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="context">
+  <h2>Context</h2>
+  <p>Plan <code>2026-10-10-2026-10-09-skills-plugin-sqlite</code> (reviewed round 1) shipped phases 1–3 as <code>skills-plugin</code> (feat-011, verification round 2 PASS,
+  receipt bound to 680e9de; branch <code>feat/skills-plugin</code>, not pushed). Its phases 4–5 (the SQLite engine, feat-012 <code>sqlite-engine</code>) are <em>replaced by this plan</em>.
+  These earlier decisions still hold and are not re-asked:</p>
+  <ul>
+    <li><strong>Storage:</strong> SQLite as the source of truth, docs included, using <code>node:sqlite</code> on Node ≥ 24 because FTS5 is missing on 22.14 and present on 24.18.</li>
+    <li><strong>Git:</strong> <code>brain.db</code> is gitignored, and worktrees share the main checkout's DB through the git common dir, in WAL mode.</li>
+    <li><strong>Existing brains:</strong> no migration for brains in other repos; new brains only.</li>
+    <li><strong>Distribution:</strong> the Claude Code plugin plus the npm package.</li>
+  </ul>
+  <p>Grill (2026-10-10, 2 rounds, 8 questions, all answered):</p>
+  <ul>
+    <li><strong>Browser UIs:</strong> both stay, rebuilt on the new architecture.</li>
+    <li><strong>Commands:</strong> only the ones that read or update state.</li>
+    <li><strong>Library:</strong> one module per domain under <code>lib/brain/</code>.</li>
+    <li><strong>Backup:</strong> <code>export</code>/<code>import</code>.</li>
+    <li><strong>Command list:</strong> the proposed 15-command surface.</li>
+    <li><strong>Evals:</strong> become repo-dev tooling, not part of the product.</li>
+    <li><strong>Integrity:</strong> rules in the schema, plus a tiny <code>check</code> and library tests.</li>
+    <li><strong>This repo's brain:</strong> rebuilt with only the live parts carried over.</li>
+  </ul>
+</section>
+
+<section id="big-picture">
+  <h2>Big picture</h2>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({ startOnLoad: true, theme: "neutral" });
+  </script>
+  <pre class="mermaid">
+flowchart TD
+  U["Human"] --> A["Agent"]
+  subgraph L1["1 · Skills (plugin) — the method"]
+    S["brain → start → grill → plan → execute → verify → done<br/>(+ product · ux · ai · write)"]
+  end
+  subgraph L2["2 · AXI — bin/brain.js (thin)"]
+    C["parse args → call lib fn → render TOON + help:"]
+  end
+  subgraph L3["3 · Library — lib/brain/"]
+    D["db.js: open · WAL · worktree · migrate"]
+    M["features · tasks · progress · runs · docs · plans<br/>verifications · verify · search · io"]
+    G["migrations/NNN-*.sql"]
+  end
+  UI["Browser UIs — review + watch<br/>(lib/review: server + static assets)"]
+  DB[(".brain/brain.db<br/>gitignored · FTS5")]
+  A -->|"loads by description"| S
+  S -->|"shell: npx -y brain-axi …"| C
+  C --> M
+  UI --> M
+  M --> D --> DB
+  G --> D
+  U -->|"annotates plans, watches runs"| UI
+  </pre>
+  <p><strong>The one rule that keeps it simple:</strong> only <code>lib/brain/</code> touches the database, the CLI and the UIs only call library functions, and the skills only call the CLI.</p>
+</section>
+
+<section id="skills">
+  <h2>Layer 1 — skills, in sequence</h2>
+  <p>The skills from skills-plugin stay, with three changes. Every step names the exact command and the TOON fields to read. All "<code>brain playbook X</code>" fallbacks are removed.
+  References are linked as <code>references/x.md</code> directly. The chain is linear for someone who doesn't know the method:</p>
+  <table>
+    <thead><tr><th>#</th><th>Skill</th><th>AXI commands it drives</th><th>Hands off to</th></tr></thead>
+    <tbody>
+      <tr><td>0</td><td><code>brain</code> (router)</td><td><code>brain</code> (home) · <code>features</code> · <code>progress</code> · <code>search</code></td><td>whichever phase the state says is next</td></tr>
+      <tr><td>1</td><td><code>brain-start</code></td><td><code>features view</code> · <code>docs view</code> · <code>check</code> · <code>verify run --stage baseline</code> · <code>features set --status in-progress</code> · <code>progress add</code></td><td>grill (needs a plan) or execute</td></tr>
+      <tr><td>2</td><td><code>brain-grill</code></td><td><code>search</code> · <code>plans view</code> (past decisions)</td><td>plan</td></tr>
+      <tr><td>3</td><td><code>brain-plan</code> (+ product · ux · ai)</td><td><code>review open|poll|end</code> · <code>features add</code></td><td>execute, once approved</td></tr>
+      <tr><td>4</td><td><code>brain-execute</code></td><td><code>watch</code> · <code>tasks claim|set</code> · <code>runs append</code></td><td>verify</td></tr>
+      <tr><td>5</td><td><code>brain-verify</code></td><td><code>verify run</code> · <code>verifications add</code> (with shots; the commit is recorded automatically)</td><td>done</td></tr>
+      <tr><td>6</td><td><code>brain-done</code></td><td><code>check</code> · <code>features ship</code> · <code>features set --pr</code> · <code>progress add</code></td><td>—</td></tr>
+      <tr><td>·</td><td><code>brain-write</code></td><td>how to word anything passed to <code>progress add</code>, <code>runs append</code>, <code>docs set</code>, <code>verifications add</code></td><td>used by 1, 4, 5, 6</td></tr>
+    </tbody>
+  </table>
+  <p><code>skill --check</code> moves to a dev script, <code>scripts/check-skills.mjs</code>. On top of today's checks it fails if a skill names a command or flag the CLI doesn't have,
+  so skills and the AXI can't drift apart.</p>
+</section>
+
+<section id="axi">
+  <h2>Layer 2 — the AXI surface (25 → 15)</h2>
+  <table>
+    <thead><tr><th>Command</th><th>Subcommands</th><th>Library calls</th></tr></thead>
+    <tbody>
+      <tr><td><code>(bare)</code></td><td>home dashboard</td><td>features.stats · progress.latest · plans.openSessions</td></tr>
+      <tr><td><code>init</code></td><td>create <code>brain.db</code>, add it to .gitignore</td><td>db.create</td></tr>
+      <tr><td><code>context</code></td><td>≤ 600 B session hook; silent outside a brain</td><td>features.stats · progress.latest</td></tr>
+      <tr><td><code>export</code> / <code>import</code></td><td>deterministic TOON dump ↔ DB</td><td>io.exportAll · io.importAll</td></tr>
+      <tr><td><code>features</code></td><td>list · view · add · set (status, pr, fields) · ship</td><td>features.*</td></tr>
+      <tr><td><code>tasks</code></td><td>list · view (the old <code>brief</code>) · add · claim · set</td><td>tasks.*</td></tr>
+      <tr><td><code>progress</code></td><td>list · add</td><td>progress.*</td></tr>
+      <tr><td><code>runs</code></td><td>view · append</td><td>runs.*</td></tr>
+      <tr><td><code>docs</code></td><td>list · view · set (<code>--from file</code> or stdin) · rm</td><td>docs.*</td></tr>
+      <tr><td><code>plans</code></td><td>list · view</td><td>plans.*</td></tr>
+      <tr><td><code>review</code></td><td>open · poll · end</td><td>plans.* (server in lib/review)</td></tr>
+      <tr><td><code>watch</code></td><td>open the dashboard</td><td>(server in lib/review)</td></tr>
+      <tr><td><code>verifications</code></td><td>list · view · add (verdict, body, <code>--shot</code>; records the commit, verifier and dirty flag)</td><td>verifications.*</td></tr>
+      <tr><td><code>verify</code></td><td>list · add · run (<code>--stage</code>/<code>--only</code>; records gate rows)</td><td>verify.*</td></tr>
+      <tr><td><code>search</code></td><td>FTS5 across docs, checkpoints, run steps, verifications, features</td><td>search.query</td></tr>
+      <tr><td><code>check</code></td><td>integrity_check + the cross-entity rules</td><td>db.check</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Cut:</strong> <code>playbook</code>, <code>skill</code> (moves to a dev script), <code>setup</code> (the plugin provides the hook), <code>metrics</code>, <code>timeline</code>, <code>evals</code> (repo-dev).
+  <strong>Folded in:</strong> <code>brief</code> → <code>tasks view</code>, <code>receipt</code> → <code>verifications add</code>, <code>pr</code> → <code>features set --pr</code>,
+  <code>shots</code> → <code>verifications add --shot</code>. AXI rules are unchanged: stdout is TOON only, errors exit 2 (usage) or 1 (operation) with a corrected-command <code>help:</code> line,
+  and every result ends in <code>help:</code>.</p>
+</section>
+
+<section id="library">
+  <h2>Layer 3 — the library</h2>
+<pre class="cmd">lib/brain/
+  index.js           openBrain(start?) → { db, root }, re-exports every domain module
+  db.js              open (WAL, busy_timeout, foreign_keys), resolve worktree → main checkout,
+                     migrate (PRAGMA user_version), check(), close
+  migrations/
+    001-core.sql     the schema below
+  features.js        list, get, add, set, ship, stats
+  tasks.js           list, get(brief), add, claim, set
+  progress.js        list, latest, add
+  runs.js            view, append
+  docs.js            list, get, set, remove
+  plans.js           list, get, upsert, addRound, addPrompts, openSessions, endSession
+  verifications.js   list, get, add (stamps commit + shots), latestVerdict
+  verify.js          listChecks, addCheck, run (spawn, timeout, record gate rows)
+  search.js          query (FTS5, ranked, snippet)
+  io.js              exportAll, importAll (TOON, versioned)
+  toon.js            the encoder (moved from bin/brain.js; shared by CLI + export)
+test/brain/*.test.js node:test against a temp DB, one file per module</pre>
+  <p><strong>Function contract:</strong> plain functions taking a <code>db</code> handle first, returning plain objects, and throwing a typed <code>BrainError {code, message, hint}</code>
+  that the CLI maps to exit codes and <code>help:</code>. No printing, no <code>process.exit</code>. Writes run inside transactions.</p>
+
+  <h3>Schema sketch (001-core.sql)</h3>
+  <table>
+    <thead><tr><th>Table</th><th>Key columns</th><th>Rule enforced by the schema</th></tr></thead>
+    <tbody>
+      <tr><td>features</td><td>slug, name, status, description, pr_url, evidence</td><td>status CHECK in 5 values; <strong>a partial unique index allows only one in-progress</strong></td></tr>
+      <tr><td>feature_deps</td><td>feature_id, depends_on</td><td>foreign keys</td></tr>
+      <tr><td>tasks</td><td>feature_id, title, status, claimed_by, claim_token, acceptance, verify</td><td>FK; status CHECK</td></tr>
+      <tr><td>checkpoints</td><td>at, branch, summary, next, body, feature_id</td><td>summary length ≤ 200</td></tr>
+      <tr><td>run_steps</td><td>feature_id, run, step, observed, at</td><td>FK</td></tr>
+      <tr><td>docs</td><td>section, name, body, updated</td><td>unique (section, name); section CHECK</td></tr>
+      <tr><td>plans / review_rounds / review_prompts</td><td>file_path + sha256, round, snapshot_path, tag, target JSON</td><td>FK cascade</td></tr>
+      <tr><td>verifications / shots</td><td>feature_id, verdict, round, body, commit, verified_by, implemented_by, dirty; shot path + sha256</td><td>verdict CHECK PASS/FAIL/BLOCKED; FK</td></tr>
+      <tr><td>verify_checks / gate_runs</td><td>name, run, stages, timeout; check, status, exit, seconds, tail</td><td>stages CHECK</td></tr>
+      <tr><td>search (FTS5)</td><td>kind, ref, title, body</td><td>kept in sync by triggers</td></tr>
+    </tbody>
+  </table>
+  <p>Plan HTML files and screenshots stay files (the browser loads them by URL), stored in the DB as a path plus a hash, so <code>check</code> notices if one goes missing or changes.</p>
+
+  <h3>Built to be upgraded</h3>
+  <ul>
+    <li><strong>Schema:</strong> numbered migration files in <code>migrations/NNN-*.sql</code>, tracked by SQLite's built-in schema version number. Opening the DB with a newer CLI copies it to <code>brain.db.bak-vN</code>, then migrates forward in one transaction.
+      A DB newer than the CLI is refused with "upgrade brain-axi".</li>
+    <li><strong>Behavior:</strong> one library function per operation, so a change lands in one place, with a test next to it.</li>
+    <li><strong>Surface:</strong> the plugin version must equal the npm version (checked by the dev script). Skills only name commands that exist (also checked).
+      The export format carries <code>version:</code>, so <code>import</code> can read old dumps.</li>
+  </ul>
+</section>
+
+<section id="uis">
+  <h2>The two UIs, on the new architecture</h2>
+  <p><code>lib/review/server.js</code> keeps HTTP and sessions. It stops reading <code>.brain/</code> files: <code>brain-data.js</code> (1,792 lines), <code>store.js</code>, <code>evals.js</code>
+  and <code>playbooks.js</code> are deleted, and the server calls <code>lib/brain</code> for plans, rounds, prompts, features, run steps and verifications. The static assets
+  (chrome, sdk, lightbox, dashboard, vendored mermaid) are unchanged. The review loop's on-the-wire contract (<code>window.brain.queuePrompt</code>, the poll payload) stays the same,
+  so plan artifacts and the brain-plan skill keep working.</p>
+</section>
+
+<section id="product-decisions">
+  <h2>Product decisions</h2>
+  <p>Settled in the grill. Each is pre-selected; one click confirms it.</p>
+  <div class="decision-card" id="d-ui" data-brain-action>
+    <p><strong>1. Browser UIs</strong> <span class="chip chip-low">settled in grill</span></p>
+    <table><tbody>
+      <tr><td><input type="radio" name="d-ui" id="d-ui-a" value="Keep both, re-plumbed onto lib/brain" checked data-brain-action></td><td><label for="d-ui-a">Keep review + watch, re-plumbed onto <code>lib/brain</code></label></td></tr>
+      <tr><td><input type="radio" name="d-ui" id="d-ui-b" value="Keep review only" data-brain-action></td><td><label for="d-ui-b">Keep review only</label></td></tr>
+    </tbody></table>
+    <button type="button" class="btn-queue" data-brain-action onclick="queueDecision('d-ui','Browser UIs')">Queue answer</button><span class="queue-ack" id="ack-d-ui"></span>
+  </div>
+  <div class="decision-card" id="d-surface" data-brain-action>
+    <p><strong>2. AXI surface</strong> <span class="chip chip-low">settled in grill</span></p>
+    <table><tbody>
+      <tr><td><input type="radio" name="d-surface" id="d-surface-a" value="15 commands as tabled" checked data-brain-action></td><td><label for="d-surface-a">15 commands as in the table above</label></td></tr>
+      <tr><td><input type="radio" name="d-surface" id="d-surface-b" value="Also cut verify + check" data-brain-action></td><td><label for="d-surface-b">Also cut verify + check</label></td></tr>
+    </tbody></table>
+    <button type="button" class="btn-queue" data-brain-action onclick="queueDecision('d-surface','AXI surface')">Queue answer</button><span class="queue-ack" id="ack-d-surface"></span>
+  </div>
+  <div class="decision-card" id="d-evals" data-brain-action>
+    <p><strong>3. Evals</strong> <span class="chip chip-low">settled in grill</span></p>
+    <table><tbody>
+      <tr><td><input type="radio" name="d-evals" id="d-evals-a" value="Repo-dev tooling (evals/ + scripts), cut from product" checked data-brain-action></td><td><label for="d-evals-a">Repo-dev tooling: <code>evals/</code> + scripts, cut from the product</label></td></tr>
+      <tr><td><input type="radio" name="d-evals" id="d-evals-b" value="Brain data + evals command" data-brain-action></td><td><label for="d-evals-b">Brain data + <code>evals</code> command</label></td></tr>
+    </tbody></table>
+    <button type="button" class="btn-queue" data-brain-action onclick="queueDecision('d-evals','Evals')">Queue answer</button><span class="queue-ack" id="ack-d-evals"></span>
+  </div>
+</section>
+
+<section id="decisions">
+  <h2>Technical decisions</h2>
+  <div class="decision-card" id="d-sequence" data-brain-action>
+    <p><strong>4. What happens to the unpushed skills-plugin branch?</strong></p>
+    <table>
+      <thead><tr><th></th><th>Option</th><th>Pros</th><th>Cons</th></tr></thead>
+      <tbody>
+        <tr><td><input type="radio" name="d-sequence" id="seq-a" value="PR skills-plugin now (Greptile loop), build axi-core on a new branch after merge" checked data-brain-action></td>
+          <td><label for="seq-a">PR skills-plugin now (Greptile loop to 5/5); build axi-core on a new branch after it merges <span class="tag-recommended">(recommended)</span></label></td>
+          <td>Verified work lands while it's fresh; a reviewable PR, not a 15-commit monster</td><td><code>playbook</code>/<code>skill</code> ship briefly, then get cut in axi-core</td></tr>
+        <tr><td><input type="radio" name="d-sequence" id="seq-b" value="Continue on feat/skills-plugin, one big PR" data-brain-action></td>
+          <td><label for="seq-b">Keep going on <code>feat/skills-plugin</code>, one big PR</label></td>
+          <td>No intermediate state</td><td>Huge diff; the verified skills work waits weeks to merge</td></tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action onclick="queueDecision('d-sequence','skills-plugin branch')">Queue answer</button><span class="queue-ack" id="ack-d-sequence"></span>
+  </div>
+
+  <div class="decision-card" id="d-tests" data-brain-action>
+    <p><strong>5. Tests use <code>node:test</code>.</strong> <span class="chip chip-med">bends a house rule</span></p>
+    <p><code>HARNESS.md</code> says "no test framework", but <code>node:test</code> is built into Node, adds no dependency and needs no build step. It replaces 3,325 lines of hand-rolled assertions.</p>
+    <table>
+      <tbody>
+        <tr><td><input type="radio" name="d-tests" id="t-a" value="node:test for lib/brain; update HARNESS.md rule to 'no third-party test framework'" checked data-brain-action></td>
+          <td><label for="t-a"><code>node:test</code> for lib/brain; reword the rule to "no third-party test framework" <span class="tag-recommended">(recommended)</span></label></td></tr>
+        <tr><td><input type="radio" name="d-tests" id="t-b" value="Plain assert script, keep the rule literal" data-brain-action></td>
+          <td><label for="t-b">A plain <code>node:assert</code> script; the rule stays literal</label></td></tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action onclick="queueDecision('d-tests','Test runner')">Queue answer</button><span class="queue-ack" id="ack-d-tests"></span>
+  </div>
+
+  <div class="decision-card" id="d-feature" data-brain-action>
+    <p><strong>6. Tracking</strong></p>
+    <table>
+      <tbody>
+        <tr><td><input type="radio" name="d-feature" id="f-a" value="Cut feat-012 sqlite-engine; new feat axi-core owns this plan" checked data-brain-action></td>
+          <td><label for="f-a">Cut feat-012 <code>sqlite-engine</code>; a new feature <code>axi-core</code> owns this plan <span class="tag-recommended">(recommended)</span></label></td></tr>
+        <tr><td><input type="radio" name="d-feature" id="f-b" value="Rename sqlite-engine to cover it" data-brain-action></td>
+          <td><label for="f-b">Rename and widen <code>sqlite-engine</code></label></td></tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn-queue" data-brain-action onclick="queueDecision('d-feature','Tracking')">Queue answer</button><span class="queue-ack" id="ack-d-feature"></span>
+  </div>
+</section>
+
+<section id="plan-of-record" data-brain-section="plan-of-record">
+  <h2>Plan of record</h2>
+  <ol>
+    <template><li data-brain-item><span data-item-text data-brain-action></span>
+      <span class="item-controls"><button type="button" class="item-x" data-brain-action>x</button>
+      <button type="button" class="item-restore" data-brain-action hidden>restore</button></span></li></template>
+    <li data-brain-item="0"><strong>Phase 1 — the library.</strong>
+      <span data-item-text data-brain-action>lib/brain/ with db.js, 001-core.sql, the domain modules, toon.js and node:test tests. No CLI change yet; engines bumped to node &gt;=24.
+      Acceptance: every function in the layout above exists and is tested against a temp DB. Two processes writing at once lose no rows. Opening an older DB migrates it with a .bak copy; a newer DB is refused.
+      Verify: node --test test/brain; a concurrency script; a migration fixture.</span>
+      <span class="item-controls"><button type="button" class="item-x" data-brain-action>x</button><button type="button" class="item-restore" data-brain-action hidden>restore</button></span></li>
+    <li data-brain-item="1"><strong>Phase 2 — the AXI on the library.</strong>
+      <span data-item-text data-brain-action>bin/brain.js rewritten as a thin dispatcher over lib/brain with the 15-command surface, export/import, and a tiny check. Delete playbooks.js, state.js, the cut commands, check-state-invariants.mjs and check-playbook-refs.mjs; skill --check becomes scripts/check-skills.mjs.
+      Acceptance: brain.js ≤ 1,500 lines, with no node:sqlite and no fs reads of .brain content outside lib/brain; every command has --help, rejects unknown flags and ends in help:; export → import → export is byte-identical.
+      Verify: grep checks; a command-matrix transcript; an export round-trip diff.</span>
+      <span class="item-controls"><button type="button" class="item-x" data-brain-action>x</button><button type="button" class="item-restore" data-brain-action hidden>restore</button></span></li>
+    <li data-brain-item="2"><strong>Phase 3 — the UIs on the library.</strong>
+      <span data-item-text data-brain-action>server.js calls lib/brain; brain-data.js, store.js and evals.js are deleted. The review wire contract is unchanged.
+      Acceptance: a full plan review round trip (open → annotate → poll returns prompts → agent-reply → end) and the watch dashboard showing live run steps, both against a DB brain.
+      Verify: a Playwright walk with screenshots for review and watch.</span>
+      <span class="item-controls"><button type="button" class="item-x" data-brain-action>x</button><button type="button" class="item-restore" data-brain-action hidden>restore</button></span></li>
+    <li data-brain-item="3"><strong>Phase 4 — skills on the new surface.</strong>
+      <span data-item-text data-brain-action>Every skill step names real commands and the TOON fields to read; the playbook fallbacks are removed. check-skills.mjs fails if a skill names a missing command or flag. Evals move to evals/ (repo-dev); re-run skill-routing.
+      Acceptance: check-skills exit 0; skill-routing ≥ 0.9 non-held-out with frozen cases passing.
+      Verify: script output; the eval record.</span>
+      <span class="item-controls"><button type="button" class="item-x" data-brain-action>x</button><button type="button" class="item-restore" data-brain-action hidden>restore</button></span></li>
+    <li data-brain-item="4"><strong>Phase 5 — rebuild this repo's brain.</strong>
+      <span data-item-text data-brain-action>A one-off script (not shipped) imports rules, codebase and recipe docs, the verify registry and the feature list with current statuses into a fresh brain.db, then the old .brain/ files are deleted (git keeps the history).
+      Acceptance: brain check passes; brain verify run passes; features list matches the old tracker's slugs and statuses; search finds a rule by keyword.
+      Verify: the transcript, plus a before/after slug and status diff.</span>
+      <span class="item-controls"><button type="button" class="item-x" data-brain-action>x</button><button type="button" class="item-restore" data-brain-action hidden>restore</button></span></li>
+  </ol>
+  <div class="list-add-row" data-brain-section-add="plan-of-record">
+    <input type="text" class="list-add-input" data-brain-action placeholder="Add a phase..."><button type="button" class="list-add-btn" data-brain-action>+ Add item</button>
+  </div>
+</section>
+
+<section id="files-changed">
+  <h2>Files that change</h2>
+  <table>
+    <thead><tr><th>Path</th><th>Change</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td><code>lib/brain/**</code>, <code>test/brain/**</code></td><td>new</td><td>The library and its tests</td></tr>
+      <tr><td><code>bin/brain.js</code></td><td>rewrite (5,562 → ≤ 1,500 lines)</td><td>Thin AXI</td></tr>
+      <tr><td><code>lib/state.js</code>, <code>lib/review/{brain-data,store,evals,playbooks}.js</code></td><td>delete</td><td>Absorbed by lib/brain</td></tr>
+      <tr><td><code>lib/review/server.js</code></td><td>edit</td><td>Calls lib/brain</td></tr>
+      <tr><td><code>scripts/check-state-invariants.mjs</code>, <code>check-playbook-refs.mjs</code></td><td>delete</td><td>Schema + tests + check-skills replace them</td></tr>
+      <tr><td><code>scripts/check-skills.mjs</code></td><td>new</td><td>Skill-tree and plugin validation, plus skills-name-real-commands</td></tr>
+      <tr><td><code>skills/**</code></td><td>edit</td><td>New command forms; fallbacks removed</td></tr>
+      <tr><td><code>.brain/evals</code> → <code>evals/</code>, <code>evals-plugin/</code></td><td>move</td><td>Repo-dev tooling</td></tr>
+      <tr><td><code>.brain/**</code> (this repo)</td><td>replace with brain.db (+ optional export)</td><td>Phase 5</td></tr>
+      <tr><td><code>.brain/HARNESS.md</code></td><td>delete (phase 4)</td><td>Method parts move into skills; the rest goes</td></tr>
+      <tr><td><code>package.json</code>, CLAUDE.md, README, CHANGELOG</td><td>edit</td><td>Node ≥ 24, the 3-layer architecture, the new install</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="error-paths">
+  <h2>Error paths</h2>
+  <table>
+    <thead><tr><th>Failure</th><th>Detected by</th><th>Handled by</th><th>Agent sees</th></tr></thead>
+    <tbody>
+      <tr><td>No brain.db (fresh clone, CI)</td><td>openBrain</td><td>BrainError NO_DB → exit 1; context stays silent</td><td><code>help:</code> <code>brain init</code> or <code>brain import</code></td></tr>
+      <tr><td>DB newer than the CLI</td><td>schema version &gt; latest migration</td><td>Refuse, no writes</td><td><code>help:</code> upgrade brain-axi</td></tr>
+      <tr><td>Migration fails midway</td><td>exception inside the transaction</td><td>Rollback; the .bak copy is untouched</td><td>Error naming the migration + restore hint</td></tr>
+      <tr><td>Second in-progress feature</td><td>partial unique index</td><td>BrainError ONE_IN_PROGRESS</td><td>Which feature holds the slot + the command to release it</td></tr>
+      <tr><td>Ship without a PASS verification</td><td>features.ship</td><td>BrainError</td><td><code>help:</code> <code>verifications add</code></td></tr>
+      <tr><td>Concurrent writers</td><td>SQLITE_BUSY</td><td>WAL + busy_timeout</td><td>Nothing, or an error after the timeout</td></tr>
+      <tr><td>Plan HTML or shot changed or missing</td><td>sha256 mismatch in check</td><td>A check row fails</td><td>The path + re-add command</td></tr>
+      <tr><td>Node &lt; 24</td><td>startup check</td><td>exit 2</td><td><code>error: brain-axi needs node &gt;=24</code></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="testing-plan">
+  <h2>Testing plan</h2>
+  <ul class="checklist">
+    <li><label><input type="checkbox"> node:test per lib/brain module (happy path + each BrainError code)</label></li>
+    <li><label><input type="checkbox"> Migration: v0 → latest with a .bak; a newer DB is refused; rollback on a forced failure</label></li>
+    <li><label><input type="checkbox"> Two worktrees + two processes writing at once: no lost rows</label></li>
+    <li><label><input type="checkbox"> Command matrix: every command × --help, an unknown flag (exit 2), happy path, a not-found case (exit 1)</label></li>
+    <li><label><input type="checkbox"> Export → import → export byte-identical</label></li>
+    <li><label><input type="checkbox"> Review round trip + watch dashboard against a DB brain (Playwright, screenshots)</label></li>
+    <li><label><input type="checkbox"> check-skills: every command a skill names exists</label></li>
+    <li><label><input type="checkbox"> skill-routing ≥ 0.9; skill-coverage frozen cases pass</label></li>
+    <li><label><input type="checkbox"> Greps: no node:sqlite import outside lib/brain; no .brain fs reads outside lib/brain</label></li>
+  </ul>
+</section>
+
+<section id="open-questions" data-brain-section="open-questions">
+  <h2>Open questions</h2>
+  <ul>
+    <template><li data-brain-item><span data-item-text data-brain-action></span>
+      <span class="item-controls"><button type="button" class="item-x" data-brain-action>x</button><button type="button" class="item-restore" data-brain-action hidden>restore</button></span></li></template>
+    <li data-brain-item="0"><span data-item-text data-brain-action><strong>Resolved round 1:</strong> keep <code>export.toon</code> local for now; it is not committed (gitignored with brain.db).</span></li>
+    <li data-brain-item="1"><span data-item-text data-brain-action><strong>Resolved round 1:</strong> HARNESS.md content that is method moves into the owning skill (phase 4); everything else is deleted. No doc row.</span></li>
+  </ul>
+  <div class="list-add-row" data-brain-section-add="open-questions">
+    <input type="text" class="list-add-input" data-brain-action placeholder="Add an open question..."><button type="button" class="list-add-btn" data-brain-action>+ Add item</button>
+  </div>
+</section>
+
+<div style="margin-top: var(--space-6)">
+  <button type="button" class="btn-approve" data-brain-action onclick="queueVerdict('approve')">Approve plan</button>
+  <button type="button" class="btn-request-changes" data-brain-action onclick="queueVerdict('request-changes')">Request changes</button>
+</div>
+<script>
+  function queueDecision(cardId, question) {
+    var card = document.getElementById(cardId);
+    var checked = card.querySelector('input[type="radio"]:checked');
+    if (!checked) return;
+    var choice = checked.value;
+    if (window.brain && typeof window.brain.queuePrompt === "function") {
+      window.brain.queuePrompt({ tag: "decision", queueKey: cardId, prompt: question + ": " + choice,
+        target: { type: "decision", question: question, choice: choice } });
+    }
+    var ack = document.getElementById("ack-" + cardId);
+    if (ack) ack.textContent = "Queued: " + choice;
+  }
+  function queueVerdict(verdict) {
+    if (!(window.brain && typeof window.brain.queuePrompt === "function")) return;
+    window.brain.queuePrompt({ tag: "message", queueKey: "verdict",
+      prompt: verdict === "approve" ? "Plan approved as written." : "Requesting changes — see annotations." });
+  }
+  (function () {
+    function queueList(section, queueKey, prompt, action, item, index) {
+      if (window.brain && typeof window.brain.queuePrompt === "function") {
+        window.brain.queuePrompt({ tag: "list-edit", queueKey: queueKey, prompt: prompt,
+          target: { type: "list-edit", section: section, action: action, item: item, index: index } });
+      }
+    }
+    function slugify(s) { return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "item"; }
+    function itemText(el) { var t = el.querySelector("[data-item-text]"); return (t || el).textContent.trim(); }
+    function addBadge(el, cls, label) {
+      var badge = el.querySelector("." + cls);
+      if (!badge) { badge = document.createElement("span"); badge.className = "item-badge " + cls; el.appendChild(badge); }
+      badge.textContent = label;
+    }
+    function toggleRemoved(item, section) {
+      var index = Number(item.getAttribute("data-brain-item"));
+      var text = itemText(item);
+      var removed = item.classList.toggle("item-removed");
+      var xBtn = item.querySelector(".item-x"); var restoreBtn = item.querySelector(".item-restore");
+      if (xBtn) xBtn.hidden = removed; if (restoreBtn) restoreBtn.hidden = !removed;
+      var key = section + ":remove:" + index;
+      if (removed) queueList(section, key, "Remove from " + section + ": \"" + text + "\"", "remove", text, index);
+      else queueList(section, key, "Cancelled: keep \"" + text + "\" in " + section, "edit", text, index);
+    }
+    function startEdit(item, section) {
+      if (item.classList.contains("item-removed")) return;
+      var span = item.querySelector("[data-item-text]");
+      if (!span || span.isContentEditable) return;
+      var before = span.textContent;
+      span.setAttribute("contenteditable", "true"); span.focus();
+      function commit() {
+        span.removeAttribute("contenteditable"); span.removeEventListener("blur", commit); span.removeEventListener("keydown", onKey);
+        var text = span.textContent.trim();
+        if (!text || text === before.trim()) { span.textContent = before; return; }
+        var index = Number(item.getAttribute("data-brain-item"));
+        addBadge(item, "item-badge-edited", "edited");
+        queueList(section, section + ":edit:" + index, "Edit " + section + " item " + index + ": \"" + text + "\"", "edit", text, index);
+      }
+      function onKey(ev) {
+        if (ev.key === "Enter") { ev.preventDefault(); span.blur(); }
+        else if (ev.key === "Escape") { span.textContent = before; ev.preventDefault(); span.blur(); }
+      }
+      span.addEventListener("blur", commit); span.addEventListener("keydown", onKey);
+    }
+    function commitAdd(addRow) {
+      var section = addRow.getAttribute("data-brain-section-add");
+      var input = addRow.querySelector(".list-add-input");
+      var text = input.value.trim(); if (!text) return;
+      var list = document.querySelector("[data-brain-section=\"" + section + "\"]");
+      var tpl = list && list.querySelector("template"); if (!list || !tpl) return;
+      var node = document.importNode(tpl.content, true);
+      var item = node.querySelector("[data-brain-item]") || node.firstElementChild;
+      item.setAttribute("data-brain-item", "new");
+      var span = item.querySelector("[data-item-text]"); if (span) span.textContent = text;
+      item.classList.add("item-proposed"); addBadge(item, "item-badge-proposed", "proposed");
+      tpl.parentNode.insertBefore(node, tpl.nextSibling);
+      input.value = "";
+      queueList(section, section + ":add:" + slugify(text), "Add to " + section + ": \"" + text + "\"", "add", text, null);
+    }
+    document.addEventListener("click", function (ev) {
+      if (ev.target.closest(".item-x") || ev.target.closest(".item-restore")) {
+        var item = ev.target.closest("[data-brain-item]"); var section = ev.target.closest("[data-brain-section]");
+        if (item && section) toggleRemoved(item, section.getAttribute("data-brain-section"));
+        return;
+      }
+      if (ev.target.closest(".list-add-btn")) { var addRow = ev.target.closest("[data-brain-section-add]"); if (addRow) commitAdd(addRow); }
+    });
+    document.addEventListener("dblclick", function (ev) {
+      var item = ev.target.closest("[data-brain-item]"); if (!item) return;
+      var section = item.closest("[data-brain-section]"); if (section) startEdit(item, section.getAttribute("data-brain-section"));
+    });
+    document.addEventListener("keydown", function (ev) {
+      if (ev.key !== "Enter") return;
+      var addRow = ev.target.closest("[data-brain-section-add]");
+      if (addRow && ev.target.classList.contains("list-add-input")) { ev.preventDefault(); commitAdd(addRow); }
+    });
+  })();
+</script>
+</body>
+</html>

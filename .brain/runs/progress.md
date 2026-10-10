@@ -21,6 +21,14 @@
 
 ---
 
+## 2026-10-10 — Planned axi-core (plans/2026-10-10-axi-architecture.html, reviewed r1, all recommended): skills -> thin AXI -> lib/brain SQLite; sqlite-engine cut
+- branch: `feat/skills-plugin`
+- in-progress feature: none
+- run note: none
+- next: Greploop skills-plugin to 5/5, open PR; after merge start axi-core phase 1 (lib/brain) on a new branch
+
+---
+
 ## 2026-10-10 — skills-plugin shipped on feat/skills-plugin (8 commits, not pushed); verification r1 FAIL -> r2 PASS; routing eval 0.912
 - branch: `feat/skills-plugin`
 - in-progress feature: none
