@@ -119,6 +119,11 @@ in-progress one.
 5. ESTABLISH BASELINE
 -------------------------------------------------------------------------------
 
+First, open `.brain/verify.json`. If it still holds the `init` placeholder
+(a check named `placeholder` that only runs `echo`), replace it with this
+project's real checks (typecheck, tests, lint, ...) — a baseline on `echo`
+proves nothing. Then run:
+
     brain verify --stage baseline
 
 MUST pass before you make a single edit. This is what lets you tell your own
@@ -180,8 +185,9 @@ DEFINITION OF READY
 - [ ] Relevant docs read via `brain docs` / `brain search`
 - [ ] `brain check` clean on the one-in-progress policy (and ideally
       everything else)
-- [ ] Baseline established (`brain verify --stage baseline`, or `bootstrap`
-      first on a fresh clone) — pass/fail recorded, not assumed
+- [ ] Baseline established on REAL checks, not the placeholder (`brain verify
+      --stage baseline`, or `bootstrap` first on a fresh clone) — pass/fail
+      recorded, not assumed
 - [ ] Feature claimed (`features set-status ... in-progress`) if applicable
 - [ ] `progress add` checkpoint opened
 - [ ] Readiness statement said

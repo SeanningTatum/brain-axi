@@ -32,7 +32,11 @@ Confirm it's discoverable:
     npx -y brain-axi verifications view <slug> <YYYY-MM-DD>   (or <YYYY-MM-DD>-rN)
 
 Both should show your new doc with the correct verdict parsed from the
-**Verdict** line. Then bind it to the code with a receipt naming BOTH sides:
+**Verdict** line. Then bind it to the code with a receipt naming BOTH sides.
+The receipt refuses a dirty working tree (any `git status --porcelain` output,
+untracked files included): commit the implementation and the verdict doc
+first. If unrelated WIP you can't commit is present, `--allow-dirty` stamps
+anyway and records `dirty: true` — weaker evidence, honestly labelled:
 
     npx -y brain-axi receipt <slug> --verified-by <you> --implemented-by <who wrote it>
 

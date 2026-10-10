@@ -50,23 +50,21 @@ Two tiers. Choose before writing, and state which one in the header strip
 (section 1) so the reviewer can push back in a single annotation:
 
 - **small** — sections 1 (header), 2 (TL;DR), 4 (context), 8 (decisions),
-  10 (plan of record), 11 (files that change). Six sections. Use when the shape
-  is already understood and what you need is a decision and a record of it.
+  10 (plan of record), 11 (files that change), plus 3 (product brief) when
+  user-facing. Use when the change touches one surface, is cheap to reverse,
+  and its shape is understood — most user-facing features of a small app.
 - **full** — every section that applies, conditionals included. Use when the
-  work spans layers, changes a user-facing surface, or carries a decision that
-  is expensive to reverse.
+  work spans layers, is expensive to reverse, or has several interacting
+  decisions.
 
-Two rules bind the choice:
+One rule picks the tier: **risk and size, never "user-facing" alone.**
+User-facing work gets the product brief (section 3) in BOTH tiers; that does
+not force full. **Decisions are never cut:** section 8 is in both tiers, and a
+plan that hides its decisions to look small is the failure this tier exists to
+prevent.
 
-- **Decisions are never cut.** Section 8 is in both tiers. A plan with nothing
-  to decide did not need a review session; a plan that hides its decisions to
-  look small is the failure this tier exists to prevent.
-- **A conditional section still fires in small.** If the change is user-facing,
-  the product brief applies whatever the tier — reach for full instead of
-  dropping it. Tier controls how much you write about the shape, never whether
-  the case for building it gets made.
-
-When in doubt, write small and let the review round tell you what is missing.
+When risk and size leave it unclear, write small and let the review round tell
+you what is missing.
 Adding a section between rounds is cheap; a reviewer's attention spent on eleven
 sections that did not need writing is not.
 
