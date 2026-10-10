@@ -149,6 +149,10 @@
     <li><strong>Integrity:</strong> rules in the schema, plus a tiny <code>check</code> and library tests.</li>
     <li><strong>This repo's brain:</strong> rebuilt with only the live parts carried over.</li>
   </ul>
+  <p><strong>Amended 2026-10-10 (test run):</strong> an end-to-end test (a fresh brain driving a kanban app build in <code>brain-todo-test</code>) produced 13 findings.
+  Four are obsolete on SQLite (#1, #2, #6a, #12), two were already covered (#6b, #7), and the skill-text parts of #10, #11 and #13 are fixed in PR #21. The rest are written into
+  the AXI table, the schema, the phases, the error paths and the testing plan below, each marked with its finding number. The full mapping table is in <code>.brain/features/axi-core/axi-core.md</code>.
+  The paused fixes in <code>stash@{0}</code> are a source for ideas only (noted per phase). The stash can be dropped once axi-core lands.</p>
 </section>
 
 <section id="big-picture">
@@ -211,19 +215,19 @@ flowchart TD
     <thead><tr><th>Command</th><th>Subcommands</th><th>Library calls</th></tr></thead>
     <tbody>
       <tr><td><code>(bare)</code></td><td>home dashboard</td><td>features.stats · progress.latest · plans.openSessions</td></tr>
-      <tr><td><code>init</code></td><td>create <code>brain.db</code>, add it to .gitignore</td><td>db.create</td></tr>
+      <tr><td><code>init</code></td><td>create <code>brain.db</code>, add it to .gitignore; seed the first checkpoint with the real git branch (<code>none</code> without git) and a <code>next</code> line; no placeholder verify check (#3, #10)</td><td>db.create</td></tr>
       <tr><td><code>context</code></td><td>≤ 600 B session hook; silent outside a brain</td><td>features.stats · progress.latest</td></tr>
       <tr><td><code>export</code> / <code>import</code></td><td>deterministic TOON dump ↔ DB</td><td>io.exportAll · io.importAll</td></tr>
       <tr><td><code>features</code></td><td>list · view · add · set (status, pr, fields) · ship</td><td>features.*</td></tr>
       <tr><td><code>tasks</code></td><td>list · view (the old <code>brief</code>) · add · claim · set</td><td>tasks.*</td></tr>
-      <tr><td><code>progress</code></td><td>list · add</td><td>progress.*</td></tr>
+      <tr><td><code>progress</code></td><td>list · add (<code>--run &lt;name&gt;</code> links a run note; <code>list</code> shows it, #9)</td><td>progress.*</td></tr>
       <tr><td><code>runs</code></td><td>view · append</td><td>runs.*</td></tr>
       <tr><td><code>docs</code></td><td>list · view · set (<code>--from file</code> or stdin) · rm</td><td>docs.*</td></tr>
       <tr><td><code>plans</code></td><td>list · view</td><td>plans.*</td></tr>
-      <tr><td><code>review</code></td><td>open · poll · end</td><td>plans.* (server in lib/review)</td></tr>
+      <tr><td><code>review</code></td><td>open · poll · end (<code>--approved-by &lt;who&gt;</code> for headless/CI approval, #8)</td><td>plans.* (server in lib/review)</td></tr>
       <tr><td><code>watch</code></td><td>open the dashboard</td><td>(server in lib/review)</td></tr>
-      <tr><td><code>verifications</code></td><td>list · view · add (verdict, body, <code>--shot</code>; records the commit, verifier and dirty flag)</td><td>verifications.*</td></tr>
-      <tr><td><code>verify</code></td><td>list · add · run (<code>--stage</code>/<code>--only</code>; records gate rows)</td><td>verify.*</td></tr>
+      <tr><td><code>verifications</code></td><td>list · view · add (verdict, body, <code>--shot</code>; records the commit, verifier and dirty flag: a dirty tree records <code>dirty:true</code>, #11)</td><td>verifications.*</td></tr>
+      <tr><td><code>verify</code></td><td>list · add · run (<code>--stage</code>/<code>--only</code>; records gate rows; zero checks → NO_CHECKS, #10)</td><td>verify.*</td></tr>
       <tr><td><code>search</code></td><td>FTS5 across docs, checkpoints, run steps, verifications, features</td><td>search.query</td></tr>
       <tr><td><code>check</code></td><td>integrity_check + the cross-entity rules</td><td>db.check</td></tr>
     </tbody>
@@ -264,7 +268,7 @@ test/brain/*.test.js node:test against a temp DB, one file per module</pre>
       <tr><td>features</td><td>slug, name, status, description, pr_url, evidence</td><td>status CHECK in 5 values; <strong>a partial unique index allows only one in-progress</strong></td></tr>
       <tr><td>feature_deps</td><td>feature_id, depends_on</td><td>foreign keys</td></tr>
       <tr><td>tasks</td><td>feature_id, title, status, claimed_by, claim_token, acceptance, verify</td><td>FK; status CHECK</td></tr>
-      <tr><td>checkpoints</td><td>at, branch, summary, next, body, feature_id</td><td>summary length ≤ 200</td></tr>
+      <tr><td>checkpoints</td><td>at, branch, summary, next, body, feature_id, <code>run</code> (nullable run-note name, #9)</td><td>summary length ≤ 200; writers clip with a trailing <code>…</code> or throw SUMMARY_TOO_LONG, never a silent cut (#5)</td></tr>
       <tr><td>run_steps</td><td>feature_id, run, step, observed, at</td><td>FK</td></tr>
       <tr><td>docs</td><td>section, name, body, updated</td><td>unique (section, name); section CHECK</td></tr>
       <tr><td>plans / review_rounds / review_prompts</td><td>file_path + sha256, round, snapshot_path, tag, target JSON</td><td>FK cascade</td></tr>
@@ -377,22 +381,31 @@ test/brain/*.test.js node:test against a temp DB, one file per module</pre>
     <li data-brain-item="0"><strong>Phase 1 — the library.</strong>
       <span data-item-text data-brain-action>lib/brain/ with db.js, 001-core.sql, the domain modules, toon.js and node:test tests. No CLI change yet; engines bumped to node &gt;=24.
       Acceptance: every function in the layout above exists and is tested against a temp DB. Two processes writing at once lose no rows. Opening an older DB migrates it with a .bak copy; a newer DB is refused.
-      Verify: node --test test/brain; a concurrency script; a migration fixture.</span>
+      Verify: node --test test/brain; a concurrency script; a migration fixture.
+      <em>Amended (test run 2026-10-10):</em> <code>checkpoints.run</code> nullable column (#9). <code>features.ship</code> and <code>progress.add</code> clip an overlong summary with a trailing <code>…</code> or throw BrainError SUMMARY_TOO_LONG, never a silent cut (#5); port the stash's <code>clipChars</code> helper.
+      Closing the last task through <code>tasks.set</code> still auto-ships (decision: keep autoship). <code>features.ship</code> returns a structured ship outcome; a refusal is a BrainError, so the CLI exits 1; its hint is built from <code>verify_checks</code>, never a hardcoded runner such as <code>bun run test</code> (#4).</span>
       <span class="item-controls"><button type="button" class="item-x" data-brain-action>x</button><button type="button" class="item-restore" data-brain-action hidden>restore</button></span></li>
     <li data-brain-item="1"><strong>Phase 2 — the AXI on the library.</strong>
       <span data-item-text data-brain-action>bin/brain.js rewritten as a thin dispatcher over lib/brain with the 15-command surface, export/import, and a tiny check. Delete playbooks.js, state.js, the cut commands, check-state-invariants.mjs and check-playbook-refs.mjs; skill --check becomes scripts/check-skills.mjs.
       Acceptance: brain.js ≤ 1,500 lines, with no node:sqlite and no fs reads of .brain content outside lib/brain; every command has --help, rejects unknown flags and ends in help:; export → import → export is byte-identical.
-      Verify: grep checks; a command-matrix transcript; an export round-trip diff.</span>
+      Verify: grep checks; a command-matrix transcript; an export round-trip diff.
+      <em>Amended (test run 2026-10-10):</em> <code>init</code> seeds the first checkpoint with the real git branch (<code>none</code> when there is no git) and a <code>next</code> line, and seeds no placeholder verify check (#3, #10).
+      <code>verify run</code> with zero checks throws BrainError NO_CHECKS with <code>help:</code> "declare real checks with <code>brain verify add</code>" (#10).
+      <code>progress add --run &lt;name&gt;</code>; <code>progress list</code> shows it (#9).
+      <code>verifications add</code> records the commit; on a dirty tree it records <code>dirty:true</code> (or fails with a <code>help:</code> line), and brain-verify documents which (#11).
+      Tests: <code>brain --help</code> lists every command (#6c). Port from the stash: exit 1 on a refused autoship with the receipt hint built from declared checks; <code>resolveBranch</code> / <code>initProgressMd</code> for init.</span>
       <span class="item-controls"><button type="button" class="item-x" data-brain-action>x</button><button type="button" class="item-restore" data-brain-action hidden>restore</button></span></li>
     <li data-brain-item="2"><strong>Phase 3 — the UIs on the library.</strong>
       <span data-item-text data-brain-action>server.js calls lib/brain; brain-data.js, store.js and evals.js are deleted. The review wire contract is unchanged.
       Acceptance: a full plan review round trip (open → annotate → poll returns prompts → agent-reply → end) and the watch dashboard showing live run steps, both against a DB brain.
-      Verify: a Playwright walk with screenshots for review and watch.</span>
+      Verify: a Playwright walk with screenshots for review and watch.
+      <em>Amended (test run 2026-10-10):</em> <code>review end --approved-by &lt;who&gt;</code> approves without the browser (headless/CI): sets the plan approved and increments the round (#8).</span>
       <span class="item-controls"><button type="button" class="item-x" data-brain-action>x</button><button type="button" class="item-restore" data-brain-action hidden>restore</button></span></li>
     <li data-brain-item="3"><strong>Phase 4 — skills on the new surface.</strong>
       <span data-item-text data-brain-action>Every skill step names real commands and the TOON fields to read; the playbook fallbacks are removed. check-skills.mjs fails if a skill names a missing command or flag. Evals move to evals/ (repo-dev); re-run skill-routing.
       Acceptance: check-skills exit 0; skill-routing ≥ 0.9 non-held-out with frozen cases passing.
-      Verify: script output; the eval record.</span>
+      Verify: script output; the eval record.
+      <em>Amended (test run 2026-10-10):</em> brain-plan carries the scope-tier text fixed in PR #21 (#13) onto the new surface unchanged.</span>
       <span class="item-controls"><button type="button" class="item-x" data-brain-action>x</button><button type="button" class="item-restore" data-brain-action hidden>restore</button></span></li>
     <li data-brain-item="4"><strong>Phase 5 — rebuild this repo's brain.</strong>
       <span data-item-text data-brain-action>A one-off script (not shipped) imports rules, codebase and recipe docs, the verify registry and the feature list with current statuses into a fresh brain.db, then the old .brain/ files are deleted (git keeps the history).
@@ -435,6 +448,9 @@ test/brain/*.test.js node:test against a temp DB, one file per module</pre>
       <tr><td>Migration fails midway</td><td>exception inside the transaction</td><td>Rollback; the .bak copy is untouched</td><td>Error naming the migration + restore hint</td></tr>
       <tr><td>Second in-progress feature</td><td>partial unique index</td><td>BrainError ONE_IN_PROGRESS</td><td>Which feature holds the slot + the command to release it</td></tr>
       <tr><td>Ship without a PASS verification</td><td>features.ship</td><td>BrainError</td><td><code>help:</code> <code>verifications add</code></td></tr>
+      <tr><td>Autoship refused when the last task closes (#4)</td><td>tasks.set → features.ship</td><td>Task stays done; BrainError → exit 1</td><td>Task done, ship refused + a hint built from <code>verify_checks</code></td></tr>
+      <tr><td>Summary over 200 chars (#5)</td><td>features.ship · progress.add</td><td>Clip with <code>…</code> or BrainError SUMMARY_TOO_LONG</td><td>Never a silent cut</td></tr>
+      <tr><td><code>verify run</code> with no declared checks (#10)</td><td>verify.run</td><td>BrainError NO_CHECKS → exit 1</td><td><code>help:</code> declare real checks with <code>brain verify add</code></td></tr>
       <tr><td>Concurrent writers</td><td>SQLITE_BUSY</td><td>WAL + busy_timeout</td><td>Nothing, or an error after the timeout</td></tr>
       <tr><td>Plan HTML or shot changed or missing</td><td>sha256 mismatch in check</td><td>A check row fails</td><td>The path + re-add command</td></tr>
       <tr><td>Node &lt; 24</td><td>startup check</td><td>exit 2</td><td><code>error: brain-axi needs node &gt;=24</code></td></tr>
@@ -449,6 +465,8 @@ test/brain/*.test.js node:test against a temp DB, one file per module</pre>
     <li><label><input type="checkbox"> Migration: v0 → latest with a .bak; a newer DB is refused; rollback on a forced failure</label></li>
     <li><label><input type="checkbox"> Two worktrees + two processes writing at once: no lost rows</label></li>
     <li><label><input type="checkbox"> Command matrix: every command × --help, an unknown flag (exit 2), happy path, a not-found case (exit 1)</label></li>
+    <li><label><input type="checkbox"> <code>brain --help</code> lists every command (#6c)</label></li>
+    <li><label><input type="checkbox"> Fresh <code>init</code>: real branch (or <code>none</code>) and a <code>next</code> line in the first checkpoint; <code>verify run</code> exits 1 with NO_CHECKS (#3, #10)</label></li>
     <li><label><input type="checkbox"> Export → import → export byte-identical</label></li>
     <li><label><input type="checkbox"> Review round trip + watch dashboard against a DB brain (Playwright, screenshots)</label></li>
     <li><label><input type="checkbox"> check-skills: every command a skill names exists</label></li>
