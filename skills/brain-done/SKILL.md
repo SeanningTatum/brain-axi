@@ -126,7 +126,9 @@ slots and the register for each artifact below.
 - Feature actually done, not just this task? `brain features ship <slug>
   --evidence "<from real output — a verify result, a verdict line>"` — refused
   (exit 1) unless the latest verification is PASS and no tasks are open, and it
-  writes its own checkpoint. Never compose `--evidence` from a sentence you
+  writes its own checkpoint. A `warning:` line (it still ships) means that PASS
+  is not on HEAD's history, has no known commit, or was dirty — re-verify on
+  HEAD with brain-verify. Never compose `--evidence` from a sentence you
   made up to satisfy the flag.
 - PR opened? Record it: `brain features set <slug> --pr <url>`.
 

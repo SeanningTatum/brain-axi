@@ -480,7 +480,9 @@ const features = {
         print([
           ...group("ship", { outcome: r.outcome, slug: f.slug, status: f.status, previous: r.previous }),
           ...(r.checkpoint ? [kv("checkpoint", r.checkpoint.id, 2), kv("summary_clipped", r.checkpoint.clipped, 2)] : []),
+          ...(r.warning ? [kv("warning", r.warning.message)] : []),
           ...toonList("help", [
+            ...(r.warning ? r.warning.help : []),
             `Record the PR: brain features set ${f.slug} --pr <url>`,
             "Run `brain features list` to pick the next feature",
           ]),
@@ -610,8 +612,9 @@ const tasks = {
         const r = L.tasks.set(db, slug, key, { status, evidence, by, token, title, acceptance, verify: flags.verify, autoship: !flags["no-autoship"], root });
         const lines = ["task:", kv("feature", slug, 2), kv("key", r.task.key, 2), kv("status", r.task.status, 2), kv("previous", r.previous, 2)];
         if (r.ship) lines.push("ship:", kv("outcome", r.ship.outcome, 2), kv("feature", r.ship.feature.slug, 2), kv("status", r.ship.feature.status, 2));
+        if (r.ship && r.ship.warning) lines.push(kv("warning", r.ship.warning.message));
         const help = r.ship
-          ? [`Record the PR: brain features set ${slug} --pr <url>`, "Run `brain features list` to pick the next feature"]
+          ? [...(r.ship.warning ? r.ship.warning.help : []), `Record the PR: brain features set ${slug} --pr <url>`, "Run `brain features list` to pick the next feature"]
           : [`Run \`brain tasks list ${slug}\` for what is ready next`];
         print([...lines, ...toonList("help", help)]);
       },

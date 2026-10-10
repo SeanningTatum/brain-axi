@@ -53,4 +53,7 @@ note, not the verdict body alone:
 
 `brain features ship <slug>` is refused unless the latest verification is
 PASS (and no tasks are open), so a FAIL round is not the end state: the fix
-and a fresh verifier's next round are.
+and a fresh verifier's next round are. Ship never refuses over ancestry
+(squash merges and rebases rewrite it), but it prints a `warning:` line when
+the PASS commit is not an ancestor of HEAD, is unknown, or was recorded
+`dirty: true` — the cue to re-take the verdict on the current HEAD.

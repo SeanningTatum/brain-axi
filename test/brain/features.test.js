@@ -1,7 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { features, tasks, verifications, verify, progress, check, SUMMARY_MAX_CHARS } from "../../lib/brain/index.js";
-import { freshBrain, throwsCode, rejectsRaw } from "./helpers.js";
+import fs from "node:fs";
+import path from "node:path";
+import { freshBrain, git, throwsCode, rejectsRaw } from "./helpers.js";
 
 test("add, list, get, stats", (t) => {
   const { db } = freshBrain(t);
@@ -145,4 +147,83 @@ test("ship: structured outcome, checkpoint clipped with … and the full evidenc
   const short = features.ship(db, "b", { evidence: "short", root });
   assert.equal(short.checkpoint.clipped, false);
   assert.equal(short.checkpoint.summary, "shipped b: short");
+});
+
+// A git brain whose .gitignore is committed, so the tree is clean.
+function cleanGitBrain(t) {
+  const b = freshBrain(t, { withGit: true });
+  git(b.root, "add", ".gitignore");
+  git(b.root, "commit", "-q", "-m", "ignore brain");
+  return b;
+}
+
+test("ship warning: none when the clean PASS commit is HEAD or an ancestor of it", (t) => {
+  const { db, root } = cleanGitBrain(t);
+  features.add(db, { slug: "a", name: "A" });
+  verifications.add(db, "a", { verdict: "PASS", body: "ok", root });
+  fs.writeFileSync(path.join(root, "later.txt"), "x\n");
+  git(root, "add", "later.txt");
+  git(root, "commit", "-q", "-m", "later");
+  const out = features.ship(db, "a", { evidence: "works", root });
+  assert.equal(out.outcome, "shipped");
+  assert.equal(out.warning, null);
+  assert.equal(features.ship(db, "a", { evidence: "x", root }).warning, null, "already-shipped carries no warning");
+});
+
+test("ship warning: PASS commit not an ancestor of HEAD — ships anyway, warns", (t) => {
+  const { db, root } = cleanGitBrain(t);
+  features.add(db, { slug: "a", name: "A" });
+  git(root, "checkout", "-q", "-b", "side");
+  fs.writeFileSync(path.join(root, "side.txt"), "x\n");
+  git(root, "add", "side.txt");
+  git(root, "commit", "-q", "-m", "side");
+  const v = verifications.add(db, "a", { verdict: "PASS", body: "ok", root });
+  git(root, "checkout", "-q", "main");
+  const head = git(root, "rev-parse", "--short", "HEAD");
+  const out = features.ship(db, "a", { evidence: "works", root });
+  assert.equal(out.outcome, "shipped");
+  assert.equal(out.feature.status, "shipped");
+  assert.equal(out.warning.commit, v.commit);
+  assert.equal(out.warning.head, head);
+  assert.match(out.warning.message, new RegExp(`taken on ${v.commit}, which is not an ancestor of HEAD ${head}`));
+  assert.match(out.warning.help[0], /brain-verify.*brain verifications add a --verdict PASS/);
+});
+
+test("ship warning: PASS recorded on a dirty tree", (t) => {
+  const { db, root } = cleanGitBrain(t);
+  features.add(db, { slug: "a", name: "A" });
+  fs.writeFileSync(path.join(root, "wip.txt"), "x\n");
+  assert.equal(verifications.add(db, "a", { verdict: "PASS", body: "ok", root }).dirty, true);
+  const out = features.ship(db, "a", { evidence: "works", root });
+  assert.equal(out.outcome, "shipped");
+  assert.deepEqual(out.warning.reasons, ["PASS verification (round 1) was recorded on a dirty tree (uncommitted changes)"]);
+});
+
+test("ship warning: PASS with no commit (outside git) or an unknown commit", (t) => {
+  const { db, root } = freshBrain(t);
+  features.add(db, { slug: "a", name: "A" });
+  verifications.add(db, "a", { verdict: "PASS", body: "ok", root });
+  const out = features.ship(db, "a", { evidence: "works", root });
+  assert.equal(out.outcome, "shipped");
+  assert.match(out.warning.message, /round 1\) recorded no commit/);
+  assert.equal(out.warning.commit, null);
+
+  const g = cleanGitBrain(t);
+  features.add(g.db, { slug: "b", name: "B" });
+  verifications.add(g.db, "b", { verdict: "PASS", body: "ok", root: g.root });
+  g.db.prepare("UPDATE verifications SET commit_sha = 'deadbee'").run();
+  const out2 = features.ship(g.db, "b", { evidence: "works", root: g.root });
+  assert.equal(out2.outcome, "shipped");
+  assert.match(out2.warning.message, /commit deadbee is unknown in this checkout/);
+});
+
+test("ship warning: autoship (closing the last task) returns it on the ship outcome", (t) => {
+  const { db, root } = cleanGitBrain(t);
+  features.add(db, { slug: "a", name: "A", status: "in-progress" });
+  tasks.add(db, "a", { title: "one", acceptance: "done" });
+  fs.writeFileSync(path.join(root, "wip.txt"), "x\n");
+  verifications.add(db, "a", { verdict: "PASS", body: "ok", root });
+  const r = tasks.set(db, "a", "t1", { status: "done", evidence: "works", by: "w1", root });
+  assert.equal(r.ship.outcome, "shipped");
+  assert.match(r.ship.warning.message, /dirty tree/);
 });

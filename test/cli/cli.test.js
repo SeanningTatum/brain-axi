@@ -272,12 +272,41 @@ test("features, tasks, runs, verifications, ship: happy path and not-found", (t)
   ok(brain(dir, ["verifications", "list", "--feature", "auth"]), /auth,1,PASS/);
   failsWith(brain(dir, ["verifications", "view", "core"]), 1, "NOT_FOUND");
 
-  ok(brain(dir, ["features", "ship", "auth", "--evidence", "verifier PASS round 1"]), /outcome: shipped/);
-  ok(brain(dir, ["features", "ship", "auth", "--evidence", "again"]), /outcome: already-shipped/);
+  // The PASS was dirty: the ship still happens, with a warning + re-verify help.
+  const shipped = ok(brain(dir, ["features", "ship", "auth", "--evidence", "verifier PASS round 1"]), /outcome: shipped/);
+  assert.match(shipped.out, /^warning: "?PASS verification \(round 1\) was recorded on a dirty tree/m);
+  assert.match(shipped.out, /Re-verify on the current HEAD: run the brain-verify skill/);
+  const again = ok(brain(dir, ["features", "ship", "auth", "--evidence", "again"]), /outcome: already-shipped/);
+  assert.doesNotMatch(again.out, /^warning:/m);
   ok(brain(dir, ["features", "list", "--status", "shipped"]), /auth,shipped,Auth/);
   ok(brain(dir, ["features", "view", "auth"]), /^verdict: "PASS \(round 1/m);
   ok(brain(dir, ["check"]), /^ok: true$/m);
   ok(brain(dir, []), /^in-progress: none$/m);
+});
+
+test("ship warns (never refuses) when the PASS commit is not in HEAD; a clean PASS on HEAD ships silently; autoship too", (t) => {
+  const dir = repoWithBrain(t);
+  git(dir, "add", ".gitignore");
+  git(dir, "commit", "-q", "-m", "ignore brain");
+  ok(brain(dir, ["features", "add", "clean", "--name", "Clean"]));
+  ok(brain(dir, ["verifications", "add", "clean", "--verdict", "PASS", "--body", "walked"]), /dirty: false/);
+  const c = ok(brain(dir, ["features", "ship", "clean", "--evidence", "PASS round 1"]), /outcome: shipped/);
+  assert.doesNotMatch(c.out, /warning|Re-verify/);
+
+  // Verified on a side branch that never lands in main's history (squash-merge shape).
+  ok(brain(dir, ["features", "add", "side", "--name", "Side", "--status", "in-progress"]));
+  ok(brain(dir, ["tasks", "add", "side", "--title", "one", "--acceptance", "works"]));
+  git(dir, "checkout", "-q", "-b", "side");
+  fs.writeFileSync(path.join(dir, "side.txt"), "x\n");
+  git(dir, "add", "side.txt");
+  git(dir, "commit", "-q", "-m", "side");
+  ok(brain(dir, ["verifications", "add", "side", "--verdict", "PASS", "--body", "walked"]), /dirty: false/);
+  git(dir, "checkout", "-q", "main");
+  const r = ok(brain(dir, ["tasks", "set", "side", "t1", "--status", "done", "--evidence", "works"]), /^ship:$/m);
+  assert.match(r.out, /^  outcome: shipped$/m);
+  assert.match(r.out, /^warning: "?PASS verification \(round 1\) was taken on [0-9a-f]+, which is not an ancestor of HEAD [0-9a-f]+"?$/m);
+  assert.match(r.out, /Re-verify on the current HEAD/);
+  assert.ok(endsWithHelp(r.out));
 });
 
 test("worktree: --shot lands in the main checkout's .brain/shots/; check passes from both checkouts and after removal", (t) => {
