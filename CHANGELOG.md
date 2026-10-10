@@ -18,7 +18,7 @@ as a Claude Code plugin. Plan: `plans/2026-10-09-skills-plugin-sqlite.html` (pha
 - **Skills `skills/brain` (router) + `skills/brain-<id>`** for start, grill, plan, product, ux, ai,
   execute, verify, done, write. Each SKILL.md is capped (router 6144 B, phase 10240 B), ends in a
   `## Next` handoff, and keeps long material in `references/`.
-- **`brain playbook <id> --ref <topic>`** prints a skill reference; the index lists refs.
+- **`brain playbook <id> --ref <topic>`** prints a skill reference; `brain playbook <id>` lists its refs.
 - **Eval `skill-routing`** (`evals-plugin/`, run by `claude plugin eval`): 31/34 = 0.912 with the
   plugin vs 0.294 without; held-out 8/8.
 
