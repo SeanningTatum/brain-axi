@@ -21,6 +21,14 @@
 
 ---
 
+## 2026-10-10 — Mapped 13 test-run findings onto axi-core (eb46fa1); skill-text fixes #10/#11/#13 for PR #21 (f3b1e23); Greptile 5/5 on f3b1e23
+- branch: `feat/skills-plugin`
+- in-progress feature: none
+- run note: none
+- next: Push feat/skills-plugin + merge PR #21 (user call); then axi-core phase 1 (lib/brain) on new branch; drop stash@{0} once axi-core lands
+
+---
+
 ## 2026-10-10 — Paused fresh-brain bug fixes (stashed); 13 test-run findings recorded in features/axi-core/axi-core.md for mapping onto axi-core
 - branch: `feat/skills-plugin`
 - in-progress feature: none
