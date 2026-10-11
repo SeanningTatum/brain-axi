@@ -669,6 +669,37 @@ test("watch from a worktree: the dashboard checks plan files in that worktree (r
   assert.ok(page.includes(`root: "${encodeURIComponent(fs.realpathSync(wt))}"`), "dashboard carries root into its fetches");
 });
 
+test("watch: dashboards of one feature from two checkouts each get plan-file edits from their own checkout", async (t) => {
+  const { dir, base, brain, ok, env } = await setup(t);
+  const wt = path.join(path.dirname(dir), path.basename(dir) + "-wt2");
+  git(dir, "worktree", "add", "-q", wt, "-b", "wt2-branch");
+  t.after(() => fs.rmSync(wt, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(wt, "plans"), { recursive: true });
+  const plan = path.join(wt, "plans", "wt-only.html");
+  fs.writeFileSync(plan, "<title>WT</title><p>x</p>");
+  const L = await import("../../lib/brain/index.js");
+  const b = L.openBrain(wt);
+  L.plans.upsert(b.db, { file: "plans/wt-only.html", root: wt });
+  L.close(b.db);
+  const r = spawnSync(process.execPath, [BIN, "watch", "auth", "--no-open"], { cwd: wt, env, encoding: "utf8", timeout: 20000 });
+  ok({ code: r.status, out: r.stdout, err: r.stderr });
+  const wtUrl = urlOf(r.stdout);
+  const mainUrl = urlOf(ok(brain(["watch", "auth", "--no-open"])).out);
+  const events = [];
+  const reqs = [http.get(`${base}/watch-events/auth${wtUrl.slice(wtUrl.indexOf("?"))}`, (res) => res.on("data", (c) => events.push(String(c))))];
+  t.after(() => reqs.forEach((q) => q.destroy()));
+  await new Promise((r2) => setTimeout(r2, 400));
+  // A second dashboard of the same feature, from the main checkout.
+  reqs.push(http.get(`${base}/watch-events/auth${mainUrl.slice(mainUrl.indexOf("?"))}`, (res) => res.resume()));
+  await new Promise((r2) => setTimeout(r2, 600));
+  const count = () => events.join("").split("event: context-update").length;
+  const before = count();
+  fs.writeFileSync(plan, "<title>WT</title><p>edited in the worktree</p>");
+  const deadline = Date.now() + 4000;
+  while (count() <= before && Date.now() < deadline) await new Promise((r2) => setTimeout(r2, 50));
+  assert.ok(count() > before, `the worktree dashboard got no context-update for its plan edit: ${events.join("")}`);
+});
+
 test("watch with an explicit --brain outside git: the dashboard checks plan files in the caller's checkout", async (t) => {
   const { dir, base, brain, ok } = await setup(t);
   const ext = path.join(tmp(t), "shared", ".brain");
