@@ -521,3 +521,38 @@ test("watch from a worktree: the dashboard checks plan files in that worktree (r
   const page = await (await fetch(url)).text();
   assert.ok(page.includes(`root: "${encodeURIComponent(fs.realpathSync(wt))}"`), "dashboard carries root into its fetches");
 });
+
+test("watch: after a brain.db restore, a re-captured shot of the NEW brain still sends context-update", async (t) => {
+  const { base, brain, ok, brainDir } = await setup(t);
+  const shots = path.join(brainDir, "shots");
+  fs.mkdirSync(shots, { recursive: true });
+  fs.writeFileSync(path.join(shots, "old.png"), "old");
+  fs.writeFileSync(path.join(shots, "new.png"), "new v1");
+  ok(brain(["verifications", "add", "auth", "--verdict", "PASS", "--body", "old", "--shot", ".brain/shots/old.png"]));
+  const url = urlOf(ok(brain(["watch", "auth", "--no-open"])).out);
+  const qs = url.slice(url.indexOf("?"));
+  await fetch(`${base}/watch/auth/context${qs}`);
+  const events = [];
+  const req = http.get(`${base}/watch-events/auth${qs}`, (res) => res.on("data", (c) => events.push(String(c))));
+  t.after(() => req.destroy());
+  await new Promise((r) => setTimeout(r, 600));
+  const count = () => events.join("").split("event: context-update").length;
+  const waitMore = async (than, what) => {
+    const deadline = Date.now() + 5000;
+    while (count() <= than && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+    assert.ok(count() > than, `no context-update after ${what}: ${events.join("")}`);
+  };
+
+  // Restore a different brain whose only shot is new.png.
+  for (const f of fs.readdirSync(brainDir)) if (f.startsWith("brain.db")) fs.rmSync(path.join(brainDir, f));
+  ok(brain(["init"]));
+  ok(brain(["features", "add", "auth", "--name", "Auth"]));
+  ok(brain(["verifications", "add", "auth", "--verdict", "PASS", "--body", "new", "--shot", ".brain/shots/new.png"]));
+  let before = count();
+  await waitMore(before, "the restore");
+  await fetch(`${base}/watch/auth/context${qs}`); // reopens the handle
+  await new Promise((r) => setTimeout(r, 800)); // a few ticks on the new handle
+  before = count();
+  fs.writeFileSync(path.join(shots, "new.png"), "new v2 re-captured");
+  await waitMore(before, "re-capturing the new brain's shot");
+});

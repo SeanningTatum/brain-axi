@@ -17,7 +17,8 @@ throwaway Playwright script YOU scaffold, run, and delete. Scaffolding:
   it *.spec.* and never put it in the e2e/tests dir, so the CI suite can't
   pick it up.
 - Screenshot each asserted step straight into .brain/shots/<slug>/NN-name.png
-  (gitignored). In a git worktree, save into the MAIN checkout's
+  (gitignored; `<brainDir>/shots/<slug>/` with a custom `--brain` dir — set it
+  once as SHOTS below). In a git worktree, save into the MAIN checkout's
   .brain/shots/<slug>/ instead (absolute path; every worktree shares that one
   brain, and a worktree's own .brain/shots/ is refused — the CLI error prints
   the right dir). Then attach each file to the verdict with
@@ -46,11 +47,15 @@ regression suite) that:
       if (res.status() >= 400) networkErrors.push(`${res.status()}@${currentStepLabel}`);
     });
 
+    // ONE shots dir for every capture, golden and error path alike (from a
+    // worktree: the MAIN checkout's, absolute)
+    const SHOTS = ".brain/shots/<slug>";
+
     // golden path: drive it, assert the expected state, screenshot each step
     await page.goto(baseUrl + "/sign-up");
-    await page.screenshot({ path: ".brain/shots/<slug>/01-signup.png" });
+    await page.screenshot({ path: `${SHOTS}/01-signup.png` });
     // ... fill fields, submit, assert redirect/visible state ...
-    await page.screenshot({ path: ".brain/shots/<slug>/02-dashboard.png" });
+    await page.screenshot({ path: `${SHOTS}/02-dashboard.png` });
 
     // error path: FRESH CONTEXT if the golden path left the session
     // authenticated and the error path needs to be unauthenticated (or vice
@@ -60,7 +65,7 @@ regression suite) that:
     const freshContext = await browser.newContext();
     const freshPage = await freshContext.newPage();
     // ... drive the failure, assert the inline error / rejection surfaces ...
-    await freshPage.screenshot({ path: "E1-bad-login.png" });
+    await freshPage.screenshot({ path: `${SHOTS}/E1-bad-login.png` });
 
     await browser.close();
 

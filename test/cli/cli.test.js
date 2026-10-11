@@ -285,6 +285,18 @@ test("plans view: clipped prompts point at --full", async (t) => {
   ok(brain(path.join(dir, "plans"), ["plans", "view", "p"]), /Reopen it for review: brain review open p\.html/);
 });
 
+test("review: a symlinked alias of a registered plan is the same plan; hints keep --brain/--port", (t) => {
+  const dir = repoWithBrain(t);
+  fs.mkdirSync(path.join(dir, "plans"));
+  fs.writeFileSync(path.join(dir, "plans", "p.html"), "<title>P</title><p>x</p>");
+  fs.symlinkSync("p.html", path.join(dir, "plans", "alias.html"));
+  ok(brain(dir, ["review", "end", "plans/p.html", "--approved-by", "sean"]), /status: approved/);
+  ok(brain(dir, ["review", "end", "plans/alias.html", "--approved-by", "sean"]), /plan: p$/m);
+  ok(brain(dir, ["plans", "list"]), /^plans\[1\]/m);
+  const r = ok(brain(dir, ["review", "poll", "plans/p.html", "--timeout-ms", "2000", "--brain", ".brain", "--port", "1"]), /^status: missing$/m);
+  assert.match(r.out, /brain review open plans\/p\.html --brain \.brain --port 1/);
+});
+
 test("verifications add --help names the brain's own shots dir for custom --brain dirs", () => {
   const r = brain(os.tmpdir(), ["verifications", "add", "--help"]);
   assert.equal(r.code, 0);

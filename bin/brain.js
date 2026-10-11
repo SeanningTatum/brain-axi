@@ -1050,7 +1050,26 @@ const REVIEW_PORT_FLAG = { "--port": { value: true, desc: `review server port (d
 const ANCHOR_HELP =
   "Each prompt carries line + text anchors — apply edits with targeted reads and anchored replacements; do NOT re-read the whole artifact.";
 
+// The real path of a plan file (a symlinked alias is the same plan — the
+// server keys sessions by real path too); as given when it does not exist.
+function realFile(file) {
+  const abs = path.resolve(file);
+  try {
+    return fs.realpathSync(abs);
+  } catch {
+    return abs;
+  }
+}
+
+// --brain / --port as given, appended to the commands a review result
+// suggests, so following them reaches the same brain and server.
+function passFlags(flags) {
+  const q = (v) => (/^[\w./:@-]+$/.test(v) ? v : JSON.stringify(v));
+  return (flags.brain !== undefined ? ` --brain ${q(String(flags.brain))}` : "") + (flags.port !== undefined ? ` --port ${q(String(flags.port))}` : "");
+}
+
 function renderPoll(data, file, flags) {
+  const ref = file + passFlags(flags);
   const lines = [kv("status", data.status)];
   let snapshotShown = false;
   if (data.status === "feedback") {
@@ -1069,16 +1088,16 @@ function renderPoll(data, file, flags) {
   const help = [];
   if (data.status === "feedback" && !data.session_ended) {
     if (data.redelivered) help.push("This batch was delivered before but never confirmed — skip any prompt you already applied");
-    help.push(`Apply the changes, then run \`brain review poll ${file} --agent-reply "what you changed"\` to continue`);
+    help.push(`Apply the changes, then run \`brain review poll ${ref} --agent-reply "what you changed"\` to continue`);
     if ((data.prompts || []).length) help.push(ANCHOR_HELP);
-    if (!snapshotShown) help.push(`Run \`brain review poll ${file} --snapshot\` for the full DOM outline`);
-    help.push(`Run \`brain review end ${file}\` once the plan is fully approved`);
+    if (!snapshotShown) help.push(`Run \`brain review poll ${ref} --snapshot\` for the full DOM outline`);
+    help.push(`Run \`brain review end ${ref}\` once the plan is fully approved`);
   } else if (data.session_ended || data.status === "ended") {
     if (data.ended_by === "user") {
       help.push("Apply any remaining feedback, then report in the conversation — do not reopen automatically");
-      help.push(`Run \`brain review open ${file} --reopen\` only if the user asks to resume`);
-    } else help.push(`Run \`brain review open ${file}\` to reopen the session`);
-  } else help.push(`Run \`brain review open ${file}\` first`);
+      help.push(`Run \`brain review open ${ref} --reopen\` only if the user asks to resume`);
+    } else help.push(`Run \`brain review open ${ref}\` to reopen the session`);
+  } else help.push(`Run \`brain review open ${ref}\` first`);
   return [...lines, ...toonList("help", help)];
 }
 
@@ -1138,7 +1157,8 @@ const review = {
       async run(ctx) {
         const { flags } = ctx;
         const file = ctx.pos[0];
-        const abs = path.resolve(file);
+        const ref = file + passFlags(flags);
+        const abs = realFile(file);
         if (!fs.existsSync(abs)) fail("NOT_FOUND", `no such file: ${file}`, ["Write the plan HTML first, then open it"]);
         const { db, root, brainDir } = ctx.brain();
         const known = (await reviewModules()).planForFile(db, root, abs);
@@ -1153,21 +1173,21 @@ const review = {
             body: JSON.stringify({ file: abs, plan: plan.slug, feature: plan.feature, reopen: !!flags.reopen, brain: brainDir, root }),
           });
           data = await res.json();
-          if (!res.ok) fail("REVIEW_REJECTED", data.error || "the review server rejected the request", [data.help || `Try again: brain review open ${file}`]);
+          if (!res.ok) fail("REVIEW_REJECTED", data.error || "the review server rejected the request", [data.help || `Try again: brain review open ${ref}`]);
         } catch (e) {
           if (e instanceof CliError) throw e;
-          fail("SERVER_DOWN", `could not reach the review server: ${e.message}`, [`Try again: brain review open ${file}`]);
+          fail("SERVER_DOWN", `could not reach the review server: ${e.message}`, [`Try again: brain review open ${ref}`]);
         }
         if (data.refused) {
-          print([kv("refused", data.reason), kv("url", data.url), ...toonList("help", [`Run \`brain review open ${file} --reopen\` to resume the ended session`])]);
+          print([kv("refused", data.reason), kv("url", data.url), ...toonList("help", [`Run \`brain review open ${ref} --reopen\` to resume the ended session`])]);
           return;
         }
         L.plans.startSession(db, plan.slug, { port });
         print([
           ...group("session", { plan: plan.slug, url: data.url, status: data.status, feature: plan.feature }),
           ...toonList("help", [
-            `Run \`brain review poll ${file}\` and leave it running to wait for feedback`,
-            `Run \`brain review end ${file}\` once the plan is fully approved`,
+            `Run \`brain review poll ${ref}\` and leave it running to wait for feedback`,
+            `Run \`brain review end ${ref}\` once the plan is fully approved`,
           ]),
         ]);
         if (!flags["no-open"]) openBrowser(data.url);
@@ -1186,8 +1206,9 @@ const review = {
       async run(ctx) {
         const { flags } = ctx;
         const file = ctx.pos[0];
+        const ref = file + passFlags(flags);
         const timeoutMs = posInt(flags["timeout-ms"], "--timeout-ms");
-        const missing = { status: "missing", next_step: `No session for this file. Run \`brain review open ${file}\` first.` };
+        const missing = { status: "missing", next_step: `No session for this file. Run \`brain review open ${ref}\` first.` };
         const rv = await reviewModules();
         let key;
         try {
@@ -1197,7 +1218,7 @@ const review = {
         }
         // The agent edits the plan between polls: keep the recorded hash current.
         const { db, root } = ctx.brain();
-        const abs = path.resolve(file);
+        const abs = realFile(file);
         const known = rv.planForFile(db, root, abs);
         if (known) L.plans.upsert(db, { file: abs, slug: known.slug, root });
         process.stderr.write("waiting for feedback… leave this running (Ctrl-C safe: feedback is never lost)\n");
@@ -1211,7 +1232,7 @@ const review = {
           text = (await res.text()).trim();
         } catch (e) {
           if (e.name === "TimeoutError" || e.name === "AbortError")
-            return void print([kv("status", "timeout"), ...toonList("help", [`Run \`brain review poll ${file}\` again to keep waiting`])]);
+            return void print([kv("status", "timeout"), ...toonList("help", [`Run \`brain review poll ${ref}\` again to keep waiting`])]);
           return void print(renderPoll(missing, file, flags));
         } finally {
           clearInterval(tick);
@@ -1220,7 +1241,7 @@ const review = {
         try {
           data = JSON.parse(text);
         } catch {
-          fail("SERVER_BAD_RESPONSE", "malformed response from the review server", [`Run \`brain review poll ${file}\` again`]);
+          fail("SERVER_BAD_RESPONSE", "malformed response from the review server", [`Run \`brain review poll ${ref}\` again`]);
         }
         recordPoll(db, root, abs, data);
         // Print (flushed) first, then ack: a CLI killed in between leaves the
@@ -1237,11 +1258,13 @@ const review = {
       async run(ctx) {
         const { flags } = ctx;
         const file = ctx.pos[0];
+        const ref = file + passFlags(flags);
         const { db, root } = ctx.brain();
         const rv = await reviewModules();
-        let plan = rv.planForFile(db, root, path.resolve(file));
-        if (!plan && flags["approved-by"] !== undefined) plan = L.plans.upsert(db, { file: path.resolve(file), root });
-        if (plan) L.plans.upsert(db, { file: path.resolve(file), slug: plan.slug, root });
+        const abs = realFile(file);
+        let plan = rv.planForFile(db, root, abs);
+        if (!plan && flags["approved-by"] !== undefined) plan = L.plans.upsert(db, { file: abs, root });
+        if (plan) L.plans.upsert(db, { file: abs, slug: plan.slug, root });
         const ended = plan ? L.plans.endSession(db, plan.slug, { approvedBy: flags["approved-by"], root }) : null;
         let server = "no session";
         try {
@@ -1259,7 +1282,7 @@ const review = {
           ...group("review", { file, plan: ended ? ended.slug : null, status: ended ? ended.status : "unregistered",
             approved_round: ended ? ended.approved_round : null, server_session: server }),
           ...toonList("help", [
-            ended && ended.status === "approved" ? "Execute the approved plan (brain-execute skill)" : `Run \`brain review open ${file}\` to reopen the session anytime`,
+            ended && ended.status === "approved" ? "Execute the approved plan (brain-execute skill)" : `Run \`brain review open ${ref}\` to reopen the session anytime`,
           ]),
         ]);
       },

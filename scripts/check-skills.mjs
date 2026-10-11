@@ -204,6 +204,10 @@ function checkCommandRefs(problems, files, surface) {
         }
         let allowed = new Set([...entry.flags, "--help", "--brain"]);
         if (entry.subs.size) {
+          // A word that is no subcommand of a command WITH a default is that
+          // default's positional (`brain tasks auth` = `brain tasks list auth`),
+          // exactly as the CLI routes it.
+          if (ref.subs.length === 1 && entry.default && !entry.subs.has(ref.subs[0])) ref.subs = [];
           // No subcommand named: the CLI routes to the default one, so only its flags count.
           const subs = ref.subs.length ? ref.subs : entry.default ? [entry.default] : [...entry.subs.keys()];
           for (const s of ref.subs)

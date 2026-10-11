@@ -97,6 +97,9 @@ test("a check printing more than 1 MiB still passes, with only the tail kept", (
   const r = verify.run(db, { root });
   assert.deepEqual([r.ok, r.results[0].status, r.results[0].exit], [true, "pass", 0]);
   assert.match(r.results[0].tail, /done$/);
+  assert.ok(r.results[0].tail.length <= 4001, `tail is capped in bytes too, got ${r.results[0].tail.length} chars`);
+  const stored = db.prepare("SELECT max(length(tail)) AS n FROM gate_runs").get();
+  if (stored && stored.n != null) assert.ok(stored.n <= 4001);
 });
 
 test("checks that already ran are recorded when onResult throws", (t) => {

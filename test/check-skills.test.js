@@ -35,3 +35,9 @@ test("a command without a subcommand is checked against its DEFAULT subcommand's
   assert.match(scan(t, '`brain verify --run "node --test"`\n').join("\n"), /`brain verify` has no flag --run/);
   assert.deepEqual(scan(t, "`brain verify --stage verify`\n"), []);
 });
+
+test("a literal feature name after a command with a default subcommand is that default's positional", (t) => {
+  assert.deepEqual(scan(t, "`brain tasks auth`\n"), []);
+  assert.deepEqual(scan(t, "`brain runs auth --run 2026-10-10-progress`\n"), []);
+  assert.match(scan(t, "`brain runs auth --verdict PASS`\n").join("\n"), /has no flag --verdict/);
+});

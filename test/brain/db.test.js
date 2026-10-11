@@ -364,3 +364,32 @@ test("check: a file rewritten after a passing check is still flagged (hash cache
   fs.utimesSync(planFile, later, later);
   assert.equal(files().status, "fail");
 });
+
+test("locate: a submodule's linked worktree shares the submodule checkout's brain", (t) => {
+  const base = tmpDir(t);
+  fs.mkdirSync(path.join(base, "lib-src"));
+  const lib = gitRepo(path.join(base, "lib-src"));
+  const sup = path.join(base, "super");
+  fs.mkdirSync(sup);
+  gitRepo(sup);
+  git(sup, "-c", "protocol.file.allow=always", "submodule", "add", "-q", lib, "sub");
+  const sub = path.join(sup, "sub");
+  const subWt = path.join(base, "sub-wt");
+  git(sub, "worktree", "add", "-q", subWt, "-b", "wt-branch");
+  const loc = locate(subWt);
+  assert.equal(loc.brainDir, path.join(fs.realpathSync(sub), ".brain"));
+  assert.equal(loc.root, fs.realpathSync(subWt));
+  assert.equal(loc.worktree, true);
+  assert.equal(locate(sub).brainDir, path.join(fs.realpathSync(sub), ".brain"), "the submodule checkout is its own main");
+});
+
+test("locate: an explicit --brain outside any repo keeps the caller's checkout as root", (t) => {
+  const repo = gitRepo(tmpDir(t));
+  const shared = path.join(tmpDir(t), "shared", ".brain");
+  const loc = locate(repo, { brain: shared });
+  assert.equal(loc.brainDir, shared);
+  assert.equal(loc.root, repo, "stamps the caller's checkout");
+  assert.equal(loc.mainRoot, path.dirname(shared), "shots stay beside the brain");
+  const nowhere = tmpDir(t);
+  assert.equal(locate(nowhere, { brain: shared }).root, path.dirname(shared), "no caller repo: the brain's parent");
+});
