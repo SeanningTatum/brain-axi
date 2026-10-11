@@ -39,8 +39,13 @@ Node >= 24 ESM, zero runtime dependencies, no build step. Browser files are plai
 | review round + prompts | CLI `review poll`, when it receives a feedback batch (deduped by `batch_id`) | `review_rounds`, `review_prompts` |
 | session open/closed, approval | CLI `review open` / `end [--approved-by]`; `poll` closes a user-ended session | `plans.session_*`, `status`, `approved_by` |
 | pending prompts, in-flight batch, chat, DOM snapshot, layout warnings | server | `<stateDir>/sessions.json` |
-| screenshot pins (watch lightbox) | server | `<stateDir>/sessions.json` (`pins`) |
+| screenshot pins (watch lightbox) | server | `<stateDir>/sessions.json` (`pins`)¹ |
 | run steps, verifications, shots, checkpoints, features | CLI (other commands) | brain.db |
+
+¹ Pre-0.3 pins (`features/<slug>/screenshots/annotations.json`) are not imported: they
+lived in markdown brains, which this version refuses (`LEGACY_BRAIN`: pin
+`brain-axi@0.2.0` for that repo, or move the old `.brain/` aside and `brain init`), so no
+brain the server can open carries them.
 
 The server opens brain.db read-only in practice (one cached handle per brain dir,
 reopened if the file is replaced). A round is recorded when the agent's poll receives it,
@@ -53,7 +58,12 @@ instead of deleting them; the CLI records the round with that `batch` id, then
 the same batch again (`redelivered: true`); `plans.addRound({batchId})` skips a batch id
 already recorded for the plan (migration `002`, unique `(plan_id, batch_id)`), so one batch
 is one round. A re-delivery carries `session_ended` only while the session is still ended:
-after a `--reopen` the old batch's end no longer closes the reopened session. Prompts queued while a batch is in flight ride the next batch. `review end --approved-by <who>` needs no server
+after a `--reopen` the old batch's end no longer closes the reopened session. A user End
+that lands after the batch was first sent is never folded into the re-delivery (the CLI may
+already have recorded that batch id, so an attached End would be deduplicated away): the
+re-delivery says so in `next_step` (`end_follows`), and the next poll returns `ended`, which
+the CLI records as its own closing round. Prompts queued while a batch is in flight ride the
+next batch (and carry a pending End with them). `review end --approved-by <who>` needs no server
 (headless/CI): it records a closing round ended by the approver and sets `approved`.
 Plan snapshots are not written: the plan row's sha256 tracks the file, and `brain check`
 flags a missing or changed plan.
@@ -63,7 +73,10 @@ flags a missing or changed plan.
 - Port **4517** (`--port`, `BRAIN_AXI_PORT`). Bind `127.0.0.1` only.
 - State dir `~/.brain-axi/` (`BRAIN_AXI_STATE_DIR`): `sessions.json`, `server.log`. Until
   `sessions.json` exists, a pre-0.3 `state.json` (same session shape) is read, so queued
-  prompts and the user-end latch survive the upgrade.
+  prompts and the user-end latch survive the upgrade. Servers on different ports share
+  the store, so every read-modify-write holds `sessions.json.lock` (atomic `mkdir`; a lock
+  older than 2 s is broken). Reads treat a corrupt store as empty; a write first renames it
+  to `sessions.json.corrupt-<time>` (logged), so a save never overwrites it.
 - Session key: first 16 hex of `sha256(realpath(file))` — `sessionKey()` in server.js,
   imported by the CLI.
 - Idle shutdown: 30 min with no SSE client and no in-flight poll
@@ -148,11 +161,16 @@ Poll payloads (wire contract unchanged; `batch` and `redelivered` are additive):
   the CLI's writes) and sends `context-update`. The baseline is taken at bind time, and
   every new stream gets one `context-update` so a page that fetched before connecting
   catches up. The same tick also compares a size+mtime signature of the brain's recorded
-  shot files (distinct paths, re-read only when `data_version` moves; one stat per file
-  per tick), so a shot replaced or deleted with no brain.db write (pins turn superseded,
-  file health changes) still sends `context-update`. A brain no page is bound to and
+  files — shots in the main checkout, plan files and plan snapshots in each checkout a
+  bound page checks them in (distinct paths, re-read only when `data_version` moves; one
+  stat per file per tick) — so a file replaced, edited or deleted with no brain.db write
+  (pins turn superseded, file health changes) still sends `context-update`. Reopening a
+  session (`/api/open`) rebinds an already-open tab to the brain it was reopened with and
+  sends it `context-update`. A brain no page is bound to and
   untouched for 5 minutes has its handle closed (reopened on the next request). Pin writes broadcast directly (they are not in brain.db) — to the feature's
-  dashboard and to every review tab on the same brain.
+  dashboard and to every review tab on the same brain — and the tick also signs the
+  brain's pins in `sessions.json` (re-read only when its size/mtime moves), so a pin
+  written through a server on another port still refreshes this server's pages.
 
 ## Payloads (context.js)
 
