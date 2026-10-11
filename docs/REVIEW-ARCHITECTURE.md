@@ -68,7 +68,12 @@ flags a missing or changed plan.
   imported by the CLI.
 - Idle shutdown: 30 min with no SSE client and no in-flight poll
   (`BRAIN_AXI_IDLE_TIMEOUT_MS`, `0`/`off` disables); 5 s once every session is ended and
-  nothing is connected.
+  nothing is connected. Sessions live on disk, so `review poll` on a known session restarts
+  the server (`ensureServer`) to hand over a final batch or the user's End.
+- Brain binding: a session records the brain that opened it; the poll response carries it
+  (`brain`), and `review poll` resolving a different brain refuses with `BRAIN_MISMATCH`
+  before draining (and re-checks before recording), so no batch is recorded or acked into
+  another repo's brain.
 - Brain change poll: 1 s (`BRAIN_AXI_DB_POLL_MS`).
 - `/health` → `{ok, app: "brain-axi", version, api}`. The CLI respawns a server whose
   `version` or `api` (`REVIEW_API`, currently 3) differs from its own.

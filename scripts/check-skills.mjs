@@ -12,6 +12,10 @@
 //     subcommand that `--help` lists, and each `--flag` after it must be a
 //     flag that command's `--help` lists; a code span that is just a flag
 //     must be a flag some command lists
+//   - numbered section references ("section 8", "`plan` §10", "section 10
+//     of the `brain-plan` skill") resolve to a section that skill numbers,
+//     and every wireframe class an HTML example uses is defined by the
+//     brain-ux kit's CSS
 //   - plugin.json name/version (= package.json), marketplace lists the
 //     plugin, hooks.json runs `bin/brain.js context` on SessionStart
 // Exit 0 when valid, 1 with a TOON problems list otherwise.
@@ -295,6 +299,78 @@ function checkSkillsTree(problems) {
   checkCommandRefs(problems, markdownFiles(SKILLS_DIR), s.surface);
 }
 
+// ---------------------------------------------------------------------------
+// Section references and the wireframe kit. Skills cross-reference sections
+// by number and brain-ux's HTML examples use classes its kit must define;
+// both are hand-maintained prose that rots silently on a renumber. A skill
+// is its SKILL.md plus its references/ (long sections live there).
+// ---------------------------------------------------------------------------
+
+function skillTexts(skillsDir) {
+  const out = {};
+  for (const d of fs.readdirSync(skillsDir, { withFileTypes: true })) {
+    if (!d.isDirectory() || !d.name.startsWith("brain-")) continue;
+    const file = path.join(skillsDir, d.name, "SKILL.md");
+    if (!fs.existsSync(file)) continue;
+    const refDir = path.join(skillsDir, d.name, "references");
+    const refs = fs.existsSync(refDir) ? markdownFiles(refDir) : [];
+    out[d.name.slice("brain-".length)] = [file, ...refs].map(read).join("\n");
+  }
+  return out;
+}
+
+// Section numbers a skill defines: "N. HEADING" / "Nb. Heading" at line
+// start, "--- N.M SUBSECTION ---", and inline "… 2. TL;DR …" runs of
+// upper-case section titles.
+function sectionsOf(text) {
+  const nums = new Set();
+  for (const line of text.split("\n")) {
+    let m = /^(\d+)[a-z]?\. [A-Z(]/.exec(line);
+    if (m) nums.add(m[1]);
+    m = /^--- (\d+)(?:\.\d+)? /.exec(line);
+    if (m) nums.add(m[1]);
+    for (const x of line.matchAll(/(?:^|\. )(\d+)[a-z]?\. [A-Z][A-Z;+&/ -]{2,}/g)) nums.add(x[1]);
+  }
+  return nums;
+}
+
+function checkGuidanceRefs(problems, skillsDir = SKILLS_DIR) {
+  if (!fs.existsSync(skillsDir)) return;
+  const texts = skillTexts(skillsDir);
+  const ids = Object.keys(texts);
+  if (!ids.length) return;
+  const sections = Object.fromEntries(ids.map((id) => [id, sectionsOf(texts[id])]));
+  // A number is another skill's when a backticked skill name sits just before
+  // it ("`plan` §10") or after it ("section 10 of the `brain-plan` skill");
+  // otherwise it is the containing skill's own.
+  const NAME = String.raw`\`(?:brain-)?(${ids.join("|")})\``;
+  const REF = new RegExp(
+    String.raw`(?:${NAME}[^.\n]{0,40}?)?(?:§|[Ss]ection )(\d+)(?:\s+(?:of|in)\s+(?:the\s+)?${NAME})?`,
+    "g"
+  );
+  for (const id of ids) {
+    for (const m of texts[id].matchAll(REF)) {
+      const target = m[3] || m[1] || id;
+      if (!sections[target].has(m[2]))
+        problems.push(
+          `skills/brain-${id}: references ${target === id ? "" : `brain-${target} `}section ${m[2]}, which does not exist (brain-${target} numbers ${[...sections[target]].join(", ") || "none"})`
+        );
+    }
+  }
+  if (!texts.ux) return;
+  const defined = new Set();
+  for (const line of texts.ux.split("\n")) {
+    if (!line.includes("{")) continue;
+    for (const m of line.split("{")[0].matchAll(/\.(wf(?:-[a-z-]*)?|tall|short|med|primary)\b/g)) defined.add(m[1]);
+  }
+  if (!defined.size) return void problems.push("skills/brain-ux: the wireframe kit defines no classes — did its CSS block move?");
+  for (const id of ids)
+    for (const a of texts[id].matchAll(/class=["']([^"']+)["']/g))
+      for (const cls of a[1].split(/\s+/))
+        if (/^(?:wf|tall|short|med|primary)/.test(cls) && !defined.has(cls))
+          problems.push(`skills/brain-${id}: an example uses .${cls}, which the brain-ux wireframe kit never defines`);
+}
+
 function checkPluginFiles(problems) {
   const load = (rel) => {
     const f = path.join(ROOT, rel);
@@ -324,11 +400,12 @@ function checkPluginFiles(problems) {
 }
 
 // Importable for tests (test/check-skills.test.js); runs only as a script.
-export { cliCommands, cliSurface, checkCommandRefs };
+export { cliCommands, cliSurface, checkCommandRefs, checkGuidanceRefs };
 
 function main() {
   const found = [];
   checkSkillsTree(found);
+  checkGuidanceRefs(found);
   checkPluginFiles(found);
   const problems = [...new Set(found)]; // a span can match two scanners (`npx -y brain-axi x`)
   const q = (s) => (/[",:]|^\s|\s$/.test(s) ? JSON.stringify(s) : s);

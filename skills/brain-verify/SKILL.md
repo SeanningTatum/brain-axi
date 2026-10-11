@@ -104,7 +104,7 @@ STEPS 2-6 — COMMANDS AND WHERE THE DETAIL LIVES
 4. CONSOLE POLICY — any real jsError is a FAIL; networkErrors count only on
    golden-path steps. Environment-artifact carve-out: Read
    `references/console-policy.md`.
-5. WRITE THE VERDICT BODY to a scratch path (not committed): acceptance table,
+5. WRITE THE VERDICT BODY to a gitignored scratch path: acceptance table,
    golden/error/edge tables, quality scores against floors, an
    `- **Independence**:` line, a Verdict line. Scoring: below a floor, or a
    stub / display-only surface = FAIL; no averaging. Cap: 3 rounds, then

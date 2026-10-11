@@ -443,3 +443,39 @@ test("locate: a --separate-git-dir named .git (/storage/.git) never makes its pa
   git(main, "worktree", "add", "-q", wt, "-b", "wt-branch");
   assert.equal(locate(wt).brainDir, path.join(main, ".brain"), "its worktree follows the recorded main checkout");
 });
+
+test("locate: a worktree of a --separate-git-dir named .git stays unresolved until its main checkout records itself", (t) => {
+  // Regression (Greptile r8): before the main checkout ever ran brain, the
+  // <main>/.git → <main> fallback took /storage for the main checkout and
+  // created the brain in /storage/.brain.
+  const base = tmpDir(t);
+  const main = path.join(base, "main");
+  fs.mkdirSync(path.join(base, "storage"));
+  git(base, "init", "-q", "-b", "main", "--separate-git-dir", path.join(base, "storage", ".git"), main);
+  git(main, "config", "user.email", "t@example.com");
+  git(main, "config", "user.name", "Test Author");
+  fs.writeFileSync(path.join(main, "a.txt"), "a\n");
+  git(main, "add", "a.txt");
+  git(main, "commit", "-q", "-m", "init");
+  const wt = path.join(base, "wt");
+  git(main, "worktree", "add", "-q", wt, "-b", "wt-branch");
+  const loc = locate(wt);
+  assert.equal(loc.mainUnknown, true);
+  assert.notEqual(loc.brainDir, path.join(base, "storage", ".brain"));
+  locate(main); // the main checkout records itself
+  assert.equal(locate(wt).brainDir, path.join(main, ".brain"));
+
+  // A plain checkout (its .git is the git dir) still resolves without a record.
+  const plain = path.join(base, "plain");
+  git(base, "init", "-q", "-b", "main", plain);
+  git(plain, "config", "user.email", "t@example.com");
+  git(plain, "config", "user.name", "Test Author");
+  fs.writeFileSync(path.join(plain, "b.txt"), "b\n");
+  git(plain, "add", "b.txt");
+  git(plain, "commit", "-q", "-m", "init");
+  const pwt = path.join(base, "pwt");
+  git(plain, "worktree", "add", "-q", pwt, "-b", "pwt-branch");
+  const ploc = locate(pwt);
+  assert.equal(ploc.mainUnknown, undefined);
+  assert.equal(ploc.brainDir, path.join(plain, ".brain"));
+});

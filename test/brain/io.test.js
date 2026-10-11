@@ -69,6 +69,12 @@ test("import refuses a non-empty brain, a newer format, and malformed dumps", (t
   throwsCode(() => io.importAll(db, dump.replace("docs[1]{id,", "docs[1]{id,bogus,")), "IMPORT_PARSE");
   throwsCode(() => io.importAll(db, dump + "widgets[0]{x}:\n"), "IMPORT_PARSE", /unknown table/);
   throwsCode(() => io.importAll(db, dump + "\n" + dump.slice(dump.indexOf("features["))), "IMPORT_PARSE", /appears twice/);
+  // A dump cut off between two complete sections (Greptile r8): the tail
+  // tables are missing, not empty.
+  const cut = dump.slice(0, dump.indexOf("\ngate_runs[") + 1);
+  throwsCode(() => io.importAll(db, cut), "IMPORT_PARSE", /incomplete dump: no section for gate_runs/);
+  const cutEarly = dump.slice(0, dump.indexOf("\ndocs[") + 1);
+  throwsCode(() => io.importAll(db, cutEarly), "IMPORT_PARSE", /no section for docs, plans/);
   assert.equal(features.list(db).length, 0, "a failed import writes nothing");
 });
 
@@ -80,6 +86,8 @@ test("an older dump without newer columns loads with defaults", (t) => {
     "schema: 1",
     "features[1]{id,slug,name,status,created,updated}:",
     '  1,old,Old,planned,"2026-01-01T00:00:00.000Z","2026-01-01T00:00:00.000Z"',
+    // every export carries every table's section, empty ones too
+    ...io.TABLES.filter((tb) => tb !== "features").map((tb) => `${tb}[0]{}:`),
     "",
   ].join("\n");
   io.importAll(db, old);

@@ -40,7 +40,9 @@ each other; a database gives those for free. Plan: `plans/2026-10-10-axi-archite
   `progress add --run` and `--clip`, `review end --approved-by` for headless approval,
   `verify add` and `NO_CHECKS` when nothing is declared.
 - **`scripts/check-skills.mjs`** replaces `brain skill --check` and additionally fails when a
-  skill names a command, subcommand or flag the CLI's `--help` does not list.
+  skill names a command, subcommand or flag the CLI's `--help` does not list, a numbered
+  section reference ("`plan` §10") that does not resolve, or a wireframe class brain-ux's
+  kit does not define.
 - **`test/acceptance.test.js`** automates the plan's "old brain gone" checklist: no tracked
   `.brain/` files, no markdown-era paths or cut commands in shipped surfaces (the
   `LEGACY_BRAIN` detector's two marker-file names are the one documented exception), the
@@ -57,6 +59,11 @@ each other; a database gives those for free. Plan: `plans/2026-10-10-axi-archite
 - Review feedback is delivered at-least-once: a polled batch stays in flight on the server
   until the CLI has recorded it and acks it (`POST /api/ack`), so a poll killed mid-flight
   re-delivers the same batch; the batch id (schema migration `002`) keeps it to one round.
+  `review poll` restarts a server that exited while a session still had feedback (or the
+  user's End) on disk, and refuses (`BRAIN_MISMATCH`, nothing recorded or acked) when the
+  session was opened for a different brain.
+- Every `help:` command keeps the `--brain` the invocation named (`context` excepted: its
+  output is capped).
 - `verify` runs each check under a small supervisor (`lib/brain/verify-supervisor.js`) that
   kills the whole tree on a timeout (or Ctrl-C), so a timed-out suite cannot keep running
   into the next check. On macOS/Linux that is the check's own process group; on Windows,
@@ -67,7 +74,11 @@ each other; a database gives those for free. Plan: `plans/2026-10-10-axi-archite
 - In a linked worktree of a `--separate-git-dir` repo (git records no path for its main
   checkout), the main checkout records itself in the git dir the first time any `brain`
   command runs there, so its worktrees share its brain; until then a worktree refuses with
-  `MAIN_CHECKOUT_UNKNOWN` rather than creating a second brain.
+  `MAIN_CHECKOUT_UNKNOWN` rather than creating a second brain. A `<main>/.git` fallback is
+  only trusted when `<main>` holds the first file its index tracks, so a separate git dir
+  that happens to be named `.git` is never taken for a checkout.
+- `import` refuses a dump missing any table's section (a cut-off export), instead of
+  restoring partial history.
 - `check` is rewritten: SQLite integrity, foreign keys, search index, cross-entity rules
   (shipped features verified or grandfathered, no open tasks), plan/shot file hashes.
 - Eval suites are repo-dev tooling in `evals/` and `evals-plugin/`, run by standalone

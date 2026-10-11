@@ -622,3 +622,39 @@ test("watch: after a brain.db restore, a re-captured shot of the NEW brain still
   fs.writeFileSync(path.join(shots, "new.png"), "new v2 re-captured");
   await waitMore(before, "re-capturing the new brain's shot");
 });
+
+test("review: the server exits after the user's End with feedback; the next poll restarts it and still records the round", async (t) => {
+  // Regression (Greptile r8): with every session ended and nothing connected
+  // the server shuts down, and the poll used to report the session missing.
+  const { base, brain, ok, post } = await setup(t);
+  const open = ok(brain(["review", "open", "plans/auth.html", "--no-open"]));
+  const key = urlOf(open.out).split("/").pop();
+  assert.equal((await post("/api/feedback", { key, end: true, prompts: [{ tag: "message", prompt: "final note" }] }, { origin: base })).status, 200);
+  await fetch(`${base}/shutdown`, { method: "POST" });
+  for (let i = 0; i < 40; i++) {
+    if (!(await fetch(`${base}/health`).then(() => true, () => false))) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  const poll = ok(brain(["review", "poll", "plans/auth.html", "--timeout-ms", "8000"]), /^status: feedback$/m);
+  assert.match(poll.out, /final note/);
+  assert.match(poll.out, /^ended_by: user$/m);
+  const view = ok(brain(["plans", "view", "auth"]), /^status: reviewed$/m);
+  assert.match(view.out, /^ {2}1,\S+,user,1$/m);
+});
+
+test("review: a poll from another brain is refused and leaves the batch for the session's own brain", async (t) => {
+  const { base, dir, brain, ok, post } = await setup(t);
+  const open = ok(brain(["review", "open", "plans/auth.html", "--no-open"]));
+  const key = urlOf(open.out).split("/").pop();
+  assert.equal((await post("/api/feedback", { key, prompts: [{ tag: "message", prompt: "keep me" }] }, { origin: base })).status, 200);
+  ok(brain(["init", "--brain", "other"]));
+  const wrong = brain(["review", "poll", "plans/auth.html", "--timeout-ms", "5000", "--brain", "other"]);
+  assert.equal(wrong.code, 1, wrong.out);
+  assert.match(wrong.out, /^code: BRAIN_MISMATCH$/m);
+  assert.match(wrong.out, new RegExp(`brain review poll plans/auth\\.html --brain ${path.join(dir, ".brain").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+  ok(brain(["plans", "list", "--brain", "other"]), /^plans\[0\]/m);
+  // The right brain still gets the batch, as one round.
+  const poll = ok(brain(["review", "poll", "plans/auth.html", "--timeout-ms", "5000"]), /^status: feedback$/m);
+  assert.match(poll.out, /keep me/);
+  ok(brain(["plans", "view", "auth"]), /^rounds\[1\]/m);
+});

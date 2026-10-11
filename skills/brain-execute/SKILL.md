@@ -91,9 +91,11 @@ THE LOOP
 2. **Worker: `brain tasks view <slug> <task-id>`, then `brain tasks claim
    <slug> --key <task-id> --by <name>`.** The view is the brief and the
    specification — read it before reading anything else about the task,
-   including any prose the coordinator pasted into your prompt. The claim
-   prints a claim token; keep it for closing. If the claim is refused, take
-   another task (ROLES); never skip straight to editing files.
+   including any prose the coordinator pasted into your prompt; then the
+   approved plan's decisions (`brain plans view <plan>`) and the rules
+   (`brain docs list --section rules`). Keep the claim token it prints.
+   If the claim is refused, take another task (ROLES); never skip
+   straight to editing files.
 
 3. **Per step, `brain runs append <slug> --step "..." --observed "..."
    [--task <id>] [--author <name>]`** — after each meaningful unit of work

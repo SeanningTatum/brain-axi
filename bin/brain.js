@@ -14,7 +14,7 @@ import path from "node:path";
 import os from "node:os";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { kv, toonTable, toonList } from "../lib/brain/toon.js";
+import { kv, toonTable, toonList as toonListRaw } from "../lib/brain/toon.js";
 
 const MIN_NODE = 24;
 const NODE_MAJOR = Number(process.versions.node.split(".")[0]);
@@ -42,6 +42,23 @@ function readOwnVersion() {
 // ---------------------------------------------------------------------------
 // Output + errors
 // ---------------------------------------------------------------------------
+
+// A value as a shell word: bare when safe, else JSON-quoted.
+const shellWord = (v) => (/^[\w./:@-]+$/.test(v) ? v : JSON.stringify(v));
+
+// ` --brain <dir>` when this invocation named one: every `brain …` command a
+// help: list suggests carries it, so following a hint reaches the same brain
+// (set by runLeaf once flags are parsed).
+let hintBrain = "";
+function withBrain(item) {
+  if (!hintBrain || typeof item !== "string" || /(^|\s)--brain\b/.test(item)) return item;
+  // `brain …` spans get it before their closing backtick; else a trailing
+  // "Label: brain …" command gets it at the end.
+  const spans = item.replace(/`(brain [^`]*)`/g, (_, cmd) => `\`${cmd}${hintBrain}\``);
+  if (spans !== item) return spans;
+  return /(?:^|: )brain [a-z]/.test(item) ? item + hintBrain : item;
+}
+const toonList = (name, items) => toonListRaw(name, name === "help" ? items.map(withBrain) : items);
 
 function print(lines) {
   process.stdout.write(lines.join("\n") + "\n");
@@ -990,7 +1007,7 @@ let RV;
 async function reviewModules() {
   if (!RV) {
     const [server, context] = await Promise.all([import("../lib/review/server.js"), import("../lib/review/context.js")]);
-    RV = { stateDir: server.stateDir, sessionKey: server.sessionKey, api: server.REVIEW_API, planForFile: context.planForFile, readPins: server.readPins };
+    RV = { stateDir: server.stateDir, sessionKey: server.sessionKey, readSession: server.readSession, api: server.REVIEW_API, planForFile: context.planForFile, readPins: server.readPins };
   }
   return RV;
 }
@@ -1069,8 +1086,7 @@ function realFile(file) {
 // --brain / --port as given, appended to the commands a review result
 // suggests, so following them reaches the same brain and server.
 function passFlags(flags) {
-  const q = (v) => (/^[\w./:@-]+$/.test(v) ? v : JSON.stringify(v));
-  return (flags.brain !== undefined ? ` --brain ${q(String(flags.brain))}` : "") + (flags.port !== undefined ? ` --port ${q(String(flags.port))}` : "");
+  return (flags.brain !== undefined ? ` --brain ${shellWord(String(flags.brain))}` : "") + (flags.port !== undefined ? ` --port ${shellWord(String(flags.port))}` : "");
 }
 
 function renderPoll(data, file, flags) {
@@ -1111,6 +1127,24 @@ function renderPoll(data, file, flags) {
 // a session the user ended is closed. The server only relays, and re-delivers
 // a batch until ackPoll confirms it was recorded — the batch id keeps a
 // re-delivery from becoming a second round.
+// The session was opened for `sessionBrain`; this poll resolved `brainDir`.
+function assertSessionBrain(sessionBrain, brainDir, file, flags) {
+  if (typeof sessionBrain !== "string" || !sessionBrain) return;
+  const real = (p) => {
+    try {
+      return fs.realpathSync(p);
+    } catch {
+      return path.resolve(p);
+    }
+  };
+  if (real(sessionBrain) === real(brainDir)) return;
+  const port = flags.port !== undefined ? ` --port ${shellWord(String(flags.port))}` : "";
+  fail("BRAIN_MISMATCH", `${file} is under review for the brain at ${sessionBrain}, not ${brainDir}; nothing was recorded`, [
+    `Poll it with that brain: brain review poll ${file} --brain ${shellWord(sessionBrain)}${port}`,
+    `Or move the review to this brain: brain review open ${file}${passFlags(flags)}`,
+  ]);
+}
+
 function recordPoll(db, root, abs, data) {
   const userEnded = (data.session_ended || data.status === "ended") && data.ended_by === "user";
   const prompts = data.status === "feedback" ? data.prompts || [] : [];
@@ -1221,8 +1255,15 @@ const review = {
         } catch {
           return void print(renderPoll(missing, file, flags));
         }
+        const { db, root, brainDir } = ctx.brain();
+        // Feedback is recorded into the brain that opened the session, never
+        // another one polling the same file: refuse before draining anything.
+        const session = rv.readSession(key);
+        assertSessionBrain(session && session.brain, brainDir, file, flags);
+        // The server may have exited (all sessions ended, idle) with feedback
+        // or the user's End still on disk: bring it back to hand them over.
+        if (session) await ensureServer(reviewPort(flags));
         // The agent edits the plan between polls: keep the recorded hash current.
-        const { db, root } = ctx.brain();
         const abs = realFile(file);
         const known = rv.planForFile(db, root, abs);
         if (known) L.plans.upsert(db, { file: abs, slug: known.slug, root });
@@ -1248,6 +1289,8 @@ const review = {
         } catch {
           fail("SERVER_BAD_RESPONSE", "malformed response from the review server", [`Run \`brain review poll ${ref}\` again`]);
         }
+        // Unacked, a refused batch stays queued for the right brain's poll.
+        assertSessionBrain(data.brain, brainDir, file, flags);
         recordPoll(db, root, abs, data);
         // Print (flushed) first, then ack: a CLI killed in between leaves the
         // batch unacked, so it is redelivered (and the batch_id dedups the round).
@@ -1596,6 +1639,9 @@ function resolve(name, argv) {
 
 async function runLeaf(label, leaf, argv) {
   const { flags, pos } = parseArgs(argv, leaf.spec || {}, label);
+  // `context` is exempt: its output has a hard byte cap (the SessionStart
+  // hook injects it into every session) and hooks never pass --brain.
+  hintBrain = flags.brain !== undefined && label !== "context" ? ` --brain ${shellWord(String(flags.brain))}` : "";
   if (flags.help) return print(helpLines(label, leaf));
   const min = leaf.min || 0;
   const max = leaf.max ?? 0;

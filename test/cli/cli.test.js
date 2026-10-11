@@ -167,6 +167,25 @@ test("init / import --brain <dir> create brain.db in that directory, whatever it
   assert.ok(!fs.existsSync(path.join(dir, ".brain")), "no stray .brain/");
 });
 
+test("every help: command keeps a custom --brain (Greptile r8: feature add hints dropped it)", (t) => {
+  const dir = gitRepo(tmp(t));
+  ok(brain(dir, ["init", "--brain", "my brain"]));
+  const helpOf = (out) => out.slice(out.search(/^help\[/m)).split("\n").slice(1).filter((l) => l.startsWith("  "));
+  const add = ok(brain(dir, ["features", "add", "auth", "--name", "Auth", "--brain", "my brain"])).out;
+  const hints = helpOf(add);
+  assert.equal(hints.length, 3, add);
+  for (const h of hints) assert.match(h, /: brain .* --brain "my brain"$/, h);
+  // Backticked commands get it inside the span; an error's hints too.
+  ok(brain(dir, ["features", "view", "auth", "--brain", "my brain"]), /Start it: brain features set auth --status in-progress --brain "my brain"$/m);
+  const miss = brain(dir, ["features", "--brain", "no brain"]);
+  assert.equal(miss.code, 1, miss.out);
+  assert.match(miss.out, /Run `brain init --brain "no brain"` to create one/);
+  assert.match(miss.out, /`brain import <file> --brain "no brain"`/);
+  // Without --brain nothing is added.
+  assert.doesNotMatch(ok(brain(dir, ["features", "--brain", "my brain"])).out.replace(/--brain "my brain"/g, ""), /--brain/);
+  assert.doesNotMatch(brain(dir, ["features", "add", "x", "--name", "X"]).out, /--brain/);
+});
+
 test("no brain.db: NO_DB exit 1 with init/import help; context silent", (t) => {
   const dir = gitRepo(tmp(t));
   const r = failsWith(brain(dir, []), 1, "NO_DB");

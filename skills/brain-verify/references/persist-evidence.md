@@ -17,7 +17,9 @@
    SHOT_OUTSIDE_SHOTS_DIR, and the error prints the right dir.
 
 2. Write the verdict body (structure: `verdict-doc.md`) to a scratch file
-   outside the committed tree, e.g. tmp/verdict-<slug>.md.
+   git IGNORES, e.g. tmp/verdict-<slug>.md with `tmp/` in .gitignore (add
+   it if missing — `brain init` does not): an untracked file counts as
+   uncommitted, so it alone would record the verdict `dirty: true`.
 
 3. Record it — screenshots ride along with `--shot`, repeatable, each
    `path::caption`:
