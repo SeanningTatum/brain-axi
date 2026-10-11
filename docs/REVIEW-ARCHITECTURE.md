@@ -39,8 +39,13 @@ Node >= 24 ESM, zero runtime dependencies, no build step. Browser files are plai
 | review round + prompts | CLI `review poll`, when it receives a feedback batch (deduped by `batch_id`) | `review_rounds`, `review_prompts` |
 | session open/closed, approval | CLI `review open` / `end [--approved-by]`; `poll` closes a user-ended session | `plans.session_*`, `status`, `approved_by` |
 | pending prompts, in-flight batch, chat, DOM snapshot, layout warnings | server | `<stateDir>/sessions.json` |
-| screenshot pins (watch lightbox) | server | `<stateDir>/sessions.json` (`pins`) |
+| screenshot pins (watch lightbox) | server | `<stateDir>/sessions.json` (`pins`)¹ |
 | run steps, verifications, shots, checkpoints, features | CLI (other commands) | brain.db |
+
+¹ Pre-0.3 pins (`features/<slug>/screenshots/annotations.json`) are not imported: they
+lived in markdown brains, which this version refuses (`LEGACY_BRAIN`: pin
+`brain-axi@0.2.0` for that repo, or move the old `.brain/` aside and `brain init`), so no
+brain the server can open carries them.
 
 The server opens brain.db read-only in practice (one cached handle per brain dir,
 reopened if the file is replaced). A round is recorded when the agent's poll receives it,
