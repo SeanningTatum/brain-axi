@@ -653,6 +653,18 @@ function rawRequest(port, { method = "GET", path: p = "/health", headers = {} } 
   });
 }
 
+test("review: a corrupt sessions.json is moved aside, never overwritten, before the next write", async (t) => {
+  const { brain, ok, state } = await setup(t);
+  fs.mkdirSync(state, { recursive: true });
+  const corrupt = '{"sessions": {"k": {"prompts": [{"prompt": "do not lose me"}]}}, "pins": {'; // truncated JSON
+  fs.writeFileSync(path.join(state, "sessions.json"), corrupt);
+  ok(brain(["review", "open", "plans/auth.html", "--no-open"]), /^session:$/m);
+  const aside = fs.readdirSync(state).filter((f) => f.startsWith("sessions.json.corrupt-"));
+  assert.equal(aside.length, 1, fs.readdirSync(state).join(", "));
+  assert.equal(fs.readFileSync(path.join(state, aside[0]), "utf8"), corrupt);
+  assert.ok(JSON.parse(fs.readFileSync(path.join(state, "sessions.json"), "utf8")).sessions, "a fresh store was started");
+});
+
 test("server: a foreign Host (DNS rebinding) is refused on every route; /shutdown refuses a cross-origin POST", async (t) => {
   const { port, brain, ok } = await setup(t);
   ok(brain(["review", "open", "plans/auth.html", "--no-open"]));

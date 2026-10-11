@@ -75,7 +75,8 @@ flags a missing or changed plan.
   `sessions.json` exists, a pre-0.3 `state.json` (same session shape) is read, so queued
   prompts and the user-end latch survive the upgrade. Servers on different ports share
   the store, so every read-modify-write holds `sessions.json.lock` (atomic `mkdir`; a lock
-  older than 2 s is broken).
+  older than 2 s is broken). Reads treat a corrupt store as empty; a write first renames it
+  to `sessions.json.corrupt-<time>` (logged), so a save never overwrites it.
 - Session key: first 16 hex of `sha256(realpath(file))` — `sessionKey()` in server.js,
   imported by the CLI.
 - Idle shutdown: 30 min with no SSE client and no in-flight poll
