@@ -867,6 +867,31 @@ test("review: reopening a file with another brain is refused while its feedback 
   assert.ok(port);
 });
 
+test("review: reopening a file under another --plan is refused while its feedback is unrecorded", async (t) => {
+  // Regression (Greptile PR #26 restack): the batch was recorded into the
+  // newly registered plan (and re-recorded there after a lost ack).
+  const { base, dir, brain, ok, post } = await setup(t);
+  const open = ok(brain(["review", "open", "plans/auth.html", "--no-open"]));
+  const key = urlOf(open.out).split("/").pop();
+  assert.equal((await post("/api/feedback", { key, prompts: [{ tag: "message", prompt: "for auth" }] }, { origin: base })).status, 200);
+  // The CLI refuses before registering the file under the new slug...
+  const moved = brain(["review", "open", "plans/auth.html", "--no-open", "--plan", "auth-v2"]);
+  assert.equal(moved.code, 1, moved.out);
+  assert.match(moved.out, /^code: PLAN_MISMATCH$/m);
+  assert.match(moved.out, /brain review poll plans\/auth\.html/);
+  const list = ok(brain(["plans", "list"]));
+  assert.doesNotMatch(list.out, /auth-v2/);
+  // ...and the server refuses the re-bind on its own (an older CLI, a direct call).
+  const direct = await post("/api/open", { file: path.join(dir, "plans", "auth.html"), plan: "auth-v2", brain: path.join(dir, ".brain") }, { origin: base });
+  assert.equal(direct.status, 409);
+  assert.match((await direct.json()).help, /brain review poll .*auth\.html/);
+  // The batch lands in the original plan, once; then the move is allowed.
+  const poll = ok(brain(["review", "poll", "plans/auth.html", "--timeout-ms", "5000"]), /^status: feedback$/m);
+  assert.match(poll.out, /for auth/);
+  ok(brain(["plans", "view", "auth"]), /^rounds\[1\]/m);
+  ok(brain(["review", "open", "plans/auth.html", "--no-open", "--plan", "auth-v2"]), /^ {2}plan: auth-v2$/m);
+});
+
 test("review: two polls that both see the user's End record one closing round", async (t) => {
   const { base, brain, ok, post, env, dir } = await setup(t);
   const open = ok(brain(["review", "open", "plans/auth.html", "--no-open"]));

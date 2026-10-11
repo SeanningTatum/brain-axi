@@ -1247,6 +1247,14 @@ const review = {
         const prior = rv.readSession(rv.sessionKey(abs));
         if (rv.hasPendingFeedback(prior)) assertSessionBrain(prior.brain, brainDir, file, flags);
         const known = rv.planForFile(db, root, abs);
+        // ...and with its plan: re-registering the file under another slug
+        // would record the batch into that plan (or twice, after a lost ack).
+        const wanted = flags.plan || (known && known.slug);
+        if (rv.hasPendingFeedback(prior) && prior.plan && wanted && wanted !== prior.plan)
+          fail("PLAN_MISMATCH", `${file} has unrecorded feedback for plan "${prior.plan}"; it cannot move to plan "${wanted}" yet; nothing was changed`, [
+            `Record it first: brain review poll ${ref}`,
+            `Then reopen it: brain review open ${ref} --plan ${shellWord(String(wanted))}`,
+          ]);
         const plan = L.plans.upsert(db, { file: abs, slug: flags.plan || (known && known.slug), feature: flags.feature, root });
         const port = reviewPort(flags);
         await ensureServer(port);
