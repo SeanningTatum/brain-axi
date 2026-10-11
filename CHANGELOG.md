@@ -62,7 +62,8 @@ each other; a database gives those for free. Plan: `plans/2026-10-10-axi-archite
   `review poll` restarts a server that exited while a session still had feedback (or the
   user's End) on disk, and refuses (`BRAIN_MISMATCH`, nothing recorded or acked) when the
   session was opened for a different brain; `review end` and a `review open` that would move
-  unrecorded feedback to another brain are refused the same way (the server answers 409 too).
+  unrecorded feedback to another brain are refused the same way (the server answers 409 too);
+  so is a `review open --plan` that would move it to another plan (`PLAN_MISMATCH`).
   Two polls that both see the user's End record one closing round (one write transaction).
 - Every `help:` command keeps the `--brain` the invocation named (`context` excepted: its
   output is capped), and free-text values in hints (claim holders, paths, brain dirs) are
