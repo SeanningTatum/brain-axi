@@ -10,7 +10,7 @@ test("add stamps the commit, author and a clean tree; rounds increment", (t) => 
   git(root, "add", ".gitignore");
   git(root, "commit", "-q", "-m", "ignore brain");
   features.add(db, { slug: "f", name: "F" });
-  const head = git(root, "rev-parse", "--short", "HEAD");
+  const head = git(root, "rev-parse", "HEAD");
   const v1 = verifications.add(db, "f", { verdict: "FAIL", body: "broke on empty input", verifiedBy: "verifier-1", root });
   assert.equal(v1.round, 1);
   assert.equal(v1.commit, head);
@@ -24,6 +24,15 @@ test("add stamps the commit, author and a clean tree; rounds increment", (t) => 
   assert.equal(verifications.get(db, "f", 1).verdict, "FAIL");
   assert.deepEqual(verifications.list(db, { feature: "f" }).map((v) => v.round).sort(), [1, 2]);
   throwsCode(() => verifications.get(db, "f", 7), "NOT_FOUND");
+});
+
+test("commit is the full SHA even when core.abbrev is below 7 (Greptile r8)", (t) => {
+  const { db, root } = freshBrain(t, { withGit: true });
+  git(root, "config", "core.abbrev", "4");
+  features.add(db, { slug: "f", name: "F" });
+  const v = verifications.add(db, "f", { verdict: "PASS", body: "ok", root });
+  assert.equal(v.commit, git(root, "rev-parse", "HEAD"));
+  assert.equal(v.commit.length, 40);
 });
 
 test("a dirty tree is recorded as dirty:true (#11)", (t) => {
@@ -87,7 +96,7 @@ test("worktree: shots live in the MAIN checkout's .brain/shots/, stored relative
     shots: [path.join(mainShots, "a.png"), ".brain/shots/f/b.png"],
   });
   assert.deepEqual(v.shots.map((s) => s.path), [".brain/shots/f/a.png", ".brain/shots/f/b.png"], "stored relative to mainRoot");
-  assert.equal(v.commit, git(wt, "rev-parse", "--short", "HEAD"), "commit stamped from the worktree");
+  assert.equal(v.commit, git(wt, "rev-parse", "HEAD"), "commit stamped from the worktree");
 
   const shotRow = (rows) => rows.find((r) => r.check === "plan and shot files");
   assert.equal(shotRow(check(w.db, { root: wt, mainRoot: main })).status, "pass", "from the worktree");

@@ -172,6 +172,14 @@ test("supervisor platform branch: POSIX kills the process group + SIGALRM; Windo
   assert.deepEqual([own.status, own.exit], ["fail", TIMEOUT_EXIT], "a check's own exit 124 is a plain failure");
 });
 
+test("outcome keeps a spawn error's text in the tail (Greptile r8)", () => {
+  const err = Object.assign(new Error("spawnSync /no/node EACCES"), { code: "EACCES" });
+  const r = verify.outcome({ name: "x" }, { status: null, signal: null, stdout: "", stderr: "", error: err }, 0);
+  assert.equal(r.status, "fail");
+  assert.equal(r.exit, null);
+  assert.match(r.tail, /spawnSync \/no\/node EACCES/);
+});
+
 test("supervisor: a parent that dies (a SIGTERM aimed at brain verify alone) takes the check's tree with it (Greptile r8)", async (t) => {
   // Unit: the watcher kills the tree and exits once the parent is gone.
   const calls = [];

@@ -12,6 +12,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { kv, toonTable, toonList as toonListRaw } from "../lib/brain/toon.js";
@@ -46,6 +47,12 @@ function readOwnVersion() {
 // A value as one shell word for a copy-pasteable hint: bare when safe.
 // POSIX single quotes: nothing inside expands ($, backticks, \ stay literal).
 const shellWord = (v) => (/^[\w./:@%+=,-]+$/.test(v) ? v : `'${String(v).replace(/'/g, "'\\''")}'`);
+// A path as one shell word: relative to the cwd when inside it, else
+// absolute — never a quoted `~/…`, which the shell would not expand.
+const shellPath = (p) => {
+  const r = path.relative(process.cwd(), p);
+  return shellWord(r === "" ? "." : r.startsWith("..") || path.isAbsolute(r) ? p : r);
+};
 
 // ` --brain <dir>` when this invocation named one: every `brain …` command a
 // help: list suggests carries it, so following a hint reaches the same brain
@@ -399,20 +406,30 @@ const exportCmd = {
     // Write beside the destination, then rename: a failed or interrupted
     // write never truncates the backup already there.
     // (A symlinked --out keeps pointing at the file it names.)
+    // The temp name is unpredictable and created exclusively ("wx" = O_EXCL,
+    // which never follows a symlink planted at that name); a failure removes
+    // only the file this call created.
     const dest = real(out);
-    const tmpOut = path.join(path.dirname(dest), `.${path.basename(dest)}.tmp-${process.pid}`);
+    const tmpOut = path.join(path.dirname(dest), `.${path.basename(dest)}.tmp-${process.pid}-${crypto.randomBytes(6).toString("hex")}`);
+    let fd = null;
+    let made = false;
     try {
-      fs.writeFileSync(tmpOut, dump);
+      fd = fs.openSync(tmpOut, "wx", 0o644);
+      made = true;
+      fs.writeFileSync(fd, dump);
+      fs.closeSync(fd);
+      fd = null;
       fs.renameSync(tmpOut, dest);
     } catch (e) {
-      fs.rmSync(tmpOut, { force: true });
+      if (fd !== null) fs.closeSync(fd);
+      if (made) fs.rmSync(tmpOut, { force: true });
       throw e;
     }
     const counts = L.io.TABLES.map((t) => ({ table: t, rows: (dump.match(new RegExp(`^${t}\\[(\\d+)\\]`, "m")) || [0, 0])[1] * 1 }));
     print([
       ...group("export", { file: rel(out), bytes: Buffer.byteLength(dump) }),
       ...toonTable("tables", counts.filter((c) => c.rows), ["table", "rows"], 2),
-      ...toonList("help", [`Restore into a fresh brain: brain import ${shellWord(rel(out))}`]),
+      ...toonList("help", [`Restore into a fresh brain: brain import ${shellPath(out)}`]),
     ]);
   },
 };
@@ -457,9 +474,13 @@ const importCmd = {
     L.close(b.db);
     if (staging) {
       try {
-        fs.linkSync(b.staged, b.dbPath); // fails with EEXIST rather than replace a brain.db made meanwhile
+        // .gitignore first (as `init` does): brain.db never appears un-ignored.
+        L.db.ensureGitignore(b.mainRoot, b.brainDir);
+        // An exclusive link (an exclusive copy where links are unsupported):
+        // BRAIN_EXISTS rather than replace a brain.db made meanwhile.
+        L.db.publishExclusive(b.staged, b.dbPath);
       } catch (e) {
-        if (e.code !== "EEXIST") throw e;
+        if (!L.isBrainError(e, "BRAIN_EXISTS")) throw e;
         fail("BRAIN_EXISTS", `${rel(b.dbPath)} was created by another process during the import; it was left untouched`, [
           "Run `brain` to see its state",
           "To restore into it, it must be empty: move it aside, then `brain import <file>`",
@@ -467,7 +488,6 @@ const importCmd = {
       } finally {
         fs.rmSync(staging, { recursive: true, force: true });
       }
-      L.db.ensureGitignore(b.mainRoot, b.brainDir);
     }
     const created = !!staging;
     print([
@@ -513,7 +533,7 @@ const features = {
         let truncated = false;
         if (f.grandfathered) lines.push(kv("grandfathered", true));
         truncated = addBlocks(lines, [["description", f.description], ["evidence", f.evidence]], full) || truncated;
-        lines.push(kv("verdict", f.verdict ? `${f.verdict.verdict} (round ${f.verdict.round}, ${f.verdict.commit || "no commit"}${f.verdict.dirty ? ", dirty tree" : ""})` : "none"));
+        lines.push(kv("verdict", f.verdict ? `${f.verdict.verdict} (round ${f.verdict.round}, ${f.verdict.commit ? f.verdict.commit.slice(0, 7) : "no commit"}${f.verdict.dirty ? ", dirty tree" : ""})` : "none"));
         lines.push(...toonTable("tasks", f.tasks, ["key", "status", "title", "claimed_by"]));
         if (f.doc) lines.push(kv("doc", `features/${f.slug}${f.doc.title ? ` — ${f.doc.title}` : ""}`));
         if (f.doc) truncated = addBlocks(lines, [["doc_body", f.doc.body]], full) || truncated;
@@ -1406,7 +1426,8 @@ const verifications = {
       examples: ["brain verifications list", "brain verifications list --feature auth"],
       run(ctx) {
         const { db } = ctx.brain();
-        const rows = L.verifications.list(db, { feature: ctx.flags.feature });
+        // Full SHAs are stored; the list shows the usual 7-char prefix.
+        const rows = L.verifications.list(db, { feature: ctx.flags.feature }).map((v) => ({ ...v, commit: v.commit && v.commit.slice(0, 7) }));
         print([
           ...toonTable("verifications", rows, ["feature", "round", "verdict", "commit", "dirty", "verified_by", "at"]),
           ...toonList("help", rows.length

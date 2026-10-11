@@ -179,7 +179,7 @@ test("ship warning: PASS commit not an ancestor of HEAD — ships anyway, warns"
   git(root, "commit", "-q", "-m", "side");
   const v = verifications.add(db, "a", { verdict: "PASS", body: "ok", root });
   git(root, "checkout", "-q", "main");
-  const head = git(root, "rev-parse", "--short", "HEAD");
+  const head = git(root, "rev-parse", "HEAD");
   const out = features.ship(db, "a", { evidence: "works", root });
   assert.equal(out.outcome, "shipped");
   assert.equal(out.feature.status, "shipped");

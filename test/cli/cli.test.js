@@ -11,7 +11,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const BIN = fileURLToPath(new URL("../../bin/brain.js", import.meta.url));
 const NODE22 = path.join(os.homedir(), ".nvm/versions/node/v22.14.0/bin/node");
@@ -594,6 +594,71 @@ test("export → import → export is byte-identical; import refuses a non-empty
   assert.deepEqual(fs.readdirSync(path.join(bad, ".brain")), [], "no brain.db and no staging dir left");
   ok(brain(dst, ["check"]), /^ok: true$/m);
   assert.ok(!fs.readdirSync(path.join(dst, ".brain")).some((n) => n.startsWith(".import-")), "staging dir removed after success");
+});
+
+// A preload module (via NODE_OPTIONS=--import) that runs inside the CLI process.
+function preload(t, body) {
+  const file = path.join(tmp(t, "brain-preload-"), "preload.mjs");
+  fs.writeFileSync(file, body);
+  return { NODE_OPTIONS: `--import=${pathToFileURL(file).href}` };
+}
+
+test("export creates its temp file exclusively: a symlink planted at the temp name is never followed (Greptile r8)", (t) => {
+  const dir = repoWithBrain(t);
+  const victim = path.join(dir, "victim.txt");
+  fs.writeFileSync(victim, "precious\n");
+  // Plant symlinks at every temp name the old code could use (its pid-only name).
+  const env = preload(t, `import fs from "node:fs";
+fs.symlinkSync(${JSON.stringify(victim)}, ${JSON.stringify(path.join(dir, ".brain"))} + "/.export.toon.tmp-" + process.pid);
+`);
+  ok(brain(dir, ["export"], { env }), /file: .brain\/export\.toon/);
+  assert.equal(fs.readFileSync(victim, "utf8"), "precious\n", "the symlink target is untouched");
+  assert.ok(!fs.lstatSync(path.join(dir, ".brain", "export.toon")).isSymbolicLink(), "export.toon is a regular file");
+  assert.match(fs.readFileSync(path.join(dir, ".brain", "export.toon"), "utf8"), /^features\[/m);
+  assert.ok(!fs.readdirSync(path.join(dir, ".brain")).some((n) => /^\.export\.toon\.tmp-.*-[0-9a-f]+$/.test(n)), "no temp file left behind");
+});
+
+test("export's restore hint names an absolute path, never a quoted ~/ (Greptile r8)", (t) => {
+  const home = tmp(t, "brain-home-");
+  const dir = repoWithBrain(t);
+  const out = path.join(home, "my backup.toon");
+  const r = ok(brain(dir, ["export", "--out", out], { env: { HOME: home } }));
+  assert.match(r.out, /file: "?~\/my backup\.toon/, "display may shorten to ~");
+  const hint = r.out.split("\n").find((l) => l.includes("brain import"));
+  assert.ok(hint.includes(`brain import '${out}'`), hint);
+  assert.doesNotMatch(hint, /'~/);
+});
+
+test("a fresh import writes .gitignore before publishing brain.db; a failed write leaves no brain.db (Greptile r8)", (t) => {
+  const src = repoWithBrain(t);
+  const dump = brain(src, ["export", "--stdout"]).out;
+  const dst = gitRepo(tmp(t));
+  fs.mkdirSync(path.join(dst, ".gitignore")); // unwritable as a file
+  const r = brain(dst, ["import", "-"], { input: dump });
+  assert.notEqual(r.code, 0, r.out + r.err);
+  assert.ok(!fs.existsSync(path.join(dst, ".brain", "brain.db")), "brain.db was not published un-ignored");
+  assert.ok(!fs.readdirSync(path.join(dst, ".brain")).some((n) => n.startsWith(".import-")), "staging dir removed");
+});
+
+test("a fresh import falls back to an exclusive copy where hard links are unsupported (Greptile r8)", (t) => {
+  const src = repoWithBrain(t);
+  const dump = brain(src, ["export", "--stdout"]).out;
+  const env = preload(t, `import fs from "node:fs";
+fs.linkSync = () => { throw Object.assign(new Error("EPERM: operation not permitted, link"), { code: "EPERM" }); };
+`);
+  const dst = gitRepo(tmp(t));
+  ok(brain(dst, ["import", "-"], { input: dump, env }), /created: true/);
+  assert.equal(brain(dst, ["export", "--stdout"]).out, dump);
+  assert.match(fs.readFileSync(path.join(dst, ".gitignore"), "utf8"), /\.brain\/brain\.db/);
+  // Still no-clobber: a brain.db made meanwhile is refused, not replaced.
+  const raced = gitRepo(tmp(t));
+  const racer = preload(t, `import fs from "node:fs";
+const copy = fs.copyFileSync;
+fs.linkSync = () => { throw Object.assign(new Error("EPERM"), { code: "EPERM" }); };
+fs.copyFileSync = (a, b, m) => { if (String(b).endsWith("brain.db")) fs.writeFileSync(b, "theirs"); return copy(a, b, m); };
+`);
+  failsWith(brain(raced, ["import", "-"], { input: dump, env: racer }), 1, "BRAIN_EXISTS");
+  assert.equal(fs.readFileSync(path.join(raced, ".brain", "brain.db"), "utf8"), "theirs");
 });
 
 test("argv: `--` ends flag parsing; an inherited property is not a subcommand (exit 2)", (t) => {

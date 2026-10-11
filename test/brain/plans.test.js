@@ -154,3 +154,23 @@ test("addRound: a retried batch returns its round even after the snapshot file i
   const again = plans.addRound(db, "p1", { prompts: [{ prompt: "once" }], batchId: "b-1", snapshotPath: "snap.html", root });
   assert.deepEqual(again, { slug: "p1", round: 1, status: "in-review", duplicate: true });
 });
+
+test("a slug already bound to another file is refused (PLAN_SLUG_TAKEN); the same file reuses it (Greptile r8)", (t) => {
+  const { db, root } = freshBrain(t);
+  const a = planFile(root);
+  fs.mkdirSync(path.join(root, "other"), { recursive: true });
+  fs.writeFileSync(path.join(root, "other", "plan.html"), "<title>Other</title>");
+  plans.upsert(db, { file: a, root });
+  plans.addRound(db, "plan", { prompts: [{ prompt: "first file's feedback" }] });
+  // Same default slug (basename "plan"), different file: refused, nothing merged.
+  const e = throwsCode(() => plans.upsert(db, { file: "other/plan.html", root }), "PLAN_SLUG_TAKEN", /bound to plans\/plan\.html/);
+  assert.equal(e.exitCode, 1);
+  assert.match(e.help[0], /brain review open other\/plan\.html --plan <other-slug>/);
+  throwsCode(() => plans.upsert(db, { file: "other/plan.html", slug: "plan", root }), "PLAN_SLUG_TAKEN");
+  const p = plans.get(db, "plan");
+  assert.equal(p.file_path, "plans/plan.html");
+  assert.equal(p.rounds, 1);
+  // The same file keeps its slug; the other file registers under its own.
+  assert.equal(plans.upsert(db, { file: a, root }).created, false);
+  assert.equal(plans.upsert(db, { file: "other/plan.html", slug: "other-plan", root }).created, true);
+});
