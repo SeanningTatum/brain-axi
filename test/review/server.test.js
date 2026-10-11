@@ -498,19 +498,31 @@ test("review: a lost-ack user-end batch re-delivered after --reopen does not clo
   ok(brain(["plans", "view", "auth"]), /^session_open: true$/m);
 });
 
-test("review: a user End after a lost-ack delivery rides out with the re-delivered batch", async (t) => {
-  const { base, brain, ok, post } = await setup(t);
-  const key = urlOf(ok(brain(["review", "open", "plans/auth.html", "--no-open"])).out).split("/").pop();
-  assert.equal((await post("/api/feedback", { key, prompts: [{ tag: "message", prompt: "first" }] }, { origin: base })).status, 200);
-  const lost = await (await fetch(`${base}/api/poll?key=${key}`)).json(); // fetched while open, never acked
-  assert.equal(lost.session_ended, undefined);
-  assert.equal((await post("/api/end", { key, by: "user" }, { origin: base })).status, 200);
-  const poll = ok(brain(["review", "poll", "plans/auth.html", "--timeout-ms", "5000"]), /^redelivered: true$/m);
-  assert.match(poll.out, /first/);
-  assert.match(poll.out, /^ended_by: user$/m);
-  const view = ok(brain(["plans", "view", "auth"]), /^session_open: false$/m);
-  assert.match(view.out, /^rounds\[1\]/m);
-});
+for (const recorded of [false, true])
+  test(`review: a user End after a lost-ack delivery (${recorded ? "recorded" : "unrecorded"}) is announced, then recorded as its own closing round`, async (t) => {
+    const { base, brain, ok, post, brainDir } = await setup(t);
+    const key = urlOf(ok(brain(["review", "open", "plans/auth.html", "--no-open"])).out).split("/").pop();
+    assert.equal((await post("/api/feedback", { key, prompts: [{ tag: "message", prompt: "first" }] }, { origin: base })).status, 200);
+    const lost = await (await fetch(`${base}/api/poll?key=${key}`)).json(); // fetched while open, never acked
+    assert.equal(lost.session_ended, undefined);
+    if (recorded) {
+      // The CLI recorded this batch, then died before the ack.
+      const { openBrain, plans, close } = await import("../../lib/brain/index.js");
+      const b = openBrain(path.dirname(brainDir));
+      plans.addRound(b.db, "auth", { prompts: lost.prompts.map((p) => ({ tag: p.tag, prompt: p.prompt })), batchId: lost.batch });
+      close(b.db);
+    }
+    assert.equal((await post("/api/end", { key, by: "user" }, { origin: base })).status, 200);
+    const again = ok(brain(["review", "poll", "plans/auth.html", "--timeout-ms", "5000"]), /^redelivered: true$/m);
+    assert.match(again.out, /first/);
+    assert.match(again.out, /^next_step: .*The user ended the session after this batch/m);
+    const end = ok(brain(["review", "poll", "plans/auth.html", "--timeout-ms", "5000"]), /^status: ended$/m);
+    assert.match(end.out, /^ended_by: user$/m);
+    const view = ok(brain(["plans", "view", "auth"]), /^session_open: false$/m);
+    assert.match(view.out, /^status: reviewed$/m);
+    assert.match(view.out, /^rounds\[2\]/m);
+    assert.match(view.out, /^ {2}2,\S+,user,0$/m);
+  });
 
 test("review: a lost-ack re-delivery leaves the End to the user's final batch queued behind it", async (t) => {
   const { base, brain, ok, post } = await setup(t);

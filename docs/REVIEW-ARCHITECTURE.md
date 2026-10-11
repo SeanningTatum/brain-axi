@@ -58,7 +58,12 @@ instead of deleting them; the CLI records the round with that `batch` id, then
 the same batch again (`redelivered: true`); `plans.addRound({batchId})` skips a batch id
 already recorded for the plan (migration `002`, unique `(plan_id, batch_id)`), so one batch
 is one round. A re-delivery carries `session_ended` only while the session is still ended:
-after a `--reopen` the old batch's end no longer closes the reopened session. Prompts queued while a batch is in flight ride the next batch. `review end --approved-by <who>` needs no server
+after a `--reopen` the old batch's end no longer closes the reopened session. A user End
+that lands after the batch was first sent is never folded into the re-delivery (the CLI may
+already have recorded that batch id, so an attached End would be deduplicated away): the
+re-delivery says so in `next_step` (`end_follows`), and the next poll returns `ended`, which
+the CLI records as its own closing round. Prompts queued while a batch is in flight ride the
+next batch (and carry a pending End with them). `review end --approved-by <who>` needs no server
 (headless/CI): it records a closing round ended by the approver and sets `approved`.
 Plan snapshots are not written: the plan row's sha256 tracks the file, and `brain check`
 flags a missing or changed plan.
