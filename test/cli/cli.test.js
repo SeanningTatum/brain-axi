@@ -497,6 +497,10 @@ test("export replaces --out atomically: a failed write leaves the previous backu
   fs.symlinkSync("b.toon", path.join(dir, "latest.toon"));
   ok(brain(src, ["export", "--out", "backups/latest.toon"]));
   assert.ok(fs.lstatSync(path.join(dir, "latest.toon")).isSymbolicLink());
+  // Replacing a private backup keeps it private (Greptile PR #24 r1).
+  fs.chmodSync(out, 0o600);
+  ok(brain(src, ["export", "--out", "backups/b.toon"]));
+  assert.equal(fs.statSync(out).mode & 0o777, 0o600, "existing backup mode preserved");
 });
 
 test("export → import → export is byte-identical; import refuses a non-empty brain", (t) => {
