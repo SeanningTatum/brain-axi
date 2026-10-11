@@ -283,6 +283,10 @@ test("plans view: clipped prompts point at --full", async (t) => {
   // The reopen hint resolves from the caller's directory, not the repo root.
   ok(brain(dir, ["plans", "view", "p"]), /Reopen it for review: brain review open plans\/p\.html/);
   ok(brain(path.join(dir, "plans"), ["plans", "view", "p"]), /Reopen it for review: brain review open p\.html/);
+  // A custom brain stays selected in both hints.
+  const custom = ok(brain(dir, ["plans", "view", "p", "--brain", ".brain"])).out;
+  assert.match(custom, /Reopen it for review: brain review open plans\/p\.html --brain \.brain$/m);
+  assert.match(custom, /brain plans view p --full --brain \.brain$/m);
 });
 
 test("review: a symlinked alias of a registered plan is the same plan; hints keep --brain/--port", (t) => {

@@ -427,3 +427,19 @@ test("locate: worktrees of a --separate-git-dir repo share the main checkout's b
   fs.writeFileSync(path.join(base, "store.git", "brain-axi-main-checkout"), base + "\n");
   assert.equal(locate(wt).mainUnknown, true);
 });
+
+test("locate: a --separate-git-dir named .git (/storage/.git) never makes its parent the main checkout", (t) => {
+  const base = tmpDir(t);
+  const main = path.join(base, "main");
+  fs.mkdirSync(path.join(base, "storage"));
+  git(base, "init", "-q", "-b", "main", "--separate-git-dir", path.join(base, "storage", ".git"), main);
+  git(main, "config", "user.email", "t@example.com");
+  git(main, "config", "user.name", "Test Author");
+  git(main, "commit", "-q", "--allow-empty", "-m", "init");
+  const loc = locate(main);
+  assert.equal(loc.mainRoot, main);
+  assert.equal(loc.brainDir, path.join(main, ".brain"));
+  const wt = path.join(base, "wt");
+  git(main, "worktree", "add", "-q", wt, "-b", "wt-branch");
+  assert.equal(locate(wt).brainDir, path.join(main, ".brain"), "its worktree follows the recorded main checkout");
+});

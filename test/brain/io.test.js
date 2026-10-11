@@ -136,3 +136,11 @@ test("import refuses a dump whose task dependencies form a cycle, and writes not
   throwsCode(() => io.importAll(b.db, dump), "IMPORT_PARSE", /task_deps has a dependency cycle/);
   assert.equal(b.db.prepare("SELECT count(*) AS n FROM tasks").get().n, 0);
 });
+
+test("exportAll handles a table larger than the JS argument limit", (t) => {
+  const { db } = freshBrain(t);
+  db.exec(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 300000)
+           INSERT INTO gate_runs (at, check_name, status, seconds) SELECT '2026-01-01T00:00:00.000Z', 'c', 'pass', 0 FROM n`);
+  const text = io.exportAll(db);
+  assert.match(text, /^gate_runs\[300000\]\{/m);
+});

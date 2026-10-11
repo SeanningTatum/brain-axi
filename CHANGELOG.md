@@ -61,7 +61,9 @@ each other; a database gives those for free. Plan: `plans/2026-10-10-axi-archite
   kills the whole tree on a timeout (or Ctrl-C), so a timed-out suite cannot keep running
   into the next check. On macOS/Linux that is the check's own process group; on Windows,
   which has neither process groups nor `SIGALRM`, it is `taskkill /pid <pid> /T /F` and the
-  timeout is reported on the supervisor's own stderr instead of a signal.
+  timeout is reported on the supervisor's own stderr instead of a signal. Known Windows
+  limit: a job a check backgrounds (`start /b`) and leaves running after its shell exits
+  is not killed — taskkill cannot walk a tree whose root is gone.
 - In a linked worktree of a `--separate-git-dir` repo (git records no path for its main
   checkout), the main checkout records itself in the git dir the first time any `brain`
   command runs there, so its worktrees share its brain; until then a worktree refuses with

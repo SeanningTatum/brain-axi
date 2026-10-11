@@ -158,7 +158,8 @@ whole doc to update it.
 --- 4.4 VERIFICATION VERDICT (`brain verifications add`) ---
 
 Owned by the `brain-verify` skill; the register rules here apply to its prose.
-The verdict is a flag, not a line in the body:
+The `--verdict` flag is the stored result (what `ship` and `check` read); the
+body's Verdict line (brain-verify's template) must repeat the same verdict:
 
     brain verifications add <slug> --verdict PASS|FAIL|BLOCKED \
         --body-from <scratch-file.md> [--shot <path>::<caption>]...

@@ -379,6 +379,24 @@ test("watch: a refetch that lands while brain.db is missing (mid-restore) does n
   assert.equal((await (await fetch(`${base}/watch/auth/context${qs}`)).json()).feature.status, "planned");
 });
 
+test("review: a sidebar stream opened while brain.db is missing still refreshes once it is restored", async (t) => {
+  const { base, brain, ok, brainDir } = await setup(t);
+  const key = urlOf(ok(brain(["review", "open", "plans/auth.html", "--feature", "auth", "--no-open"])).out).split("/").pop();
+  const saved = path.join(path.dirname(brainDir), "saved.db");
+  ok(brain(["export", "--out", saved]));
+  for (const f of fs.readdirSync(brainDir)) if (f.startsWith("brain.db")) fs.rmSync(path.join(brainDir, f));
+  const events = [];
+  const req = http.get(`${base}/events/${key}`, (res) => res.on("data", (c) => events.push(String(c))));
+  t.after(() => req.destroy());
+  await new Promise((r) => setTimeout(r, 600)); // opened (and ticked) with no brain.db
+  const count = () => events.join("").split("event: context-update").length;
+  const before = count();
+  ok(brain(["import", saved]));
+  const deadline = Date.now() + 5000;
+  while (count() <= before && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+  assert.ok(count() > before, `no context-update after the restore: ${events.join("")}`);
+});
+
 test("review: a poll that dies before the ack gets the same batch re-delivered; exactly one round; the ack clears it", async (t) => {
   const { base, brain, ok, post } = await setup(t);
   const open = ok(brain(["review", "open", "plans/auth.html", "--no-open"]));

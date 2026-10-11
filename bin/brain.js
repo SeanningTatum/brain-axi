@@ -965,8 +965,8 @@ const plans = {
           ...toonTable("rounds", p.reviews.map((r) => ({ ...r, prompts: r.prompts.length })), ["round", "at", "ended_by", "prompts"]),
           ...toonTable("prompts", prompts, ["round", "tag", "prompt"]),
           ...toonList("help", [
-            ...(clipped ? [`Prompts cut at ${CELL_LIMIT} chars (…): brain plans view ${p.slug} --full`] : []),
-            `Reopen it for review: brain review open ${reopen}`,
+            ...(clipped ? [`Prompts cut at ${CELL_LIMIT} chars (…): brain plans view ${p.slug} --full${passFlags(ctx.flags)}`] : []),
+            `Reopen it for review: brain review open ${reopen}${passFlags(ctx.flags)}`,
           ]),
         ]);
       },
