@@ -157,7 +157,9 @@ Poll payloads (wire contract unchanged; `batch` and `redelivered` are additive):
   session (`/api/open`) rebinds an already-open tab to the brain it was reopened with and
   sends it `context-update`. A brain no page is bound to and
   untouched for 5 minutes has its handle closed (reopened on the next request). Pin writes broadcast directly (they are not in brain.db) — to the feature's
-  dashboard and to every review tab on the same brain.
+  dashboard and to every review tab on the same brain — and the tick also signs the
+  brain's pins in `sessions.json` (re-read only when its size/mtime moves), so a pin
+  written through a server on another port still refreshes this server's pages.
 
 ## Payloads (context.js)
 

@@ -299,6 +299,36 @@ test("pins reach the agent: only sent pins show on verifications view; context c
   void base;
 });
 
+test("watch: a pin added through another port's server refreshes this server's dashboard", async (t) => {
+  const { base, brain, ok, brainDir } = await setup(t);
+  fs.mkdirSync(path.join(brainDir, "shots"), { recursive: true });
+  fs.writeFileSync(path.join(brainDir, "shots", "01-login.png"), "png-a");
+  ok(brain(["verifications", "add", "auth", "--verdict", "PASS", "--body", "walked", "--shot", ".brain/shots/01-login.png"]));
+  const url = urlOf(ok(brain(["watch", "auth", "--no-open"])).out);
+  const qs = url.slice(url.indexOf("?"));
+  const port2 = await freePort();
+  const base2 = `http://127.0.0.1:${port2}`;
+  t.after(() => fetch(`${base2}/shutdown`, { method: "POST" }).catch(() => {}));
+  ok(brain(["watch", "auth", "--no-open", "--port", String(port2)]));
+  const events = [];
+  const req = http.get(`${base}/watch-events/auth${qs}`, (res) => res.on("data", (c) => events.push(String(c))));
+  t.after(() => req.destroy());
+  await new Promise((r) => setTimeout(r, 600));
+  const count = () => events.join("").split("event: context-update").length;
+  const before = count();
+  const r = await fetch(`${base2}/watch/auth/annotate${qs}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: base2 },
+    body: JSON.stringify({ shot: ".brain/shots/01-login.png", x: 10, y: 20, note: "from the other port" }),
+  });
+  assert.equal(r.status, 200);
+  const deadline = Date.now() + 4000;
+  while (count() <= before && Date.now() < deadline) await new Promise((r2) => setTimeout(r2, 50));
+  assert.ok(count() > before, `no context-update after another server's pin write: ${events.join("")}`);
+  const ctx = await (await fetch(`${base}/watch/auth/context${qs}`)).json();
+  assert.match(JSON.stringify(ctx), /from the other port/);
+});
+
 test("readPins: filters by brain and feature, tags feature, never creates the state dir, survives a corrupt store", (t) => {
   const dir = tmp(t);
   const saved = process.env.BRAIN_AXI_STATE_DIR;
