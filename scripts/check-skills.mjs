@@ -73,17 +73,18 @@ function helpRows(text, header) {
 const flagsIn = (text) => helpRows(text, /^flags\[\d+\]:$/).map((r) => /^(--[a-z][a-z0-9-]*)/.exec(r)?.[1]).filter(Boolean);
 
 function cliSurface(names) {
-  const surface = new Map(); // cmd -> { flags:Set, subs: Map(sub -> Set flags) }
+  const surface = new Map(); // cmd -> { flags:Set, subs: Map(sub -> Set flags), takesArgs: Set(sub) }
   for (const cmd of names) {
     const text = helpOf([cmd]);
     if (text === null) return { error: `bin/brain.js ${cmd} --help failed` };
     const def = /^default: brain \S+ = brain \S+ (\S+)$/m.exec(text);
-    const entry = { flags: new Set(flagsIn(text)), subs: new Map(), default: def ? def[1] : null };
+    const entry = { flags: new Set(flagsIn(text)), subs: new Map(), takesArgs: new Set(), default: def ? def[1] : null };
     for (const row of helpRows(text, /^subcommands\[\d+\]\{name,summary\}:$/)) {
       const sub = row.split(",")[0].replace(/^"|"$/g, "");
       const subText = helpOf([cmd, sub]);
       if (subText === null) return { error: `bin/brain.js ${cmd} ${sub} --help failed` };
       entry.subs.set(sub, new Set(flagsIn(subText)));
+      if (/^args\[\d+\]:/m.test(subText)) entry.takesArgs.add(sub);
     }
     surface.set(cmd, entry);
   }
@@ -219,8 +220,9 @@ function checkCommandRefs(problems, files, surface) {
         if (entry.subs.size) {
           // A word that is no subcommand of a command WITH a default is that
           // default's positional (`brain tasks auth` = `brain tasks list auth`),
-          // exactly as the CLI routes it.
-          if (ref.subs.length === 1 && entry.default && !entry.subs.has(ref.subs[0])) ref.subs = [];
+          // exactly as the CLI routes it. Only when that default takes an
+          // argument: `brain features typo` is a USAGE error, not a list.
+          if (ref.subs.length === 1 && entry.default && entry.takesArgs.has(entry.default) && !entry.subs.has(ref.subs[0])) ref.subs = [];
           // No subcommand named: the CLI routes to the default one, so only its flags count.
           const subs = ref.subs.length ? ref.subs : entry.default ? [entry.default] : [...entry.subs.keys()];
           for (const s of ref.subs)

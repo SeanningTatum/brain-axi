@@ -40,6 +40,9 @@ test("a literal feature name after a command with a default subcommand is that d
   assert.deepEqual(scan(t, "`brain tasks auth`\n"), []);
   assert.deepEqual(scan(t, "`brain runs auth --run 2026-10-10-progress`\n"), []);
   assert.match(scan(t, "`brain runs auth --verdict PASS`\n").join("\n"), /has no flag --verdict/);
+  // A default that takes no argument: the word is a bad subcommand (Greptile PR #24 r2).
+  assert.match(scan(t, "`brain features typo`\n").join("\n"), /`brain features typo`, which is not a subcommand/);
+  assert.match(scan(t, "`brain verify typo`\n").join("\n"), /`brain verify typo`, which is not a subcommand/);
 });
 
 test("an a|b subcommand form is checked per subcommand: a flag must work on every alternative", (t) => {
