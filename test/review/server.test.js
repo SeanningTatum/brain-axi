@@ -468,6 +468,35 @@ test("review: a lost-ack user-end batch re-delivered after --reopen does not clo
   ok(brain(["plans", "view", "auth"]), /^session_open: true$/m);
 });
 
+test("review: a user End after a lost-ack delivery rides out with the re-delivered batch", async (t) => {
+  const { base, brain, ok, post } = await setup(t);
+  const key = urlOf(ok(brain(["review", "open", "plans/auth.html", "--no-open"])).out).split("/").pop();
+  assert.equal((await post("/api/feedback", { key, prompts: [{ tag: "message", prompt: "first" }] }, { origin: base })).status, 200);
+  const lost = await (await fetch(`${base}/api/poll?key=${key}`)).json(); // fetched while open, never acked
+  assert.equal(lost.session_ended, undefined);
+  assert.equal((await post("/api/end", { key, by: "user" }, { origin: base })).status, 200);
+  const poll = ok(brain(["review", "poll", "plans/auth.html", "--timeout-ms", "5000"]), /^redelivered: true$/m);
+  assert.match(poll.out, /first/);
+  assert.match(poll.out, /^ended_by: user$/m);
+  const view = ok(brain(["plans", "view", "auth"]), /^session_open: false$/m);
+  assert.match(view.out, /^rounds\[1\]/m);
+});
+
+test("review: a lost-ack re-delivery leaves the End to the user's final batch queued behind it", async (t) => {
+  const { base, brain, ok, post } = await setup(t);
+  const key = urlOf(ok(brain(["review", "open", "plans/auth.html", "--no-open"])).out).split("/").pop();
+  assert.equal((await post("/api/feedback", { key, prompts: [{ tag: "message", prompt: "first" }] }, { origin: base })).status, 200);
+  await (await fetch(`${base}/api/poll?key=${key}`)).json(); // never acked
+  assert.equal((await post("/api/feedback", { key, end: true, prompts: [{ tag: "message", prompt: "final" }] }, { origin: base })).status, 200);
+  const again = ok(brain(["review", "poll", "plans/auth.html", "--timeout-ms", "5000"]), /^redelivered: true$/m);
+  assert.doesNotMatch(again.out, /^ended_by:/m);
+  ok(brain(["plans", "view", "auth"]), /^session_open: true$/m);
+  const last = ok(brain(["review", "poll", "plans/auth.html", "--timeout-ms", "5000"]), /final/);
+  assert.match(last.out, /^ended_by: user$/m);
+  const view = ok(brain(["plans", "view", "auth"]), /^session_open: false$/m);
+  assert.match(view.out, /^rounds\[2\]/m);
+});
+
 test("watch: replacing a recorded shot file (no brain.db write) sends context-update", async (t) => {
   const { base, brain, ok, brainDir } = await setup(t);
   fs.mkdirSync(path.join(brainDir, "shots"), { recursive: true });
