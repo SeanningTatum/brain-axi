@@ -86,7 +86,9 @@ flags a missing or changed plan.
 - Brain binding: a session records the brain that opened it; the poll response carries it
   (`brain`), and `review poll` resolving a different brain refuses with `BRAIN_MISMATCH`
   before draining (and re-checks before recording), so no batch is recorded or acked into
-  another repo's brain.
+  another repo's brain. Plan binding likewise: while feedback is unrecorded, `review open`
+  under another `--plan` refuses with `PLAN_MISMATCH` (and `/api/open` with 409) before
+  registering anything, so the batch is recorded into the plan it was given for, once.
 - Brain change poll: 1 s (`BRAIN_AXI_DB_POLL_MS`).
 - `/health` → `{ok, app: "brain-axi", version, api}`. The CLI respawns a server whose
   `version` or `api` (`REVIEW_API`, currently 3) differs from its own.
@@ -125,7 +127,7 @@ POSTs are same-origin guarded: an `Origin`/`Referer` that is present must match 
 | Route | Purpose |
 |---|---|
 | `GET /health`, `POST /shutdown` | liveness / exit (broadcasts `chrome-reload` first; same-origin guarded) |
-| `POST /api/open` `{file, plan?, feature?, reopen?, brain?, root?}` | validate against brain.db (feature must exist), open/revive the session → `{key, url, status, plan, feature}` or `{refused, reason, key, url}` |
+| `POST /api/open` `{file, plan?, feature?, reopen?, brain?, root?}` | validate against brain.db (feature must exist), open/revive the session → `{key, url, status, plan, feature}` or `{refused, reason, key, url}`; 409 when unrecorded feedback would move to another brain or plan |
 | `GET /api/poll?key=&reply=` | long-poll; `reply` posts an agent chat line first. 15 s whitespace heartbeat |
 | `POST /api/feedback` `{key, prompts, end?, dom_snapshot?}` | browser queues prompts (409 on an ended session) → `{ok, queued}` |
 | `POST /api/ack` `{key, batch}` | the CLI recorded the polled batch → delete it (`{ok, acked}`; unknown id is a no-op) |
