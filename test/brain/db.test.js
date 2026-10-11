@@ -151,6 +151,35 @@ test("migrate: a process that read the old version just before another migrated 
   copy.close();
 });
 
+test("migrate: a write another process commits between the backup copy and the lock is in the backup", (t) => {
+  const dir = tmpDir(t);
+  const dbPath = path.join(dir, "brain.db");
+  const raw = new DatabaseSync(dbPath);
+  raw.exec("CREATE TABLE legacy_marker (x TEXT); INSERT INTO legacy_marker VALUES ('kept');");
+  raw.close();
+  const db = new DatabaseSync(dbPath);
+  t.after(() => close(db));
+  let wrote = false;
+  const view = {
+    prepare: (sql) => db.prepare(sql),
+    exec: (sql) => {
+      db.exec(sql);
+      if (!wrote && /^VACUUM INTO/.test(sql)) {
+        wrote = true;
+        const other = new DatabaseSync(dbPath);
+        other.exec("INSERT INTO legacy_marker VALUES ('late')");
+        other.close();
+      }
+    },
+  };
+  const r = migrate(view, { dbPath });
+  assert.equal(r.to, LATEST);
+  assert.deepEqual(fs.readdirSync(dir).filter((f) => f.includes(".bak-")), ["brain.db.bak-v0"], "no stray temp copy");
+  const copy = new DatabaseSync(r.backup);
+  assert.deepEqual(copy.prepare("SELECT x FROM legacy_marker ORDER BY rowid").all().map((row) => row.x), ["kept", "late"]);
+  copy.close();
+});
+
 test("locate: a worktree-local .brain/ never shadows the main checkout's location", (t) => {
   const base = tmpDir(t);
   const main = path.join(base, "main");
@@ -238,6 +267,21 @@ test("a DB newer than the library is refused with no writes and no backup", (t) 
   assert.ok(e.help.some((h) => /upgrade brain-axi/.test(h)));
   assert.ok(!fs.readdirSync(path.dirname(b.dbPath)).some((f) => f.includes(".bak-")));
   assert.deepEqual(fs.readFileSync(b.dbPath), before);
+});
+
+test("a DELETE-mode DB newer than the library is refused before its journal mode changes", (t) => {
+  const dir = tmpDir(t);
+  const dbPath = path.join(dir, "brain.db");
+  const raw = new DatabaseSync(dbPath);
+  raw.exec("PRAGMA journal_mode = DELETE; CREATE TABLE x (y TEXT); PRAGMA user_version = 99");
+  raw.close();
+  const before = fs.readFileSync(dbPath);
+  throwsCode(() => open(dbPath), "DB_TOO_NEW");
+  assert.deepEqual(fs.readFileSync(dbPath), before, "the file is byte-identical");
+  const after = new DatabaseSync(dbPath);
+  assert.equal(after.prepare("PRAGMA journal_mode").get().journal_mode, "delete");
+  after.close();
+  assert.deepEqual(fs.readdirSync(dir), ["brain.db"], "no WAL, backup or temp files");
 });
 
 test("check: passes on a clean brain and flags unverified shipped features, open tasks on shipped, changed files", (t) => {
