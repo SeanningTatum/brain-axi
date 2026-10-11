@@ -411,11 +411,17 @@ const exportCmd = {
     // only the file this call created.
     const dest = real(out);
     const tmpOut = path.join(path.dirname(dest), `.${path.basename(dest)}.tmp-${process.pid}-${crypto.randomBytes(6).toString("hex")}`);
+    // Replacing a backup keeps its permissions (a 0600 dump stays 0600).
+    let keepMode = null;
+    try {
+      keepMode = fs.statSync(dest).mode & 0o7777;
+    } catch {}
     let fd = null;
     let made = false;
     try {
-      fd = fs.openSync(tmpOut, "wx", 0o644);
+      fd = fs.openSync(tmpOut, "wx", keepMode ?? 0o644);
       made = true;
+      if (keepMode !== null) fs.fchmodSync(fd, keepMode); // exact, not umask-masked
       fs.writeFileSync(fd, dump);
       fs.closeSync(fd);
       fd = null;

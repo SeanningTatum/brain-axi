@@ -142,10 +142,9 @@ changes apart from something that was already broken: a pre-existing failure
 here gets NOTED, not silently folded into your diff as if you caused it or
 fixed it. Read the results table and the exit code (`echo $?`).
 
-Fresh clone (the checks never ran here before)? Run
-`brain verify run --stage bootstrap` first — it's the one-time setup stage
-(installs, migrations, whatever the project's own checks need before
-`baseline`/`verify` can run at all).
+Fresh clone? If `brain verify list --stage bootstrap` lists checks, run
+`brain verify run --stage bootstrap` first (one-time setup: installs,
+migrations). None declared? Skip it — that run would exit NO_CHECKS.
 
 -------------------------------------------------------------------------------
 6. CLAIM + OPEN STATE
