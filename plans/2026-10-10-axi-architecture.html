@@ -122,7 +122,7 @@
     <thead><tr><th>Tier</th><th>Delivers</th><th>Phases</th></tr></thead>
     <tbody>
       <tr><td><strong>thin</strong></td><td>Library + new AXI surface on SQLite; UIs temporarily disabled</td><td>1–2</td></tr>
-      <tr><td><strong>complete</strong> <span class="tag-recommended">(recommended)</span></td><td>+ UIs on the library, skills rewritten for the new surface, this repo's brain rebuilt</td><td>1–5</td></tr>
+      <tr><td><strong>complete</strong> <span class="tag-recommended">(recommended)</span></td><td>+ UIs on the library, skills rewritten for the new surface, this repo's brain rebuilt, old brain proven gone + shipped (e2e audit)</td><td>1–6</td></tr>
     </tbody>
   </table>
 </section>
@@ -153,6 +153,9 @@
   Four are obsolete on SQLite (#1, #2, #6a, #12), two were already covered (#6b, #7), and the skill-text parts of #10, #11 and #13 are fixed in PR #21. The rest are written into
   the AXI table, the schema, the phases, the error paths and the testing plan below, each marked with its finding number. The full mapping table is in <code>.brain/features/axi-core/axi-core.md</code>.
   The paused fixes in <code>stash@{0}</code> are a source for ideas only (noted per phase). The stash can be dropped once axi-core lands.</p>
+  <p><strong>Amended 2026-10-10 (e2e audit):</strong> every tracked path was inventoried (<code>git ls-files</code> + <code>ls -R .brain</code>, 54 items) against the phases:
+  19 already owned, 7 legitimately kept, 28 had no owner. Each missing one now has an owner (marked <em>e2e audit</em> below), a new phase 6 proves and ships it,
+  and two new sections, <a href="#deletion-manifest">Deletion manifest</a> and <a href="#acceptance-old-brain-gone">Acceptance: old brain gone</a>, make "nothing left over" checkable.</p>
 </section>
 
 <section id="big-picture">
@@ -236,6 +239,8 @@ flowchart TD
   <strong>Folded in:</strong> <code>brief</code> → <code>tasks view</code>, <code>receipt</code> → <code>verifications add</code>, <code>pr</code> → <code>features set --pr</code>,
   <code>shots</code> → <code>verifications add --shot</code>. AXI rules are unchanged: stdout is TOON only, errors exit 2 (usage) or 1 (operation) with a corrected-command <code>help:</code> line,
   and every result ends in <code>help:</code>.</p>
+  <p><em>Amended (e2e audit 2026-10-10):</em> the top-level <code>ship</code> command was in neither list; it folds into <code>features ship</code>.
+  The table has 16 top-level names if <code>export</code> and <code>import</code> are separate <code>COMMANDS</code> keys, so the success metric is counted as 25 → 16 keys (15 rows).</p>
 </section>
 
 <section id="library">
@@ -383,7 +388,8 @@ test/brain/*.test.js node:test against a temp DB, one file per module</pre>
       Acceptance: every function in the layout above exists and is tested against a temp DB. Two processes writing at once lose no rows. Opening an older DB migrates it with a .bak copy; a newer DB is refused.
       Verify: node --test test/brain; a concurrency script; a migration fixture.
       <em>Amended (test run 2026-10-10):</em> <code>checkpoints.run</code> nullable column (#9). <code>features.ship</code> and <code>progress.add</code> clip an overlong summary with a trailing <code>…</code> or throw BrainError SUMMARY_TOO_LONG, never a silent cut (#5); port the stash's <code>clipChars</code> helper.
-      Closing the last task through <code>tasks.set</code> still auto-ships (decision: keep autoship). <code>features.ship</code> returns a structured ship outcome; a refusal is a BrainError, so the CLI exits 1; its hint is built from <code>verify_checks</code>, never a hardcoded runner such as <code>bun run test</code> (#4).</span>
+      Closing the last task through <code>tasks.set</code> still auto-ships (decision: keep autoship). <code>features.ship</code> returns a structured ship outcome; a refusal is a BrainError, so the CLI exits 1; its hint is built from <code>verify_checks</code>, never a hardcoded runner such as <code>bun run test</code> (#4).
+      <em>Amended (e2e audit 2026-10-10):</em> <code>features</code> gets a <code>grandfathered</code> flag (replaces <code>policy.strict_grandfathered</code>) so features imported as shipped without a verification row pass <code>check</code>. <code>docs.section</code> CHECK covers rules, recipes, codebase, architecture, features, emails, transcripts (other users' brains still use the last two).</span>
       <span class="item-controls"><button type="button" class="item-x" data-brain-action>x</button><button type="button" class="item-restore" data-brain-action hidden>restore</button></span></li>
     <li data-brain-item="1"><strong>Phase 2 — the AXI on the library.</strong>
       <span data-item-text data-brain-action>bin/brain.js rewritten as a thin dispatcher over lib/brain with the 15-command surface, export/import, and a tiny check. Delete playbooks.js, state.js, the cut commands, check-state-invariants.mjs and check-playbook-refs.mjs; skill --check becomes scripts/check-skills.mjs.
@@ -393,24 +399,59 @@ test/brain/*.test.js node:test against a temp DB, one file per module</pre>
       <code>verify run</code> with zero checks throws BrainError NO_CHECKS with <code>help:</code> "declare real checks with <code>brain verify add</code>" (#10).
       <code>progress add --run &lt;name&gt;</code>; <code>progress list</code> shows it (#9).
       <code>verifications add</code> records the commit; on a dirty tree it records <code>dirty:true</code> (or fails with a <code>help:</code> line), and brain-verify documents which (#11).
-      Tests: <code>brain --help</code> lists every command (#6c). Port from the stash: exit 1 on a refused autoship with the receipt hint built from declared checks; <code>resolveBranch</code> / <code>initProgressMd</code> for init.</span>
+      Tests: <code>brain --help</code> lists every command (#6c). Port from the stash: exit 1 on a refused autoship with the receipt hint built from declared checks; <code>resolveBranch</code> / <code>initProgressMd</code> for init.
+      <em>Amended (e2e audit 2026-10-10):</em> (a) <code>lib/state.js</code> is deleted in phase 3, not here: <code>lib/review/brain-data.js</code> imports it, so deleting it now breaks review/watch until phase 3.
+      (b) The top-level <code>ship</code> and <code>init</code>'s markdown templates go with the rewrite.
+      (c) <code>bin/brain.js</code> checks the Node version before a dynamic <code>import()</code> of lib/brain, so the plugin's SessionStart hook (<code>context</code>) exits 0 silently on Node &lt; 24, with no brain.db, and on a legacy file brain.
+      (d) A legacy file brain (<code>.brain/</code> with <code>features/feature_list.json</code> or <code>runs/progress.md</code> and no brain.db) is BrainError LEGACY_BRAIN; <code>init</code> refuses to write over one.
+      (e) <code>.github/workflows/ci.yml</code> is rewritten: Node pinned to 24.x; CI has no brain.db (gitignored), so it runs the zero-dep gate, <code>node --test test/brain</code>, <code>node scripts/check-skills.mjs</code> and a fresh-<code>init</code> smoke (<code>init</code> in a temp dir, then <code>check</code>) instead of <code>brain verify --stage baseline</code>; the receipt/fetch-depth comments and the <code>.brain/rules/cli-commands.md</code> pointer go.
+      (f) Bridge: the phase-5 import script (<code>scripts/import-legacy-brain.mjs</code>, never shipped) is written and run here. From then on this repo's checkpoints, run steps and verifications go to brain.db through the new CLI, and the old <code>.brain/</code> files are frozen read-only until phase 5 deletes them, so dogfooding never stops.</span>
       <span class="item-controls"><button type="button" class="item-x" data-brain-action>x</button><button type="button" class="item-restore" data-brain-action hidden>restore</button></span></li>
     <li data-brain-item="2"><strong>Phase 3 — the UIs on the library.</strong>
       <span data-item-text data-brain-action>server.js calls lib/brain; brain-data.js, store.js and evals.js are deleted. The review wire contract is unchanged.
       Acceptance: a full plan review round trip (open → annotate → poll returns prompts → agent-reply → end) and the watch dashboard showing live run steps, both against a DB brain.
       Verify: a Playwright walk with screenshots for review and watch.
-      <em>Amended (test run 2026-10-10):</em> <code>review end --approved-by &lt;who&gt;</code> approves without the browser (headless/CI): sets the plan approved and increments the round (#8).</span>
+      <em>Amended (test run 2026-10-10):</em> <code>review end --approved-by &lt;who&gt;</code> approves without the browser (headless/CI): sets the plan approved and increments the round (#8).
+      <em>Amended (e2e audit 2026-10-10):</em> <code>lib/state.js</code> is deleted here, together with brain-data.js. <code>docs/REVIEW-ARCHITECTURE.md</code> (974 lines, mostly brain-data.js file persistence) is cut down to the server, wire contract and static assets, pointing to lib/brain for storage. The chrome/dashboard/lightbox payload fields that came from file parsing (the receipt warning, shots, captions) are served in the same shape from lib/brain. The static assets and the vendored mermaid stay as they are.</span>
       <span class="item-controls"><button type="button" class="item-x" data-brain-action>x</button><button type="button" class="item-restore" data-brain-action hidden>restore</button></span></li>
     <li data-brain-item="3"><strong>Phase 4 — skills on the new surface.</strong>
       <span data-item-text data-brain-action>Every skill step names real commands and the TOON fields to read; the playbook fallbacks are removed. check-skills.mjs fails if a skill names a missing command or flag. Evals move to evals/ (repo-dev); re-run skill-routing.
       Acceptance: check-skills exit 0; skill-routing ≥ 0.9 non-held-out with frozen cases passing.
       Verify: script output; the eval record.
-      <em>Amended (test run 2026-10-10):</em> brain-plan carries the scope-tier text fixed in PR #21 (#13) onto the new surface unchanged.</span>
+      <em>Amended (test run 2026-10-10):</em> brain-plan carries the scope-tier text fixed in PR #21 (#13) onto the new surface unchanged.
+      <em>Amended (e2e audit 2026-10-10):</em> (a) Every reference to a cut command is removed from all skills, including <code>references/</code>: <code>playbook</code> appears in 30 skill files, and <code>brain evals</code>, <code>timeline</code>, <code>metrics</code>, <code>brief</code>, <code>receipt</code>, <code>shots</code>, <code>pr</code>, <code>ship</code> and <code>setup</code> also appear, along with markdown paths (<code>feature_list.json</code>, <code>progress.md</code>, <code>verify.json</code>, <code>HARNESS.md</code>).
+      (b) brain-ai, brain-start, brain-done and brain-execute drive <code>brain evals run|golden|record</code>, which is cut. Recommended: a project's eval suite becomes a declared verify check (<code>brain verify add eval-&lt;suite&gt; --run "&lt;runner&gt;"</code>, gated on exit code), the method stays in brain-ai, and no eval data goes in brain.db (open question).
+      (c) <code>git mv .brain/evals evals/</code> keeps every byte, including the 33 run records, <code>runs.jsonl</code> and <code>split-runs.jsonl</code> (house rule: eval run records are never deleted). <code>evals-plugin/results/**</code> stays.
+      (d) <code>scripts/eval-skill-coverage.mjs</code> and <code>eval-skill-routing.mjs</code> point at <code>evals/</code> and run standalone (no <code>brain evals run</code>, no <code>brain skill</code>).
+      (e) <code>evals-plugin/fixtures/brain/</code> (a markdown init fixture) is deleted; <code>scaffold-brain.sh</code> runs <code>node bin/brain.js init</code> plus CLI seed writes on a brain.db.
+      (f) <code>.claude-plugin/plugin.json</code> <code>experimental.evals</code> follows any move of <code>evals-plugin/</code>.
+      (g) <code>docs/HARNESS-INTEROP.md</code> (a mapping of the old verbs to the cf-saas harness) is deleted.</span>
       <span class="item-controls"><button type="button" class="item-x" data-brain-action>x</button><button type="button" class="item-restore" data-brain-action hidden>restore</button></span></li>
     <li data-brain-item="4"><strong>Phase 5 — rebuild this repo's brain.</strong>
       <span data-item-text data-brain-action>A one-off script (not shipped) imports rules, codebase and recipe docs, the verify registry and the feature list with current statuses into a fresh brain.db, then the old .brain/ files are deleted (git keeps the history).
       Acceptance: brain check passes; brain verify run passes; features list matches the old tracker's slugs and statuses; search finds a rule by keyword.
-      Verify: the transcript, plus a before/after slug and status diff.</span>
+      Verify: the transcript, plus a before/after slug and status diff.
+      <em>Amended (e2e audit 2026-10-10):</em> import into a fresh DB, re-run from scratch (the phase-2 bridge DB is replaced after a diff), covering:
+      the rules, recipes and codebase docs <em>after</em> they are rewritten for the new surface (<code>rules/state.md</code> is dropped because the schema replaces it; cli-commands, ai-work, planning-ux, review-*, <code>99-verify-done</code> and <code>programming-model</code> are rewritten; <code>index.md</code> files are not imported);
+      <code>high-level-architecture/architecture.md</code>, rewritten to the 3-layer architecture;
+      every <code>features/&lt;slug&gt;/&lt;slug&gt;.md</code> as a <code>features</code> doc (axi-core.md is the live one);
+      the tracker's statuses, evidence and <code>pr.json</code> → <code>pr_url</code>, with shipped features that have no verification row imported as grandfathered;
+      <code>verify.json</code> <em>rewritten</em> to <code>verify_checks</code> (node --test, check-skills, check), since its 4 checks call deleted code;
+      the newest checkpoint plus a "brain rebuilt" checkpoint;
+      and the axi-core plan registered (path + sha256, round 1, approved).
+      Everything else is dropped (git keeps it), as listed in the deletion manifest.
+      <code>.gitignore</code> gains <code>.brain/brain.db*</code>, <code>.brain/export.toon</code> and the shots location (open question) and loses <code>gates.jsonl</code> and <code>tasks.json.lock</code>.
+      The stray root <code>2026-08-06-task-coordination.html</code> moves to <code>plans/</code>.
+      CLAUDE.md, README and the root CHANGELOG are rewritten here: 3 layers, node &gt;=24, "no third-party test framework", check-skills replaces <code>skill --check</code>, no <code>setup</code>, and a 0.3.0 breaking entry saying file brains are unsupported.
+      The <code>docs/assets</code> CLI captures (<code>home.png</code>, <code>search.png</code>, <code>demo.gif</code>) are re-shot and <code>shots-notes.png</code> is deleted.</span>
+      <span class="item-controls"><button type="button" class="item-x" data-brain-action>x</button><button type="button" class="item-restore" data-brain-action hidden>restore</button></span></li>
+    <li data-brain-item="5"><strong>Phase 6 — prove the old brain is gone, then ship.</strong> <em>(e2e audit)</em>
+      <span data-item-text data-brain-action>Run every item in <a href="#acceptance-old-brain-gone">Acceptance: old brain gone</a>.
+      Fresh end-to-end test: in a temp git repo, <code>brain init</code>, then an agent drives the full skill chain (brain → start → grill → plan → execute → verify → done) on brain.db only, and the SessionStart hook is checked with headless <code>claude -p</code> and the plugin loaded (sub-agents don't fire it).
+      Release: <code>package.json</code> and <code>plugin.json</code> both move to 0.3.0, and <code>package.json</code> gets a <code>files</code> allowlist (bin, lib, skills, hooks, .claude-plugin, README) because today npm ships scripts/, evals-plugin/, plans/ and docs/.
+      The npm publish (user-gated) happens at merge, because skills call <code>npx -y brain-axi</code>, which resolves the published version.
+      Then the Greptile loop runs until 5/5 on the final HEAD (a fresh sub-agent each round), and the PR opens with CI green. The user drops <code>stash@{0}</code> after the merge.
+      Acceptance: every checklist item passes and the transcript is recorded with <code>verifications add</code> on brain.db; <code>features ship axi-core</code> succeeds.</span>
       <span class="item-controls"><button type="button" class="item-x" data-brain-action>x</button><button type="button" class="item-restore" data-brain-action hidden>restore</button></span></li>
   </ol>
   <div class="list-add-row" data-brain-section-add="plan-of-record">
@@ -434,8 +475,71 @@ test/brain/*.test.js node:test against a temp DB, one file per module</pre>
       <tr><td><code>.brain/**</code> (this repo)</td><td>replace with brain.db (+ optional export)</td><td>Phase 5</td></tr>
       <tr><td><code>.brain/HARNESS.md</code></td><td>delete (phase 4)</td><td>Method parts move into skills; the rest goes</td></tr>
       <tr><td><code>package.json</code>, CLAUDE.md, README, CHANGELOG</td><td>edit</td><td>Node ≥ 24, the 3-layer architecture, the new install</td></tr>
+      <tr><td colspan="3"><em>Added by the e2e audit 2026-10-10:</em></td></tr>
+      <tr><td><code>.github/workflows/ci.yml</code></td><td>rewrite (phase 2)</td><td>Node 24; no brain.db in CI, so it runs tests, check-skills and an init smoke</td></tr>
+      <tr><td><code>scripts/import-legacy-brain.mjs</code></td><td>new (phase 2), deleted after phase 5</td><td>Bridge + rebuild; never shipped</td></tr>
+      <tr><td><code>scripts/eval-skill-{coverage,routing}.mjs</code></td><td>edit (phase 4)</td><td>Point at <code>evals/</code>; standalone, no <code>brain evals</code></td></tr>
+      <tr><td><code>evals-plugin/fixtures/brain/**</code>, <code>scaffold-brain.sh</code></td><td>delete / edit (phase 4)</td><td>The fixture is a markdown brain; scaffold through <code>brain init</code></td></tr>
+      <tr><td><code>.claude-plugin/plugin.json</code></td><td>edit (phases 4, 6)</td><td><code>experimental.evals</code> path; version 0.3.0</td></tr>
+      <tr><td><code>docs/HARNESS-INTEROP.md</code></td><td>delete (phase 4)</td><td>A map of the old verbs</td></tr>
+      <tr><td><code>docs/REVIEW-ARCHITECTURE.md</code></td><td>rewrite (phase 3)</td><td>Describes brain-data.js file persistence</td></tr>
+      <tr><td><code>docs/assets/{home,search}.png</code>, <code>demo.gif</code> · <code>shots-notes.png</code></td><td>re-shoot · delete (phase 5)</td><td>They show old CLI output; <code>shots</code> is cut</td></tr>
+      <tr><td><code>.gitignore</code></td><td>edit (phase 5)</td><td>Add brain.db*, export.toon; drop gates.jsonl, tasks.json.lock</td></tr>
+      <tr><td><code>2026-08-06-task-coordination.html</code> (repo root)</td><td>move to <code>plans/</code> (phase 5)</td><td>A stray plan</td></tr>
     </tbody>
   </table>
+</section>
+
+<section id="deletion-manifest">
+  <h2>Deletion manifest <span class="chip chip-med">e2e audit</span></h2>
+  <p>Every tracked path of the old architecture, with its fate and owning phase. "Dropped" means deleted with no import, and git history keeps it. Nothing old is left without a row.</p>
+  <table>
+    <thead><tr><th>Path</th><th>Fate</th><th>Phase</th></tr></thead>
+    <tbody>
+      <tr><td><code>.brain/HARNESS.md</code></td><td>method → skills, rest dropped</td><td>4</td></tr>
+      <tr><td><code>.brain/evals/**</code> (suites, cases, 33 run records, runs.jsonl, split-runs.jsonl)</td><td><code>git mv</code> → <code>evals/</code>, byte-identical, never deleted</td><td>4</td></tr>
+      <tr><td><code>.brain/rules/*.md</code> (8)</td><td>rewritten → docs rows; <code>state.md</code>, <code>index.md</code> dropped</td><td>5</td></tr>
+      <tr><td><code>.brain/recipes/*.md</code> (3), <code>.brain/codebase/*.md</code> (2)</td><td>rewritten → docs rows; <code>index.md</code> dropped</td><td>5</td></tr>
+      <tr><td><code>.brain/high-level-architecture/*</code> (2)</td><td>architecture.md rewritten → docs row; index dropped</td><td>5</td></tr>
+      <tr><td><code>.brain/features/feature_list.json</code> + <code>features/*/pr.json</code> (5)</td><td>→ <code>features</code> rows (status, evidence, pr_url, grandfathered)</td><td>5</td></tr>
+      <tr><td><code>.brain/features/*/&lt;slug&gt;.md</code> (13)</td><td>→ <code>features</code> doc rows</td><td>5</td></tr>
+      <tr><td><code>.brain/runs/progress.md</code></td><td>newest checkpoint → row; older ones dropped</td><td>5</td></tr>
+      <tr><td><code>.brain/verify.json</code></td><td>rewritten → <code>verify_checks</code></td><td>5</td></tr>
+      <tr><td><code>.brain/runs/*.md</code>, <code>.brain/features/*/runs/*.md</code></td><td>dropped</td><td>5</td></tr>
+      <tr><td><code>.brain/features/*/verifications/*.md</code> (8), <code>screenshots/**</code> (15 png + captions/annotations json)</td><td>dropped (shipped history)</td><td>5</td></tr>
+      <tr><td><code>.brain/plans/**</code>, <code>.brain/features/*/plans/**</code> (review sessions)</td><td>dropped; only axi-core's plan registered as a row</td><td>5</td></tr>
+      <tr><td><code>.brain/features/task-coordination/tasks.json</code></td><td>dropped (feature shipped, no open tasks)</td><td>5</td></tr>
+      <tr><td><code>.brain/CHANGELOG.md</code>, <code>emails/index.md</code>, <code>transcripts/index.md</code>, <code>*/_TEMPLATE.md</code>, <code>*/index.md</code></td><td>dropped (stubs/templates; emails + transcripts are empty)</td><td>5</td></tr>
+      <tr><td><code>bin/brain.js</code>: playbook, skill, setup, metrics, timeline, evals, brief, receipt, pr, shots, ship, init's md templates</td><td>cut / folded</td><td>2</td></tr>
+      <tr><td><code>lib/review/playbooks.js</code>, <code>scripts/check-state-invariants.mjs</code>, <code>scripts/check-playbook-refs.mjs</code></td><td>deleted</td><td>2</td></tr>
+      <tr><td><code>lib/state.js</code>, <code>lib/review/{brain-data,store,evals}.js</code></td><td>deleted</td><td>3</td></tr>
+      <tr><td><code>evals-plugin/fixtures/brain/**</code>, <code>docs/HARNESS-INTEROP.md</code></td><td>deleted</td><td>4</td></tr>
+      <tr><td><code>docs/assets/shots-notes.png</code></td><td>deleted</td><td>5</td></tr>
+      <tr><td><code>scripts/import-legacy-brain.mjs</code></td><td>deleted once phase 5's diff is clean</td><td>6</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Kept on purpose:</strong> <code>plans/*.html</code> (approved artifacts, referenced by path + hash); <code>lib/review/</code> static assets, <code>sdk.js</code>, <code>vendor/</code> (wire contract unchanged);
+  <code>evals-plugin/results/**</code> (eval run records); <code>hooks/hooks.json</code> (<code>context</code> survives); <code>marketplace.json</code>; <code>.gitattributes</code>; the UI screenshots in <code>docs/assets</code> (the UIs are not redesigned).</p>
+</section>
+
+<section id="acceptance-old-brain-gone">
+  <h2>Acceptance: old brain gone <span class="chip chip-med">e2e audit</span></h2>
+  <p>Phase 6 runs every line on the final HEAD; each must hold before the Greptile loop starts.</p>
+  <ul class="checklist">
+    <li><label><input type="checkbox"> <code>git ls-files .brain</code> prints nothing, or only the shots path if the open question below keeps shots tracked</label></li>
+    <li><label><input type="checkbox"> On disk, <code>find .brain -type f ! -name 'brain.db*' ! -name export.toon</code> lists only shot images: zero <code>.md</code>, <code>.json</code> or <code>.jsonl</code></label></li>
+    <li><label><input type="checkbox"> <code>git grep -nE "(brain|brain-axi) (playbook|skill|setup|timeline|metrics|shots|receipt|brief|pr|ship|evals)\b" -- skills bin lib hooks .claude-plugin README.md CLAUDE.md docs .github scripts evals-plugin</code> is empty</label></li>
+    <li><label><input type="checkbox"> <code>git grep -nE "feature_list\.json|progress\.md|verify\.json|HARNESS\.md|\.brain/(rules|recipes|runs|features|plans|evals)/" -- skills bin lib README.md CLAUDE.md docs .github scripts</code> is empty (CHANGELOG history excepted)</label></li>
+    <li><label><input type="checkbox"> None of these exist: <code>lib/state.js</code>, <code>lib/review/{brain-data,store,evals,playbooks}.js</code>, <code>scripts/check-{state-invariants,playbook-refs}.mjs</code>, <code>scripts/import-legacy-brain.mjs</code>, <code>docs/HARNESS-INTEROP.md</code>, <code>evals-plugin/fixtures/brain</code></label></li>
+    <li><label><input type="checkbox"> <code>Object.keys(COMMANDS)</code> equals the documented surface; <code>brain --help</code> lists exactly those</label></li>
+    <li><label><input type="checkbox"> <code>node --test test/brain</code>, <code>node scripts/check-skills.mjs</code>, <code>brain check</code> and <code>brain verify run --stage baseline</code> all exit 0 on this repo's brain.db</label></li>
+    <li><label><input type="checkbox"> Eval run records intact: <code>git diff -M --stat main -- .brain/evals evals</code> shows only 100% renames, and the run-record count is unchanged</label></li>
+    <li><label><input type="checkbox"> Fresh temp repo: <code>brain init</code> → full skill chain → <code>features ship</code>, and <code>find .brain -name '*.md'</code> is empty afterwards</label></li>
+    <li><label><input type="checkbox"> Headless <code>claude -p</code> with the plugin: the SessionStart hook prints context in a brain repo; on Node 22, outside a brain, and in a legacy file brain it prints nothing and exits 0</label></li>
+    <li><label><input type="checkbox"> <code>npm pack --dry-run</code> lists only the <code>files</code> allowlist; <code>package.json</code> version = <code>plugin.json</code> version = 0.3.0; engines <code>node &gt;=24</code></label></li>
+    <li><label><input type="checkbox"> <code>.gitignore</code> covers brain.db, -wal, -shm, .bak-v*, export.toon; <code>git status</code> is clean after a full session</label></li>
+    <li><label><input type="checkbox"> CI is green on the PR; Greptile is 5/5 on the final HEAD</label></li>
+  </ul>
 </section>
 
 <section id="error-paths">
@@ -454,6 +558,8 @@ test/brain/*.test.js node:test against a temp DB, one file per module</pre>
       <tr><td>Concurrent writers</td><td>SQLITE_BUSY</td><td>WAL + busy_timeout</td><td>Nothing, or an error after the timeout</td></tr>
       <tr><td>Plan HTML or shot changed or missing</td><td>sha256 mismatch in check</td><td>A check row fails</td><td>The path + re-add command</td></tr>
       <tr><td>Node &lt; 24</td><td>startup check</td><td>exit 2</td><td><code>error: brain-axi needs node &gt;=24</code></td></tr>
+      <tr><td>Node &lt; 24 under the SessionStart hook (e2e audit)</td><td>startup check, before <code>import()</code> of lib/brain</td><td><code>context</code> exits 0 silently</td><td>Nothing (the hook never breaks a session)</td></tr>
+      <tr><td>Legacy file brain, no brain.db (e2e audit)</td><td>openBrain sees <code>feature_list.json</code> / <code>progress.md</code></td><td>BrainError LEGACY_BRAIN → exit 1; <code>init</code> refuses; <code>context</code> silent</td><td><code>help:</code> pin <code>npx -y brain-axi@0.2.0</code> for this repo, or move the old <code>.brain/</code> aside and <code>brain init</code></td></tr>
     </tbody>
   </table>
 </section>
@@ -472,6 +578,10 @@ test/brain/*.test.js node:test against a temp DB, one file per module</pre>
     <li><label><input type="checkbox"> check-skills: every command a skill names exists</label></li>
     <li><label><input type="checkbox"> skill-routing ≥ 0.9; skill-coverage frozen cases pass</label></li>
     <li><label><input type="checkbox"> Greps: no node:sqlite import outside lib/brain; no .brain fs reads outside lib/brain</label></li>
+    <li><label><input type="checkbox"> (e2e audit) Phase 5 import diff: slugs, statuses, evidence and pr_url match the old tracker; every imported doc is findable by <code>search</code>; <code>check</code> passes with the grandfathered features</label></li>
+    <li><label><input type="checkbox"> (e2e audit) Legacy file brain → LEGACY_BRAIN exit 1; <code>context</code> silent on it and on Node 22</label></li>
+    <li><label><input type="checkbox"> (e2e audit) CI workflow green with no brain.db present</label></li>
+    <li><label><input type="checkbox"> (e2e audit) Everything in <a href="#acceptance-old-brain-gone">Acceptance: old brain gone</a> (phase 6)</label></li>
   </ul>
 </section>
 
@@ -482,6 +592,10 @@ test/brain/*.test.js node:test against a temp DB, one file per module</pre>
       <span class="item-controls"><button type="button" class="item-x" data-brain-action>x</button><button type="button" class="item-restore" data-brain-action hidden>restore</button></span></li></template>
     <li data-brain-item="0"><span data-item-text data-brain-action><strong>Resolved round 1:</strong> keep <code>export.toon</code> local for now; it is not committed (gitignored with brain.db).</span></li>
     <li data-brain-item="1"><span data-item-text data-brain-action><strong>Resolved round 1:</strong> HARNESS.md content that is method moves into the owning skill (phase 4); everything else is deleted. No doc row.</span></li>
+    <li data-brain-item="2"><span data-item-text data-brain-action><strong>Resolved (e2e audit, user):</strong> cut evals entirely for now; brain-ai, brain-start, brain-done and brain-execute drop every eval step, with no verify-check substitute. Was: with <code>evals</code> cut, what does brain-ai give user projects? Recommended: a suite is a declared verify check (<code>brain verify add eval-&lt;suite&gt;</code>, exit-code gated), the method stays in the skill, and no eval tables.</span></li>
+    <li data-brain-item="3"><span data-item-text data-brain-action><strong>Resolved (e2e audit, user):</strong> gitignore shots too; <code>git ls-files .brain</code> ends empty. Was: with brain.db gitignored, are shot images under <code>.brain/</code> tracked? Recommended: no. Gitignore them too, so <code>git ls-files .brain</code> is empty, and evidence that reviewers need goes in the PR body or <code>docs/assets</code>.</span></li>
+    <li data-brain-item="4"><span data-item-text data-brain-action><strong>Resolved (e2e audit, user):</strong> drop history, git keeps it; eval run records are moved, never dropped. Was: which history is dropped in phase 5? Recommended: drop run notes, old checkpoints, verification docs, screenshots and review sessions (git keeps them); import only the live parts listed in phase 5. Eval run records are moved, never dropped.</span></li>
+    <li data-brain-item="5"><span data-item-text data-brain-action><strong>Resolved (e2e audit, recommended default):</strong> import at the end of phase 2 and dogfood on brain.db. Was: bridge for phases 2–4. Recommended: run the import at the end of phase 2 and dogfood on brain.db; the alternative is to keep writing markdown with a pinned <code>npx -y brain-axi@0.2.0</code> until phase 5.</span></li>
   </ul>
   <div class="list-add-row" data-brain-section-add="open-questions">
     <input type="text" class="list-add-input" data-brain-action placeholder="Add an open question..."><button type="button" class="list-add-btn" data-brain-action>+ Add item</button>

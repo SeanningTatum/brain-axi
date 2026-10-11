@@ -1,8 +1,115 @@
 # Changelog
 
 All notable changes to `brain-axi` are recorded here. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Harness and brain-state
-shifts for this repo's own `.brain/` are logged separately in `.brain/CHANGELOG.md`.
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Older entries describe the
+markdown-era CLI and name commands and files that 0.3.0 removed; git history keeps them.
+
+## [0.3.0] — Unreleased (breaking)
+
+**Why:** three layers only. Skills carry the method, a thin AXI CLI carries the surface,
+and one SQLite library owns the state. The markdown `.brain/` tree had grown a schema, a
+verdict parser, atomic-write helpers and drift checks to keep JSON and Markdown honest with
+each other; a database gives those for free. Plan: `plans/2026-10-10-axi-architecture.html`.
+
+### Breaking
+
+- **The brain is one SQLite file, `.brain/brain.db`** (gitignored, with its `-wal`/`-shm`,
+  `.bak-v*` backups, `export.toon` and `shots/`). Markdown file brains are **not read**: a
+  repo with one gets `LEGACY_BRAIN` (exit 1), `init` refuses to write over it, and `context`
+  stays silent.
+- **Node >= 24** (built-in `node:sqlite` with FTS5). On older Node every command exits 2
+  with `NODE_TOO_OLD`; `context` stays silent so the SessionStart hook never breaks a session.
+- **The command surface is 16 commands:** `init`, `context`, `export`, `import`, `features`,
+  `tasks`, `progress`, `runs`, `docs`, `plans`, `review`, `watch`, `verifications`, `verify`,
+  `search`, `check`.
+- **Cut or folded:** `playbook` and `skill` (the method lives in the plugin's skills),
+  `setup` (the plugin's hook replaces it), `metrics`, `timeline`, `evals`, `brief` (now
+  `tasks view`), `receipt` (`verifications add` stamps HEAD's commit and `dirty:true`),
+  `pr` (`features set --pr`), `shots` (`verifications add --shot`), top-level `ship`
+  (`features ship`), `features set-status` (`features set --status`), and `init`'s
+  markdown templates.
+
+### Added
+
+- **`lib/brain/`**: per-domain functions over `node:sqlite`, schema migrations with a
+  `.bak-vN` copy and rollback, WAL + `busy_timeout` for concurrent writers, a refused
+  newer-than-CLI DB, git worktrees sharing the main checkout's brain. Tested with
+  `node:test` (no third-party framework).
+- **`tasks`** (claim tokens, readiness, the last task closing auto-ships the feature),
+  **`export`/`import`** (deterministic TOON round trip), **FTS5 `search`**,
+  `progress add --run` and `--clip`, `review end --approved-by` for headless approval,
+  `verify add` and `NO_CHECKS` when nothing is declared.
+- **`scripts/check-skills.mjs`** replaces `brain skill --check` and additionally fails when a
+  skill names a command, subcommand or flag the CLI's `--help` does not list, a numbered
+  section reference ("`plan` §10") that does not resolve, or a wireframe class brain-ux's
+  kit does not define.
+- **`test/acceptance.test.js`** automates the plan's "old brain gone" checklist: no tracked
+  `.brain/` files, no markdown-era paths or cut commands in shipped surfaces (the
+  `LEGACY_BRAIN` detector's two marker-file names are the one documented exception), the
+  old-architecture files absent, the npm tarball limited to the allowlist, `.gitignore`
+  coverage, and a fresh-repo walk that leaves only `brain.db*`, `export.toon` and shots.
+- **`files` allowlist in `package.json`**: npm ships `bin/`, `lib/`, `skills/`, `hooks/`,
+  `.claude-plugin/`, README and CHANGELOG only (0.2.x also shipped `scripts/`, `evals-plugin/`,
+  `plans/` and `docs/`).
+
+### Changed
+
+- `brain review` and `brain watch` read the brain through `lib/brain`; the CLI is the only
+  writer. Review UI payloads keep their shape.
+- Review feedback is delivered at-least-once: a polled batch stays in flight on the server
+  until the CLI has recorded it and acks it (`POST /api/ack`), so a poll killed mid-flight
+  re-delivers the same batch; the batch id (schema migration `002`) keeps it to one round.
+  `review poll` restarts a server that exited while a session still had feedback (or the
+  user's End) on disk, and refuses (`BRAIN_MISMATCH`, nothing recorded or acked) when the
+  session was opened for a different brain; `review end` and a `review open` that would move
+  unrecorded feedback to another brain are refused the same way (the server answers 409 too).
+  Two polls that both see the user's End record one closing round (one write transaction).
+- Every `help:` command keeps the `--brain` the invocation named (`context` excepted: its
+  output is capped), and free-text values in hints (claim holders, paths, brain dirs) are
+  POSIX single-quoted so a pasted hint is one literal word each.
+- `export --out` writes beside the destination and renames, so a failed write never
+  truncates the previous backup.
+- `verify` runs each check under a small supervisor (`lib/brain/verify-supervisor.js`) that
+  kills the whole tree on a timeout (or Ctrl-C), so a timed-out suite cannot keep running
+  into the next check. On macOS/Linux that is the check's own process group; on Windows,
+  which has neither process groups nor `SIGALRM`, it is `taskkill /pid <pid> /T /F` and the
+  timeout is reported on the supervisor's own stderr instead of a signal. Known Windows
+  limit: a job a check backgrounds (`start /b`) and leaves running after its shell exits
+  is not killed — taskkill cannot walk a tree whose root is gone. The supervisor also
+  watches its parent: when `brain verify` itself is killed (a SIGTERM aimed at it alone), the
+  check's tree is killed within ~0.5 s instead of running until its own timeout.
+- In a linked worktree of a `--separate-git-dir` repo (git records no path for its main
+  checkout), the main checkout records itself in the git dir the first time any `brain`
+  command runs there, so its worktrees share its brain; until then a worktree refuses with
+  `MAIN_CHECKOUT_UNKNOWN` rather than creating a second brain. A `<main>/.git` fallback is
+  only trusted when `<main>` holds the first file its index tracks, so a separate git dir
+  that happens to be named `.git` is never taken for a checkout.
+- `import` refuses a dump missing any table's section (a cut-off export), instead of
+  restoring partial history.
+- `init` builds brain.db privately and publishes it with an exclusive link only once it is
+  migrated and the `.gitignore` is written: no other process can open a half-made brain, and
+  a failed `init` only removes its own temp file. `plans.endSession({approvedBy})` refuses
+  a plan whose file is missing (nothing is recorded).
+- `check` is rewritten: SQLite integrity, foreign keys, search index, cross-entity rules
+  (shipped features verified or grandfathered, no open tasks), plan/shot file hashes.
+- Eval suites are repo-dev tooling in `evals/` and `evals-plugin/`, run by standalone
+  scripts; the CLI knows nothing of them. Run records moved byte-identical.
+
+### Removed
+
+- This repo's own markdown brain (`.brain/**` tracked files). Its live parts were imported
+  into `brain.db`; history stays in git.
+- `lib/state.js`, `lib/review/{brain-data,store,evals,playbooks}.js`,
+  `scripts/check-{state-invariants,playbook-refs}.mjs`, `docs/HARNESS-INTEROP.md`, and the
+  `docs/assets` captures of the old CLI output.
+- `scripts/import-legacy-brain.mjs`, the one-off bridge that imported this repo's markdown
+  brain into `brain.db` (never shipped).
+
+### Migration
+
+A repo on a 0.2.x markdown brain: pin the old CLI with `npx -y brain-axi@0.2.0 <command>`,
+or move the old `.brain/` aside and run `npx -y brain-axi init` (nothing is converted
+automatically).
 
 ## [Unreleased] — 2026-10-10
 
