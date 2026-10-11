@@ -84,7 +84,7 @@ test("endSession closes the session; --approved-by approves headless and increme
   assert.equal(plain.session_open, false);
   assert.equal(plain.status, "draft");
   assert.equal(plain.approved_round, null);
-  const ok = plans.endSession(db, "p", { approvedBy: "ci-bot" });
+  const ok = plans.endSession(db, "p", { approvedBy: "ci-bot", root });
   assert.equal(ok.status, "approved");
   assert.equal(ok.approved_by, "ci-bot");
   assert.equal(ok.rounds, 1);
@@ -93,6 +93,18 @@ test("endSession closes the session; --approved-by approves headless and increme
   assert.deepEqual(plans.openSessions(db), []);
   throwsCode(() => plans.endSession(db, "p", { approvedBy: " " }), "INVALID_ARG");
   rejectsRaw(db, "UPDATE plans SET status = 'approved', approved_by = NULL");
+});
+
+test("endSession refuses to approve a plan whose file is missing; nothing is recorded (Greptile r8)", (t) => {
+  const { db, root } = freshBrain(t);
+  const rel = planFile(root);
+  plans.upsert(db, { file: rel, slug: "p", root });
+  fs.rmSync(path.join(root, rel));
+  throwsCode(() => plans.endSession(db, "p", { approvedBy: "sean", root }), "NOT_FOUND");
+  const p = plans.get(db, "p");
+  assert.equal(p.status, "draft");
+  assert.equal(p.rounds, 0);
+  assert.equal(p.approved_by, null);
 });
 
 test("check flags a plan file changed after registration", (t) => {
@@ -108,7 +120,7 @@ test("re-registering an approved plan whose file changed drops the approval; an 
   const { db, root } = freshBrain(t);
   const rel = planFile(root);
   plans.upsert(db, { file: rel, slug: "p", root });
-  plans.endSession(db, "p", { approvedBy: "sean" });
+  plans.endSession(db, "p", { approvedBy: "sean", root });
   const same = plans.upsert(db, { file: rel, slug: "p", root });
   assert.equal(same.status, "approved");
   assert.equal(same.approved_by, "sean");

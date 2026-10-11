@@ -4,7 +4,7 @@
 //   - every skills/<dir>/SKILL.md has frontmatter whose name matches the dir
 //     and a description; size caps (router 6144 B, phase skills 10240 B)
 //   - every phase skill has a `## Next` section naming skills that exist
-//   - every `references/x.md` link resolves
+//   - every `references/x.md` link resolves (in SKILL.md and in references)
 //   - the router (skills/brain/SKILL.md) names every top-level CLI command,
 //     read from `brain --help` so the list can never drift from COMMANDS
 //   - every skill and reference names only real CLI forms: each
@@ -248,6 +248,22 @@ function markdownFiles(dir) {
   return out;
 }
 
+// `references/x.md` links resolve from the skill's directory — in SKILL.md
+// and in its reference files, which link each other too.
+function checkReferenceLinks(problems, skillsDir = SKILLS_DIR) {
+  for (const d of fs.readdirSync(skillsDir, { withFileTypes: true }).filter((e) => e.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
+    const skill = path.join(skillsDir, d.name);
+    const refDir = path.join(skill, "references");
+    const have = fs.existsSync(refDir) ? fs.readdirSync(refDir) : [];
+    const linkers = [["SKILL.md", path.join(skill, "SKILL.md")], ...have.filter((f) => f.endsWith(".md")).map((f) => [`references/${f}`, path.join(refDir, f)])];
+    for (const [rel, file] of linkers) {
+      if (!fs.existsSync(file)) continue;
+      for (const m of read(file).matchAll(/`references\/([A-Za-z0-9._-]+)`/g))
+        if (!have.includes(m[1])) problems.push(`skills/${d.name}/${rel}: links references/${m[1]}, which does not exist`);
+    }
+  }
+}
+
 function checkSkillsTree(problems) {
   if (!fs.existsSync(SKILLS_DIR)) return void problems.push("skills/ directory missing");
   const dirs = fs.readdirSync(SKILLS_DIR, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort();
@@ -280,11 +296,8 @@ function checkSkillsTree(problems) {
         for (const m of next[1].matchAll(/`(brain-[a-z]+)`/g))
           if (!known.has(m[1])) problems.push(`${rel}: ## Next names skill "${m[1]}", which does not exist`);
     }
-    const refDir = path.join(SKILLS_DIR, dir, "references");
-    const have = fs.existsSync(refDir) ? fs.readdirSync(refDir) : [];
-    for (const m of raw.matchAll(/`references\/([A-Za-z0-9._-]+)`/g))
-      if (!have.includes(m[1])) problems.push(`${rel}: links references/${m[1]}, which does not exist`);
   }
+  checkReferenceLinks(problems);
   const routerFile = path.join(SKILLS_DIR, "brain", "SKILL.md");
   if (!fs.existsSync(routerFile)) return void problems.push("skills/brain/SKILL.md: router missing");
   const cli = cliCommands();
@@ -400,7 +413,7 @@ function checkPluginFiles(problems) {
 }
 
 // Importable for tests (test/check-skills.test.js); runs only as a script.
-export { cliCommands, cliSurface, checkCommandRefs, checkGuidanceRefs };
+export { cliCommands, cliSurface, checkCommandRefs, checkGuidanceRefs, checkReferenceLinks };
 
 function main() {
   const found = [];

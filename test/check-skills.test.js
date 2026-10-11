@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { cliCommands, cliSurface, checkCommandRefs, checkGuidanceRefs } from "../scripts/check-skills.mjs";
+import { cliCommands, cliSurface, checkCommandRefs, checkGuidanceRefs, checkReferenceLinks } from "../scripts/check-skills.mjs";
 
 function scan(t, md) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "check-skills-"));
@@ -92,4 +92,16 @@ test("every wireframe class an example uses must be defined by the brain-ux kit"
   const p = guidance(t, { "brain-ux": { "SKILL.md": "1. KIT\n", "references/kit.md": kit }, "brain-plan": { "SKILL.md": '<div class="wf wf-card">x</div>\n' } });
   assert.equal(p.length, 1, p.join("\n"));
   assert.match(p[0], /brain-plan: an example uses \.wf-card, which the brain-ux wireframe kit never defines/);
+});
+
+test("references/ links resolve in SKILL.md and in reference files (Greptile r8)", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "check-links-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(dir, "brain-x", "references"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "brain-x", "SKILL.md"), "Read `references/a.md`.\n");
+  fs.writeFileSync(path.join(dir, "brain-x", "references", "a.md"), "Detail: `references/b.md`. Gone: `references/gone.md`.\n");
+  fs.writeFileSync(path.join(dir, "brain-x", "references", "b.md"), "ok\n");
+  const problems = [];
+  checkReferenceLinks(problems, dir);
+  assert.deepEqual(problems, ["skills/brain-x/references/a.md: links references/gone.md, which does not exist"]);
 });

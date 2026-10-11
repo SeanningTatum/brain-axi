@@ -5,7 +5,9 @@ import path from "node:path";
 import { EventEmitter } from "node:events";
 import { features, verify } from "../../lib/brain/index.js";
 import { freshBrain, throwsCode, rejectsRaw } from "./helpers.js";
-import { supervise, killTree, TIMEOUT_MARK, TIMEOUT_EXIT } from "../../lib/brain/verify-supervisor.js";
+import { supervise, killTree, parentWatcher, TIMEOUT_MARK, TIMEOUT_EXIT } from "../../lib/brain/verify-supervisor.js";
+import { spawn as spawnProc } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 test("addCheck, listChecks by stage, CHECK_EXISTS and replace, removeCheck", (t) => {
   const { db } = freshBrain(t);
@@ -149,7 +151,7 @@ test("supervisor platform branch: POSIX kills the process group + SIGALRM; Windo
         calls.push(["spawn", cmd, opts.detached]);
         return child;
       };
-      supervise("sleep 60", 20, { platform, spawn, kill, spawnSync, exit, writeSync, onSignal: () => {}, pid: 7 });
+      supervise("sleep 60", 20, { platform, spawn, kill, spawnSync, exit, writeSync, onSignal: () => {}, pid: 7, parentAlive: () => true });
       if (platform !== "win32") setTimeout(() => resolve(calls.slice()), 100); // SIGALRM ends a real supervisor
     });
 
@@ -168,4 +170,55 @@ test("supervisor platform branch: POSIX kills the process group + SIGALRM; Windo
   assert.deepEqual([r.status, r.exit, r.tail], ["timeout", null, "partial"]);
   const own = verify.outcome({ name: "w" }, { status: TIMEOUT_EXIT, signal: null, stdout: "x\n", stderr: "" }, 1);
   assert.deepEqual([own.status, own.exit], ["fail", TIMEOUT_EXIT], "a check's own exit 124 is a plain failure");
+});
+
+test("supervisor: a parent that dies (a SIGTERM aimed at brain verify alone) takes the check's tree with it (Greptile r8)", async (t) => {
+  // Unit: the watcher kills the tree and exits once the parent is gone.
+  const calls = [];
+  const child = new EventEmitter();
+  child.pid = 4242;
+  let alive = true;
+  await new Promise((resolve) => {
+    supervise("sleep 60", 60000, {
+      platform: "linux",
+      spawn: () => child,
+      kill: (pid, sig) => calls.push(["kill", pid, sig]),
+      exit: (code) => (calls.push(["exit", code]), resolve()),
+      onSignal: () => {},
+      parentAlive: () => alive,
+      watchMs: 10,
+    });
+    setTimeout(() => (alive = false), 30);
+  });
+  assert.deepEqual(calls, [["kill", -4242, "SIGKILL"], ["exit", 130]]);
+  // parentWatcher: a changed ppid (POSIX reparenting) or a vanished pid (Windows) is a dead parent.
+  let ppid = 10;
+  assert.equal(parentWatcher({ getPpid: () => ppid, probe: () => {} })(), true);
+  const moved = parentWatcher({ getPpid: () => ppid, probe: () => {} });
+  ppid = 1;
+  assert.equal(moved(), false);
+  const gone = parentWatcher({ getPpid: () => 10, probe: () => { throw Object.assign(new Error("ESRCH"), { code: "ESRCH" }); } });
+  assert.equal(gone(), false);
+  const foreign = parentWatcher({ getPpid: () => 10, probe: () => { throw Object.assign(new Error("EPERM"), { code: "EPERM" }); } });
+  assert.equal(foreign(), true);
+
+  // End to end (POSIX): SIGTERM only the process running verify.run.
+  if (process.platform === "win32") return;
+  const { root, dbPath } = freshBrain(t);
+  const marker = path.join(root, "still-running");
+  const lib = fileURLToPath(new URL("../../lib/brain/index.js", import.meta.url));
+  const script = `
+    const L = await import(${JSON.stringify(lib)});
+    const db = L.open(${JSON.stringify(dbPath)});
+    L.verify.addCheck(db, { name: "slow", run: ${JSON.stringify(`node -e "setTimeout(() => require('fs').writeFileSync('still-running', 'x'), 2500)" & wait`)}, timeout: 60 });
+    process.stdout.write("started\\n");
+    L.verify.run(db, { root: ${JSON.stringify(root)} });
+  `;
+  const parent = spawnProc(process.execPath, ["--input-type=module", "-e", script], { cwd: root, stdio: ["ignore", "pipe", "inherit"] });
+  await new Promise((resolve) => parent.stdout.once("data", resolve));
+  await new Promise((r) => setTimeout(r, 500));
+  parent.kill("SIGTERM");
+  await new Promise((resolve) => parent.once("exit", resolve));
+  await new Promise((r) => setTimeout(r, 3000));
+  assert.ok(!fs.existsSync(marker), "the check kept running after its parent was killed");
 });

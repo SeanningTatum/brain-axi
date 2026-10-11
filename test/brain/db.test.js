@@ -345,10 +345,33 @@ test("create: a failed .gitignore write removes the reserved brain.db, so a retr
   fs.mkdirSync(path.join(root, ".gitignore")); // writeFileSync -> EISDIR
   assert.throws(() => create(root), /EISDIR/);
   assert.ok(!fs.existsSync(path.join(root, ".brain", "brain.db")), "no half-made brain.db left behind");
+  assert.deepEqual(fs.readdirSync(path.join(root, ".brain")), [], "no temp files left behind");
   fs.rmdirSync(path.join(root, ".gitignore"));
   const b = create(root);
   t.after(() => close(b.db));
   assert.ok(fs.existsSync(b.dbPath));
+});
+
+test("create: brain.db appears only complete; a brain.db another process published first is never removed (Greptile r8)", (t) => {
+  const root = gitRepo(tmpDir(t));
+  const dbPath = path.join(root, ".brain", "brain.db");
+  const realLink = fs.linkSync;
+  let seenBeforePublish = null;
+  // Another process wins the race between create's existence check and its
+  // publish, and is already writing to its brain.db.
+  fs.linkSync = (from, to) => {
+    seenBeforePublish = fs.existsSync(dbPath);
+    fs.writeFileSync(to, "someone else's brain");
+    return realLink(from, to);
+  };
+  try {
+    throwsCode(() => create(root), "BRAIN_EXISTS");
+  } finally {
+    fs.linkSync = realLink;
+  }
+  assert.equal(seenBeforePublish, false, "brain.db is not visible while it is being built");
+  assert.equal(fs.readFileSync(dbPath, "utf8"), "someone else's brain", "the winner's file is untouched");
+  assert.deepEqual(fs.readdirSync(path.join(root, ".brain")), ["brain.db"], "no temp files left behind");
 });
 
 test("check: a file rewritten after a passing check is still flagged (hash cache keys on size+mtime)", (t) => {
@@ -464,6 +487,19 @@ test("locate: a worktree of a --separate-git-dir named .git stays unresolved unt
   assert.notEqual(loc.brainDir, path.join(base, "storage", ".brain"));
   locate(main); // the main checkout records itself
   assert.equal(locate(wt).brainDir, path.join(main, ".brain"));
+
+  // Nothing tracked yet (an empty commit): the index proves nothing either.
+  const main2 = path.join(base, "main2");
+  fs.mkdirSync(path.join(base, "storage2"));
+  git(base, "init", "-q", "-b", "main", "--separate-git-dir", path.join(base, "storage2", ".git"), main2);
+  git(main2, "config", "user.email", "t@example.com");
+  git(main2, "config", "user.name", "Test Author");
+  git(main2, "commit", "-q", "--allow-empty", "-m", "init");
+  const wt2 = path.join(base, "wt2");
+  git(main2, "worktree", "add", "-q", wt2, "-b", "wt2-branch");
+  assert.equal(locate(wt2).mainUnknown, true);
+  throwsCode(() => create(wt2), "MAIN_CHECKOUT_UNKNOWN");
+  assert.ok(!fs.existsSync(path.join(base, "storage2", ".brain")), "no brain beside the separate git dir");
 
   // A plain checkout (its .git is the git dir) still resolves without a record.
   const plain = path.join(base, "plain");

@@ -658,3 +658,48 @@ test("review: a poll from another brain is refused and leaves the batch for the 
   assert.match(poll.out, /keep me/);
   ok(brain(["plans", "view", "auth"]), /^rounds\[1\]/m);
 });
+
+test("review: reopening a file with another brain is refused while its feedback is unrecorded; end checks the brain too", async (t) => {
+  const { base, dir, brain, ok, post, port } = await setup(t);
+  const open = ok(brain(["review", "open", "plans/auth.html", "--no-open"]));
+  const key = urlOf(open.out).split("/").pop();
+  assert.equal((await post("/api/feedback", { key, prompts: [{ tag: "message", prompt: "mine" }] }, { origin: base })).status, 200);
+  ok(brain(["init", "--brain", "other"]));
+  // The CLI refuses before registering the plan in the other brain...
+  const moved = brain(["review", "open", "plans/auth.html", "--no-open", "--brain", "other"]);
+  assert.equal(moved.code, 1, moved.out);
+  assert.match(moved.out, /^code: BRAIN_MISMATCH$/m);
+  ok(brain(["plans", "list", "--brain", "other"]), /^plans\[0\]/m);
+  // ...and the server refuses the re-bind on its own.
+  const direct = await post("/api/open", { file: path.join(dir, "plans", "auth.html"), brain: path.join(dir, "other") }, { origin: base });
+  assert.equal(direct.status, 409);
+  assert.match((await direct.json()).help, /brain review poll .*auth\.html --brain /);
+  // review end from the other brain changes neither side.
+  const end = brain(["review", "end", "plans/auth.html", "--brain", "other"]);
+  assert.equal(end.code, 1, end.out);
+  assert.match(end.out, /^code: BRAIN_MISMATCH$/m);
+  assert.match(end.out, /brain review end plans\/auth\.html --brain /);
+  const s = await (await fetch(`${base}/api/poll?key=${key}`)).json();
+  assert.equal(s.status, "feedback", "the session is still open with its batch");
+  assert.ok(port);
+});
+
+test("review: two polls that both see the user's End record one closing round", async (t) => {
+  const { base, brain, ok, post, env, dir } = await setup(t);
+  const open = ok(brain(["review", "open", "plans/auth.html", "--no-open"]));
+  const key = urlOf(open.out).split("/").pop();
+  assert.equal((await post("/api/end", { key, by: "user" }, { origin: base })).status, 200);
+  const { spawn } = await import("node:child_process");
+  const BINP = fileURLToPath(new URL("../../bin/brain.js", import.meta.url));
+  const run = () =>
+    new Promise((resolve) => {
+      const c = spawn(process.execPath, [BINP, "review", "poll", "plans/auth.html", "--timeout-ms", "5000"], { cwd: dir, env });
+      let out = "";
+      c.stdout.on("data", (d) => (out += d));
+      c.on("exit", (code) => resolve({ code, out }));
+    });
+  const rs = await Promise.all([run(), run(), run()]);
+  for (const r of rs) assert.equal(r.code, 0, r.out);
+  const view = ok(brain(["plans", "view", "auth"]), /^rounds\[1\]/m);
+  assert.match(view.out, /^ {2}1,\S+,user,0$/m);
+});

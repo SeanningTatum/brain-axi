@@ -174,15 +174,23 @@ test("every help: command keeps a custom --brain (Greptile r8: feature add hints
   const add = ok(brain(dir, ["features", "add", "auth", "--name", "Auth", "--brain", "my brain"])).out;
   const hints = helpOf(add);
   assert.equal(hints.length, 3, add);
-  for (const h of hints) assert.match(h, /: brain .* --brain "my brain"$/, h);
+  for (const h of hints) assert.match(h, /: brain .* --brain 'my brain'$/, h);
   // Backticked commands get it inside the span; an error's hints too.
-  ok(brain(dir, ["features", "view", "auth", "--brain", "my brain"]), /Start it: brain features set auth --status in-progress --brain "my brain"$/m);
+  ok(brain(dir, ["features", "view", "auth", "--brain", "my brain"]), /Start it: brain features set auth --status in-progress --brain 'my brain'$/m);
   const miss = brain(dir, ["features", "--brain", "no brain"]);
   assert.equal(miss.code, 1, miss.out);
-  assert.match(miss.out, /Run `brain init --brain "no brain"` to create one/);
-  assert.match(miss.out, /`brain import <file> --brain "no brain"`/);
+  assert.match(miss.out, /Run `brain init --brain 'no brain'` to create one/);
+  assert.match(miss.out, /`brain import <file> --brain 'no brain'`/);
   // Without --brain nothing is added.
-  assert.doesNotMatch(ok(brain(dir, ["features", "--brain", "my brain"])).out.replace(/--brain "my brain"/g, ""), /--brain/);
+  assert.doesNotMatch(ok(brain(dir, ["features", "--brain", "my brain"])).out.replace(/--brain 'my brain'/g, ""), /--brain/);
+  // Free-text values are single-quoted: a claim holder with a space, and a
+  // brain dir with shell metacharacters, paste back as one literal word.
+  ok(brain(dir, ["tasks", "add", "auth", "--title", "T", "--acceptance", "A", "--brain", "my brain"]));
+  const claim = ok(brain(dir, ["tasks", "claim", "auth", "--by", "Jane Doe", "--brain", "my brain"])).out;
+  assert.match(claim, /--status done --evidence "\.\.\." --by 'Jane Doe' --brain 'my brain'$/m);
+  assert.match(claim, /--status open --by 'Jane Doe' --brain 'my brain'$/m);
+  ok(brain(dir, ["init", "--brain", "b$x`y"]));
+  ok(brain(dir, ["features", "add", "z", "--name", "Z", "--brain", "b$x`y"]), /--brain 'b\$x`y'$/m);
   assert.doesNotMatch(brain(dir, ["features", "add", "x", "--name", "X"]).out, /--brain/);
 });
 
@@ -516,6 +524,34 @@ test("plans + review end --approved-by work headless (no server) (#8)", (t) => {
   failsWith(brain(dir, ["watch", "nope"]), 1, "NOT_FOUND");
   ok(brain(dir, ["review", "poll", "plans/p.html", "--timeout-ms", "2000"]), /^status: missing$/m);
   ok(brain(dir, ["check"]), /^ok: true$/m);
+});
+
+test("export replaces --out atomically: a failed write leaves the previous backup intact (Greptile r8)", (t) => {
+  const src = repoWithBrain(t);
+  ok(brain(src, ["features", "add", "auth", "--name", "Auth"]));
+  const dir = path.join(src, "backups");
+  fs.mkdirSync(dir);
+  const out = path.join(dir, "b.toon");
+  ok(brain(src, ["export", "--out", "backups/b.toon"]));
+  const first = fs.readFileSync(out, "utf8");
+  assert.match(first, /^format: brain-export$/m);
+  assert.deepEqual(fs.readdirSync(dir), ["b.toon"], "no temp file left behind");
+  ok(brain(src, ["features", "add", "billing", "--name", "Billing"]));
+  fs.chmodSync(dir, 0o555); // the dump cannot be written beside the backup
+  let r;
+  try {
+    r = brain(src, ["export", "--out", "backups/b.toon"]);
+  } finally {
+    fs.chmodSync(dir, 0o755);
+  }
+  assert.equal(r.code, 1, r.out);
+  assert.equal(fs.readFileSync(out, "utf8"), first, "the previous backup is untouched");
+  ok(brain(src, ["export", "--out", "backups/b.toon"]));
+  assert.match(fs.readFileSync(out, "utf8"), /billing/);
+  // A symlinked --out keeps pointing at the file it names.
+  fs.symlinkSync("b.toon", path.join(dir, "latest.toon"));
+  ok(brain(src, ["export", "--out", "backups/latest.toon"]));
+  assert.ok(fs.lstatSync(path.join(dir, "latest.toon")).isSymbolicLink());
 });
 
 test("export → import → export is byte-identical; import refuses a non-empty brain", (t) => {

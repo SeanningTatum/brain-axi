@@ -43,8 +43,9 @@ function readOwnVersion() {
 // Output + errors
 // ---------------------------------------------------------------------------
 
-// A value as a shell word: bare when safe, else JSON-quoted.
-const shellWord = (v) => (/^[\w./:@-]+$/.test(v) ? v : JSON.stringify(v));
+// A value as one shell word for a copy-pasteable hint: bare when safe.
+// POSIX single quotes: nothing inside expands ($, backticks, \ stay literal).
+const shellWord = (v) => (/^[\w./:@%+=,-]+$/.test(v) ? v : `'${String(v).replace(/'/g, "'\\''")}'`);
 
 // ` --brain <dir>` when this invocation named one: every `brain …` command a
 // help: list suggests carries it, so following a hint reaches the same brain
@@ -395,12 +396,23 @@ const exportCmd = {
     };
     if (["", "-wal", "-shm"].some((s) => real(out) === real(dbPath + s) || sameFile(out, dbPath + s)))
       usage(`--out ${ctx.flags.out} is the live database; pick another file`, ["brain export --out backup.toon"]);
-    fs.writeFileSync(out, dump);
+    // Write beside the destination, then rename: a failed or interrupted
+    // write never truncates the backup already there.
+    // (A symlinked --out keeps pointing at the file it names.)
+    const dest = real(out);
+    const tmpOut = path.join(path.dirname(dest), `.${path.basename(dest)}.tmp-${process.pid}`);
+    try {
+      fs.writeFileSync(tmpOut, dump);
+      fs.renameSync(tmpOut, dest);
+    } catch (e) {
+      fs.rmSync(tmpOut, { force: true });
+      throw e;
+    }
     const counts = L.io.TABLES.map((t) => ({ table: t, rows: (dump.match(new RegExp(`^${t}\\[(\\d+)\\]`, "m")) || [0, 0])[1] * 1 }));
     print([
       ...group("export", { file: rel(out), bytes: Buffer.byteLength(dump) }),
       ...toonTable("tables", counts.filter((c) => c.rows), ["table", "rows"], 2),
-      ...toonList("help", [`Restore into a fresh brain: brain import ${rel(out)}`]),
+      ...toonList("help", [`Restore into a fresh brain: brain import ${shellWord(rel(out))}`]),
     ]);
   },
 };
@@ -645,7 +657,7 @@ const tasks = {
         if (t.status === "open") help.push(`Claim it: brain tasks claim ${slug} --key ${key} --by <name>`);
         if (t.status === "open" || t.status === "claimed") {
           help.push(`Log each step: brain runs append ${slug} --task ${key} --step "..." --observed "..."`);
-          help.push(`Close it: brain tasks set ${slug} ${key} --status done --evidence "..."${t.claimed_by ? ` --by ${t.claimed_by}` : ""}`);
+          help.push(`Close it: brain tasks set ${slug} ${key} --status done --evidence "..."${t.claimed_by ? ` --by ${shellWord(t.claimed_by)}` : ""}`);
         }
         print([...lines, ...toonList("help", help.length ? help : [`Run \`brain tasks list ${slug}\``])]);
       },
@@ -688,8 +700,8 @@ const tasks = {
           ...group("claim", { feature: slug, task: task.key, title: task.title, claimed_by: task.claimed_by, token }),
           ...toonList("help", [
             `Read the brief: brain tasks view ${slug} ${task.key}`,
-            `Close it: brain tasks set ${slug} ${task.key} --status done --evidence "..." --by ${task.claimed_by}`,
-            `Release it: brain tasks set ${slug} ${task.key} --status open --by ${task.claimed_by}`,
+            `Close it: brain tasks set ${slug} ${task.key} --status done --evidence "..." --by ${shellWord(task.claimed_by)}`,
+            `Release it: brain tasks set ${slug} ${task.key} --status open --by ${shellWord(task.claimed_by)}`,
           ]),
         ]);
       },
@@ -983,7 +995,7 @@ const plans = {
           ...toonTable("prompts", prompts, ["round", "tag", "prompt"]),
           ...toonList("help", [
             ...(clipped ? [`Prompts cut at ${CELL_LIMIT} chars (…): brain plans view ${p.slug} --full${passFlags(ctx.flags)}`] : []),
-            `Reopen it for review: brain review open ${reopen}${passFlags(ctx.flags)}`,
+            `Reopen it for review: brain review open ${shellWord(reopen)}${passFlags(ctx.flags)}`,
           ]),
         ]);
       },
@@ -1007,7 +1019,7 @@ let RV;
 async function reviewModules() {
   if (!RV) {
     const [server, context] = await Promise.all([import("../lib/review/server.js"), import("../lib/review/context.js")]);
-    RV = { stateDir: server.stateDir, sessionKey: server.sessionKey, readSession: server.readSession, api: server.REVIEW_API, planForFile: context.planForFile, readPins: server.readPins };
+    RV = { stateDir: server.stateDir, sessionKey: server.sessionKey, readSession: server.readSession, hasPendingFeedback: server.hasPendingFeedback, api: server.REVIEW_API, planForFile: context.planForFile, readPins: server.readPins };
   }
   return RV;
 }
@@ -1090,7 +1102,7 @@ function passFlags(flags) {
 }
 
 function renderPoll(data, file, flags) {
-  const ref = file + passFlags(flags);
+  const ref = shellWord(file) + passFlags(flags);
   const lines = [kv("status", data.status)];
   let snapshotShown = false;
   if (data.status === "feedback") {
@@ -1128,7 +1140,7 @@ function renderPoll(data, file, flags) {
 // a batch until ackPoll confirms it was recorded — the batch id keeps a
 // re-delivery from becoming a second round.
 // The session was opened for `sessionBrain`; this poll resolved `brainDir`.
-function assertSessionBrain(sessionBrain, brainDir, file, flags) {
+function assertSessionBrain(sessionBrain, brainDir, file, flags, verb = "poll") {
   if (typeof sessionBrain !== "string" || !sessionBrain) return;
   const real = (p) => {
     try {
@@ -1139,9 +1151,8 @@ function assertSessionBrain(sessionBrain, brainDir, file, flags) {
   };
   if (real(sessionBrain) === real(brainDir)) return;
   const port = flags.port !== undefined ? ` --port ${shellWord(String(flags.port))}` : "";
-  fail("BRAIN_MISMATCH", `${file} is under review for the brain at ${sessionBrain}, not ${brainDir}; nothing was recorded`, [
-    `Poll it with that brain: brain review poll ${file} --brain ${shellWord(sessionBrain)}${port}`,
-    `Or move the review to this brain: brain review open ${file}${passFlags(flags)}`,
+  fail("BRAIN_MISMATCH", `${file} is under review for the brain at ${sessionBrain}, not ${brainDir}; nothing was changed`, [
+    `Use that brain: brain review ${verb} ${shellWord(file)} --brain ${shellWord(sessionBrain)}${port}`,
   ]);
 }
 
@@ -1149,17 +1160,21 @@ function recordPoll(db, root, abs, data) {
   const userEnded = (data.session_ended || data.status === "ended") && data.ended_by === "user";
   const prompts = data.status === "feedback" ? data.prompts || [] : [];
   if (!prompts.length && !userEnded) return;
-  const plan = RV.planForFile(db, root, abs) || L.plans.upsert(db, { file: abs, root });
-  // The first poll after the user's End (with or without a final batch)
-  // records the closing round; the closed session makes repeat polls no-ops.
-  const closing = userEnded && !!L.plans.get(db, plan.slug).session_open;
-  if (prompts.length || closing)
-    L.plans.addRound(db, plan.slug, {
-      prompts: prompts.map((p) => ({ tag: p.tag, prompt: p.prompt, selector: p.selector || null, text: p.text || null, html: p.html || null, target: p.target ?? null })),
-      endedBy: data.session_ended || closing ? data.ended_by : null,
-      batchId: typeof data.batch === "string" && data.batch ? data.batch : null,
-    });
-  if (closing) L.plans.endSession(db, plan.slug);
+  // One write transaction (BEGIN IMMEDIATE): two polls that both see the
+  // user's End serialize here, and only the first finds the session open.
+  L.tx(db, () => {
+    const plan = RV.planForFile(db, root, abs) || L.plans.upsert(db, { file: abs, root });
+    // The first poll after the user's End (with or without a final batch)
+    // records the closing round; the closed session makes repeat polls no-ops.
+    const closing = userEnded && !!L.plans.get(db, plan.slug).session_open;
+    if (prompts.length || closing)
+      L.plans.addRound(db, plan.slug, {
+        prompts: prompts.map((p) => ({ tag: p.tag, prompt: p.prompt, selector: p.selector || null, text: p.text || null, html: p.html || null, target: p.target ?? null })),
+        endedBy: data.session_ended || closing ? data.ended_by : null,
+        batchId: typeof data.batch === "string" && data.batch ? data.batch : null,
+      });
+    if (closing) L.plans.endSession(db, plan.slug);
+  });
 }
 
 // Tell the server the batch is safely in brain.db so it stops re-delivering
@@ -1196,11 +1211,16 @@ const review = {
       async run(ctx) {
         const { flags } = ctx;
         const file = ctx.pos[0];
-        const ref = file + passFlags(flags);
+        const ref = shellWord(file) + passFlags(flags);
         const abs = realFile(file);
         if (!fs.existsSync(abs)) fail("NOT_FOUND", `no such file: ${file}`, ["Write the plan HTML first, then open it"]);
         const { db, root, brainDir } = ctx.brain();
-        const known = (await reviewModules()).planForFile(db, root, abs);
+        const rv = await reviewModules();
+        // Unrecorded feedback stays with the brain that opened the session
+        // (the server refuses the move too): say so before registering here.
+        const prior = rv.readSession(rv.sessionKey(abs));
+        if (rv.hasPendingFeedback(prior)) assertSessionBrain(prior.brain, brainDir, file, flags);
+        const known = rv.planForFile(db, root, abs);
         const plan = L.plans.upsert(db, { file: abs, slug: flags.plan || (known && known.slug), feature: flags.feature, root });
         const port = reviewPort(flags);
         await ensureServer(port);
@@ -1245,7 +1265,7 @@ const review = {
       async run(ctx) {
         const { flags } = ctx;
         const file = ctx.pos[0];
-        const ref = file + passFlags(flags);
+        const ref = shellWord(file) + passFlags(flags);
         const timeoutMs = posInt(flags["timeout-ms"], "--timeout-ms");
         const missing = { status: "missing", next_step: `No session for this file. Run \`brain review open ${ref}\` first.` };
         const rv = await reviewModules();
@@ -1306,26 +1326,37 @@ const review = {
       async run(ctx) {
         const { flags } = ctx;
         const file = ctx.pos[0];
-        const ref = file + passFlags(flags);
-        const { db, root } = ctx.brain();
+        const ref = shellWord(file) + passFlags(flags);
+        const { db, root, brainDir } = ctx.brain();
         const rv = await reviewModules();
+        // Ending changes both sides (this brain's plan, the server session):
+        // refuse before either when the session belongs to another brain.
+        let sessionKey = null;
+        try {
+          sessionKey = rv.sessionKey(file);
+        } catch {
+          // no such file: no server session to check
+        }
+        const session = sessionKey ? rv.readSession(sessionKey) : null;
+        assertSessionBrain(session && session.brain, brainDir, file, flags, "end");
         const abs = realFile(file);
         let plan = rv.planForFile(db, root, abs);
         if (!plan && flags["approved-by"] !== undefined) plan = L.plans.upsert(db, { file: abs, root });
         if (plan) L.plans.upsert(db, { file: abs, slug: plan.slug, root });
         const ended = plan ? L.plans.endSession(db, plan.slug, { approvedBy: flags["approved-by"], root }) : null;
         let server = "no session";
-        try {
-          const res = await fetch(`http://127.0.0.1:${reviewPort(flags)}/api/end`, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ key: rv.sessionKey(file), by: "agent" }),
-            signal: AbortSignal.timeout(3000),
-          });
-          server = (await res.json()).status || "ended";
-        } catch {
-          // no server or no session: a no-op on that side
-        }
+        if (sessionKey)
+          try {
+            const res = await fetch(`http://127.0.0.1:${reviewPort(flags)}/api/end`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ key: sessionKey, by: "agent" }),
+              signal: AbortSignal.timeout(3000),
+            });
+            server = (await res.json()).status || "ended";
+          } catch {
+            // no server or no session: a no-op on that side
+          }
         print([
           ...group("review", { file, plan: ended ? ended.slug : null, status: ended ? ended.status : "unregistered",
             approved_round: ended ? ended.approved_round : null, server_session: server }),

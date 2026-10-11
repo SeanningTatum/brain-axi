@@ -61,16 +61,23 @@ each other; a database gives those for free. Plan: `plans/2026-10-10-axi-archite
   re-delivers the same batch; the batch id (schema migration `002`) keeps it to one round.
   `review poll` restarts a server that exited while a session still had feedback (or the
   user's End) on disk, and refuses (`BRAIN_MISMATCH`, nothing recorded or acked) when the
-  session was opened for a different brain.
+  session was opened for a different brain; `review end` and a `review open` that would move
+  unrecorded feedback to another brain are refused the same way (the server answers 409 too).
+  Two polls that both see the user's End record one closing round (one write transaction).
 - Every `help:` command keeps the `--brain` the invocation named (`context` excepted: its
-  output is capped).
+  output is capped), and free-text values in hints (claim holders, paths, brain dirs) are
+  POSIX single-quoted so a pasted hint is one literal word each.
+- `export --out` writes beside the destination and renames, so a failed write never
+  truncates the previous backup.
 - `verify` runs each check under a small supervisor (`lib/brain/verify-supervisor.js`) that
   kills the whole tree on a timeout (or Ctrl-C), so a timed-out suite cannot keep running
   into the next check. On macOS/Linux that is the check's own process group; on Windows,
   which has neither process groups nor `SIGALRM`, it is `taskkill /pid <pid> /T /F` and the
   timeout is reported on the supervisor's own stderr instead of a signal. Known Windows
   limit: a job a check backgrounds (`start /b`) and leaves running after its shell exits
-  is not killed — taskkill cannot walk a tree whose root is gone.
+  is not killed — taskkill cannot walk a tree whose root is gone. The supervisor also
+  watches its parent: when `brain verify` itself is killed (a SIGTERM aimed at it alone), the
+  check's tree is killed within ~0.5 s instead of running until its own timeout.
 - In a linked worktree of a `--separate-git-dir` repo (git records no path for its main
   checkout), the main checkout records itself in the git dir the first time any `brain`
   command runs there, so its worktrees share its brain; until then a worktree refuses with
@@ -79,6 +86,10 @@ each other; a database gives those for free. Plan: `plans/2026-10-10-axi-archite
   that happens to be named `.git` is never taken for a checkout.
 - `import` refuses a dump missing any table's section (a cut-off export), instead of
   restoring partial history.
+- `init` builds brain.db privately and publishes it with an exclusive link only once it is
+  migrated and the `.gitignore` is written: no other process can open a half-made brain, and
+  a failed `init` only removes its own temp file. `plans.endSession({approvedBy})` refuses
+  a plan whose file is missing (nothing is recorded).
 - `check` is rewritten: SQLite integrity, foreign keys, search index, cross-entity rules
   (shipped features verified or grandfathered, no open tasks), plan/shot file hashes.
 - Eval suites are repo-dev tooling in `evals/` and `evals-plugin/`, run by standalone
