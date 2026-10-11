@@ -5,7 +5,7 @@
 -------------------------------------------------------------------------------
 
 Skip if the approved plan had no product brief (internal work). Otherwise
-re-read what the plan claimed (`brain plans view <slug>`) and hold three:
+re-read what the plan claimed (`brain plans view <slug>` — the registered file is the FROZEN copy the human approved) and hold three:
 
 - **The success metric was actually observed**, not assumed. State the
   before/after, or state plainly that it has not been measured yet and when
@@ -16,7 +16,7 @@ re-read what the plan claimed (`brain plans view <slug>`) and hold three:
   check exists to catch. The reverse counts too: a scope tier the reviewer
   approved that did NOT ship is an unshipped promise, not a detail.
 - **The shipped UI matches the approved mockups.** If the plan carried
-  wireframes (`brain playbook ux`), compare them against the verification
+  wireframes (the `brain-ux` skill), compare them against the verification
   screenshots from step 2. Differences are fine — undisclosed differences are
   not. Name each one and why it changed.
 

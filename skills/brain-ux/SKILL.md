@@ -4,15 +4,15 @@ description: "Use while planning work that adds or changes a screen or UI — gr
 ---
 > CLI note: examples below say `brain <cmd>`. If `brain` is not on PATH, run `npx -y brain-axi <cmd>` instead.
 
-UX ARTIFACT PLAYBOOK
-=====================
+UX ARTIFACT
+===========
 
 You are about to add a wireframe + UX-flow section to a plan artifact — the
-same self-contained HTML file the `brain-plan` skill (`brain playbook plan` if skills are unavailable) already teaches you to
-write, reviewed inside `brain review`. This playbook is additive to that one:
+same self-contained HTML file the `brain-plan` skill already teaches you to
+write, reviewed inside `brain review`. This skill is additive to that one:
 read it, then fold its output into the plan document at the points `plan`
 already names: its §0 style block gets the wireframe kit, and its §6 (UI
-mockups + UX flows) is the section this playbook fills. The job here is narrower than the whole plan: a
+mockups + UX flows) is the section this skill fills. The job here is narrower than the whole plan: a
 reviewer should be able to say "that layout is wrong" and "you forgot the
 empty state" while the screen is still free — a wireframe, not code.
 
@@ -20,7 +20,7 @@ empty state" while the screen is still free — a wireframe, not code.
 0. WHEN THIS APPLIES
 -------------------------------------------------------------------------------
 
-Apply this playbook when the plan adds or changes any of:
+Apply this skill when the plan adds or changes any of:
 
 - a screen or page the user navigates to;
 - a rendered view, panel, modal, or drawer that appears/disappears based on
@@ -30,23 +30,23 @@ Apply this playbook when the plan adds or changes any of:
 Do NOT apply it to a CLI-only or purely internal change with no rendered
 surface. Note one deliberate carve-out: a CLI's own *output shape* (a new
 table, a changed flag, a different TOON payload) IS a product surface a human
-should be able to approve — but it belongs in the `brain-product` skill (`brain playbook product` if skills are unavailable), not
-here. This playbook is specifically about pixels a human looks at, not text a
+should be able to approve — but it belongs in the `brain-product` skill, not
+here. This skill is specifically about pixels a human looks at, not text a
 human reads in a terminal.
 
 If you are unsure: would a screenshot of the finished feature look different
-from a screenshot of the feature today? If yes, you are in this playbook.
+from a screenshot of the feature today? If yes, you are in this skill.
 
 -------------------------------------------------------------------------------
 ORDERED STEPS
 -------------------------------------------------------------------------------
 
-1. Put the wireframe CSS kit in the plan's style block. The kit: Read `references/wireframe-kit.md` (`brain playbook ux --ref wireframe-kit`).
-2. Inventory every screen the plan adds or changes, one greyscale wireframe each. Procedure and examples: Read `references/screen-inventory.md` (`brain playbook ux --ref screen-inventory`).
+1. Put the wireframe CSS kit in the plan's style block. The kit: Read `references/wireframe-kit.md`.
+2. Inventory every screen the plan adds or changes, one greyscale wireframe each. Procedure and examples: Read `references/screen-inventory.md`.
 3. Fill the screen-state matrix (section 3 below).
-4. Draw the user-journey flow — what the PERSON does. Mermaid conventions: Read `references/user-journey.md` (`brain playbook ux --ref user-journey`).
-5. Layout variants that are a genuine coin flip become side-by-side decision cards. Markup: Read `references/variant-cards.md` (`brain playbook ux --ref variant-cards`).
-6. Know how a reviewer annotates a mockup before you write one. The annotation model: Read `references/annotation.md` (`brain playbook ux --ref annotation`).
+4. Draw the user-journey flow — what the PERSON does. Mermaid conventions: Read `references/user-journey.md`.
+5. Layout variants that are a genuine coin flip become side-by-side decision cards. Markup: Read `references/variant-cards.md`.
+6. Know how a reviewer annotates a mockup before you write one. The annotation model: Read `references/annotation.md`.
 
 -------------------------------------------------------------------------------
 3. SCREEN-STATE MATRIX

@@ -4,32 +4,32 @@ description: "Use when writing any plan, proposal, design, or approach review fo
 ---
 > CLI note: examples below say `brain <cmd>`. If `brain` is not on PATH, run `npx -y brain-axi <cmd>` instead.
 
-PLAN ARTIFACT PLAYBOOK
-=======================
+PLAN ARTIFACT
+=============
 
 You are about to write a plan/proposal/design as ONE standalone HTML file that a
 human will review inside "brain review" (an iframe'd artifact + sidebar showing
-brain memory: prior plans, timeline, screenshots, feature state). This is not a
+brain memory: prior plans, checkpoints, verifications, feature state). This is not a
 markdown doc and not a chat message — it is a small web page. Read this whole
-playbook before writing anything, then follow the section structure in order.
+skill before writing anything, then follow the section structure in order.
 
 Before you write: if this plan will carry any decision card and you have not
-run the `brain-grill` skill (`brain playbook grill` if skills are unavailable), stop and run it. It settles what you can settle
+run the `brain-grill` skill, stop and run it. It settles what you can settle
 with the human while the design is still soft, and its memory check keeps you
 from asking a question this repo already answered. Grilling after the artifact
 exists is not grilling — it is asking someone to ratify a design.
 
 Four of those sections are conditional — 3, 6, 7, and 16. Each names the
-playbook that owns it, because the standard is too long to inline here and
+skill that owns it, because the standard is too long to inline here and
 too important to guess at:
 
 - Sections 3 (product brief) and 7 (product decisions) fire on any USER-FACING
   change — a screen, a CLI surface someone invokes, an output format, a
-  workflow. Read the `brain-product` skill (`brain playbook product` if skills are unavailable) before writing them.
+  workflow. Read the `brain-product` skill before writing them.
 - Section 6 (UI mockups + UX flows) fires when the plan adds or changes a
-  SCREEN. Read the `brain-ux` skill (`brain playbook ux` if skills are unavailable) before writing it.
+  SCREEN. Read the `brain-ux` skill before writing it.
 - Section 16 (AI addendum) fires when the plan touches PROMPTS, MODELS, OR
-  AGENTS. Read the `brain-ai` skill (`brain playbook ai` if skills are unavailable) before writing it.
+  AGENTS. Read the `brain-ai` skill before writing it.
 
 Skip a conditional section when it does not apply — an empty ceremony section
 teaches the next agent that these are boxes to fill rather than work to do.
@@ -41,7 +41,7 @@ from them should be answerable by clicking, not by typing an essay.
 PICK A TIER FIRST
 -----------------
 
-Seventeen sections is right for a feature that spans several layers and carries
+The 17-section structure is right for a feature that spans several layers and carries
 real architectural risk. On a two-file change it is overhead, and the same
 warning applies as to an empty conditional section: ceremony teaches the next
 agent that these are boxes to fill.
@@ -72,19 +72,19 @@ sections that did not need writing is not.
 THE 17-SECTION STRUCTURE — in order; the tier decides which you write
 -------------------------------------------------------------------------------
 
-0. SHARED FOUNDATIONS — one inline <style> block in <head>, no external stylesheet; one fixed light palette with exactly one accent. The copy-paste block and palette discipline: Read `references/style.md` (`brain playbook plan --ref style`).
-1. HEADER STRIP (title, date, feature, TIER, status chip, round). 2. TL;DR (three sentences, hard cap). 3. PRODUCT BRIEF (conditional — the `brain-product` skill). 4. CONTEXT (run `brain plans`, `brain progress`, `brain features view <slug>`; cite real slugs and dates). 5. BIG PICTURE (one flowchart). 6. UI MOCKUPS + UX FLOWS (conditional — the `brain-ux` skill). 7. PRODUCT DECISIONS (conditional — the `brain-product` skill). Sections 1-7 in full, with markup: Read `references/sections.md` (`brain playbook plan --ref sections`).
-8. TECHNICAL DECISIONS NEEDED — one decision card per shortlist question: radio group, tradeoff table, one option pre-checked and labeled "(recommended)", a "Queue answer" button wired to `queueDecision`; every control carries data-brain-action. The full working snippet and notes: Read `references/decision-cards.md` (`brain playbook plan --ref decision-cards`).
-9. INTERACTIVE REVIEW COMPONENTS — editable lists, restore/cancel, per-question submit. Components: Read `references/list-editor.md` (`brain playbook plan --ref list-editor`).
-10. PLAN OF RECORD (each phase: testable acceptance + a Verify: clause; product and high-level design only). 11. FILES THAT CHANGE. 12. GOLDEN PATH. 13. ERROR PATHS. 14. TESTING PLAN. 15. OPEN QUESTIONS. Sections 10-15 in full: Read `references/record-sections.md` (`brain playbook plan --ref record-sections`).
-16. AI ADDENDUM (conditional — the `brain-ai` skill; prompt contract, eval plan + golden set, regression gate, agent topology). Section 16: Read `references/ai-addendum.md` (`brain playbook plan --ref ai-addendum`).
-DIAGRAMS (mermaid with an offline-safe SVG fallback) and other components Markdown cannot do.  Read `references/diagrams.md` (`brain playbook plan --ref diagrams`).
+0. SHARED FOUNDATIONS — one inline <style> block in <head>, no external stylesheet; one fixed light palette with exactly one accent. The copy-paste block and palette discipline: Read `references/style.md`.
+1. HEADER STRIP (title, date, feature, TIER, status chip, round). 2. TL;DR (three sentences, hard cap). 3. PRODUCT BRIEF (conditional — the `brain-product` skill). 4. CONTEXT (run `brain plans list`, `brain progress list`, `brain features view <slug>`; cite real slugs and dates). 5. BIG PICTURE (one flowchart). 6. UI MOCKUPS + UX FLOWS (conditional — the `brain-ux` skill). 7. PRODUCT DECISIONS (conditional — the `brain-product` skill). Sections 1-7 in full, with markup: Read `references/sections.md`.
+8. TECHNICAL DECISIONS NEEDED — one decision card per shortlist question: radio group, tradeoff table, one option pre-checked and labeled "(recommended)", a "Queue answer" button wired to `queueDecision`; every control carries data-brain-action. The full working snippet and notes: Read `references/decision-cards.md`.
+9. INTERACTIVE REVIEW COMPONENTS — editable lists, restore/cancel, per-question submit. Components: Read `references/list-editor.md`.
+10. PLAN OF RECORD (each phase: testable acceptance + a Verify: clause; product and high-level design only). 11. FILES THAT CHANGE. 12. GOLDEN PATH. 13. ERROR PATHS. 14. TESTING PLAN. 15. OPEN QUESTIONS. Sections 10-15 in full: Read `references/record-sections.md`.
+16. AI ADDENDUM (conditional — the `brain-ai` skill; prompt contract, golden set + how it is judged, regression gate, agent topology). Section 16: Read `references/ai-addendum.md`.
+DIAGRAMS (mermaid with an offline-safe SVG fallback) and other components Markdown cannot do.  Read `references/diagrams.md`.
 
 -------------------------------------------------------------------------------
 REVIEW LOOP — the default for every plan; never print the plan in chat
 -------------------------------------------------------------------------------
 
-1. Read the brain first (`brain progress`, `brain features`, `brain plans`, `brain timeline`); grill first if the plan carries a decision. 2. Write the ONE HTML file (`<repo>/plans/<topic>.html` is a good default). 3. `npx -y brain-axi review <plan.html> [--feature <slug>]` opens the review UI. 4. Immediately `npx -y brain-axi review poll <plan.html>` and wait IN THE FOREGROUND of the same turn — it blocks until the human clicks Send; never background it, never end your turn while it waits; on interruption re-run it. 5. Apply each requested change to the SAME file (anchored by the prompt's `line` + `text`), then `npx -y brain-axi review poll <plan.html> --agent-reply "what you changed"`. 6. Repeat until approved or ended; if `ended_by: user`, stop polling and do not reopen. Finish with `npx -y brain-axi review end <plan.html>` once approved. Poll rules (layout_warnings, snapshots) and the approved-snapshot rule: Read `references/review-flow.md` (`brain playbook plan --ref review-flow`).
+1. Read the brain first (bare `brain`, `brain progress list`, `brain features list`, `brain plans list`, `brain search "<topic>"`; for a feature, `brain runs view <slug>` and `brain verifications list --feature <slug>`); grill first if the plan carries a decision. 2. Write the ONE HTML file (`<repo>/plans/<topic>.html` is a good default). 3. `npx -y brain-axi review open <plan.html> --feature <slug>` registers the plan and opens the review UI (a plan that introduces a new feature: first `brain features add <slug> --name "..." --description "..."`). 4. Immediately `npx -y brain-axi review poll <plan.html>` and wait IN THE FOREGROUND of the same turn — it blocks until the human clicks Send; never background it, never end your turn while it waits; on interruption re-run it. 5. Apply each requested change to the SAME file (anchored by the prompt's `line` + `text`), then `npx -y brain-axi review poll <plan.html> --agent-reply "what you changed"`. 6. Repeat until approved or ended; if `ended_by: user`, stop polling and do not reopen. Once the human explicitly approves, record it: `npx -y brain-axi review end <plan.html> --approved-by <who>` (also the headless/CI path) — a plain `review end` (status unchanged) or a user End (`reviewed`) closes the session WITHOUT approval. The review history is `brain plans view <slug>`. Poll rules (layout_warnings, snapshots) and the approved-snapshot rule: Read `references/review-flow.md`.
 
 -------------------------------------------------------------------------------
 AUTHORING RULES

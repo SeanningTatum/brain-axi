@@ -5,12 +5,12 @@
 -------------------------------------------------------------------------------
 
 Before optimizing anything, build the set you will measure against. It lives
-in the brain (`.brain/evals/<suite>/cases.jsonl`, one JSON object per line)
-because it is project state that outlives any single session.
+in the project's own repo, next to the prompt and the eval runner (one case
+per line in a JSONL file, or whatever format the runner reads), because it is
+project state that outlives any single session. brain stores no cases.
 
-Read what already exists first: `brain evals` for the suite index,
-`brain evals view <suite>` for thresholds and coverage,
-`brain evals cases <suite>` for the set itself.
+Read what already exists first: the suite's directory, its cases file, and
+the runner's last output.
 
 Construction rules:
 
@@ -30,7 +30,7 @@ Construction rules:
   something.
 - **Every bug you fix becomes a frozen regression case, in the same session
   you fix it.** `frozen: true` means: this case may never regress, at any
-  aggregate score. This is the single highest-value habit in this playbook —
+  aggregate score. This is the single highest-value habit in this skill —
   it is how an AI feature stops re-breaking the same way.
 - **Hold out a slice you never tune against** (roughly 20%). If you edit the
   prompt in response to a case, that case is training data now. A score that

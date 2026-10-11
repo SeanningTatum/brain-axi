@@ -5,7 +5,7 @@
 -------------------------------------------------------------------------------
 What it's for: a small set of `.wf-*` classes that let you sketch a screen as
 plain greyscale boxes and lines — enough to judge layout, hierarchy, and flow,
-not enough to judge color or type. Append this to the plan playbook's §0
+not enough to judge color or type. Append this to the `brain-plan` skill's section 0
 `<style>` block; it reuses that block's custom properties (`--surface`,
 `--border`, `--fg`, `--muted`, `--space-*`) instead of any new hardcoded color,
 which is the whole point (see below).
@@ -42,7 +42,7 @@ which is the whole point (see below).
 `.wf-block` and `.wf-line` deliberately use `color-mix(in srgb, var(--fg) N%,
 var(--surface))` rather than a new grey hex literal — an earlier draft of this
 kit used raw `#f1efe7` / `#e8e6dc` fills, which is exactly the drift this
-playbook exists to prevent: change `--fg` or `--surface` and those hardcoded
+skill exists to prevent: change `--fg` or `--surface` and those hardcoded
 greys silently stop matching, while `color-mix()` tracks the palette
 automatically. No `color-mix()` support in your target? Fall back to
 `var(--border)` for both rather than inventing a new color.
@@ -53,7 +53,7 @@ place, does the empty state make sense — because there is nothing else to
 react to. Add real color and type and a reviewer critiques color and type
 instead; the planning round quietly becomes a design-polish round before
 anyone agreed the layout is right. Decision 2 of the approved plan
-(`.brain/features/planning-ux/planning-ux.md`) chose greyscale-by-default for
+(recorded in the planning-ux feature's doc: `brain docs view features/planning-ux`) chose greyscale-by-default for
 this reason, with one escape hatch: an `<img>` reference — an existing
 screenshot, a design comp that already exists, or a mockup too visually dense
 to fake in boxes-and-lines (a chart, a photo, a brand lockup) — gets pin-drop

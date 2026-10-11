@@ -4,12 +4,12 @@ description: "Use before writing any plan, proposal, or design that carries a de
 ---
 > CLI note: examples below say `brain <cmd>`. If `brain` is not on PATH, run `npx -y brain-axi <cmd>` instead.
 
-GRILLING PLAYBOOK
-=================
+GRILLING
+========
 
 You are about to write a plan and you do not yet know enough to write a good
-one. This playbook is the interview that runs BEFORE the artifact exists.
-the `brain-plan` skill (`brain playbook plan` if skills are unavailable) writes the thing; this one works out what the thing
+one. This skill is the interview that runs BEFORE the artifact exists.
+The `brain-plan` skill writes the thing; this one works out what the thing
 should be. Run it whenever the plan you are about to write will carry a
 decision card — which is nearly always, and the exception is the change so
 small it has nothing to decide.
@@ -34,18 +34,20 @@ Three rules govern the whole session:
 Before the tree, before the first round: write down every question you think
 you have, then take each one to the brain.
 
-- `brain search "<term>"` — rules, recipes, codebase docs, run notes.
-- The recorded decision rounds on every past plan. `brain plans` for the
-  list, then `brain plans view <slug>` per plan: prompts tagged decision carry
-  the question that was asked and the choice that was made, verbatim.
-- `brain features view <slug>` — a feature's description usually records the
-  non-goals that answer a scope question outright.
+- `brain search "<term>"` — rules, recipes, codebase docs, run notes
+  (read `kind`, `ref`, `snippet`; narrow with `--kind doc` or `--kind run-step`).
+- The recorded decision rounds on every past plan. `brain plans list` for the
+  list, then `brain plans view <slug>` per plan: read `rounds` and `prompts` —
+  prompts tagged decision carry the question that was asked and the choice
+  that was made, verbatim.
+- `brain features view <slug>` — a feature's `description:` and `doc_body:`
+  usually record the non-goals that answer a scope question outright.
 
 For each hit, do NOT ask. Write one line instead:
 
     Q: How does the new capability get packaged?
     Already decided 2026-07-30, plan product-planning-mockups:
-    "two new playbooks with thin branches in plan".
+    "two new skills with thin branches in plan".
     Say so if that has changed.
 
 The human reopens it in one word if the precedent has moved. What you must not
@@ -94,7 +96,7 @@ Every question carries a recommendation. An interview that makes the human
 generate the options from nothing is work you were supposed to do.
 
 Use this shape, because it is the decision-card shape from
-`brain playbook plan` section 8 — options here become radio rows there with no
+the `brain-plan` skill's decision-card section — options here become radio rows there with no
 rewriting, and the recommendation becomes the pre-checked one:
 
     Q1 — Where does the record live
@@ -131,7 +133,7 @@ a branch deletes the questions hanging off it; say so rather than asking them
 out of momentum.
 
 Round three with no shrink in the frontier means the scope is too big to settle
-in one plan. Stop and say so. Split it — `brain tasks` exists for exactly the
+in one plan. Stop and say so. Split it — `brain tasks add` exists for exactly the
 work that is too large to hold at once, and two plans that each converge beat
 one that never does.
 
@@ -142,7 +144,7 @@ one that never does.
 The session ends when the frontier is empty: every branch visited, nothing left
 silently assumed. Do not start writing code. Write the plan.
 
-Everything the grill produced has a slot in `brain playbook plan`:
+Everything the grill produced has a slot in the `brain-plan` artifact:
 
 - **Settled in the interview** — a decision card with the chosen option
   pre-selected, marked as already answered. The human confirms in one click
@@ -151,11 +153,12 @@ Everything the grill produced has a slot in `brain playbook plan`:
   one-line reopen offer on the card it would otherwise have been.
 - **Still open** — the open-questions section. A question with no shortlist was
   never card material.
-- **A fact you had to go find** — a run-note step, so the next session does not
-  go find it again.
+- **A fact you had to go find** — a run-note step
+  (`brain runs append <slug> --step "..." --observed "..."`), so the next
+  session does not go find it again.
 
-The artifact is then reviewed as usual: `brain review <plan.html>`, then
-`brain review poll` in the foreground.
+The artifact is then reviewed as usual: `brain review open <plan.html>`, then
+`brain review poll <plan.html>` in the foreground.
 
 -------------------------------------------------------------------------------
 6. FAILURE MODES
