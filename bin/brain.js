@@ -248,6 +248,7 @@ const init = {
   examples: ["brain init", "brain init --brain path/to/repo/.brain"],
   run(ctx) {
     const loc = L.locate(process.cwd(), { brain: ctx.flags.brain });
+    if (loc.mainUnknown) throw L.db.mainUnknownError(loc);
     const made = L.create(path.dirname(loc.brainDir), { brain: loc.brainDir });
     try {
       const cp = L.progress.add(made.db, {
@@ -280,7 +281,11 @@ const context = {
     const brainPath = rel(brainDir);
     const head = [kv("brain", brainPath), kv("features", statsLine(st))];
     // Sent, still-open screenshot pins are the reviewer's settled asks.
-    const pins = sentOpenPins(db, await readPinsSafe(brainDir, null, mainRoot));
+    // Only sent, not-yet-re-verified pins can be open: drop the rest before
+    // their shots are hashed (this runs on every session start).
+    const latest = L.verifications.latestAt(db);
+    const maybeOpen = (p) => p.sentAt && !((latest.get(p.feature) || "") > p.sentAt);
+    const pins = sentOpenPins(db, await readPinsSafe(brainDir, null, mainRoot, maybeOpen));
     if (pins.length) {
       const feats = [...new Set(pins.map((p) => p.feature))];
       const first = [...feats[0]].length > 40 ? [...feats[0]].slice(0, 39).join("") + "…" : feats[0];
@@ -322,9 +327,9 @@ const context = {
 // Screenshot pins from the watch dashboard (review server's store). A pin is
 // a settled ask only once "Send to Claude" stamped sentAt; unsent pins are
 // drafts. A broken store never breaks the CLI: it reads as no pins.
-async function readPinsSafe(brainDir, feature, mainRoot) {
+async function readPinsSafe(brainDir, feature, mainRoot, filter) {
   try {
-    return (await reviewModules()).readPins(brainDir, feature, { mainRoot });
+    return (await reviewModules()).readPins(brainDir, feature, { mainRoot, filter });
   } catch (e) {
     if (process.env.BRAIN_DEBUG) process.stderr.write(`brain: pins unreadable: ${e.message}\n`);
     return [];

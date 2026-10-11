@@ -167,7 +167,10 @@ function refsIn(region, topNames) {
     if (start === -1) continue;
     const cmd = toks[start];
     if (!/^[a-z][a-z-]*$/.test(cmd)) continue; // `brain <cmd>`, `brain --help`
-    const ref = { cmd, subs: [], flags: [] };
+    // `map`: a bare command-map summary (`verify list|add|run [--stage …]`)
+    // lists the flags of its subcommands together; a `brain …` example is run
+    // as written.
+    const ref = { cmd, subs: [], flags: [], map: start === i };
     let j = start + 1;
     if (j < toks.length && WORDISH.test(toks[j])) ref.subs = toks[j++].split("|");
     for (; j < toks.length; j++) {
@@ -202,7 +205,13 @@ function checkCommandRefs(problems, files, surface) {
           problems.push(`${where}: names \`brain ${ref.cmd}\`, which is not a command (see \`brain --help\`)`);
           continue;
         }
-        let allowed = new Set([...entry.flags, "--help", "--brain"]);
+        const base = [...entry.flags, "--help", "--brain"];
+        // One allowed-flag set per subcommand the reference can mean: in a
+        // runnable example a flag must work on EVERY named alternative
+        // (`brain tasks list|claim --by` is broken for list); in a command-map
+        // summary, or with no subcommand named and no default, on ANY.
+        let allowedSets = [new Set(base)];
+        let every = true;
         if (entry.subs.size) {
           // A word that is no subcommand of a command WITH a default is that
           // default's positional (`brain tasks auth` = `brain tasks list auth`),
@@ -212,10 +221,13 @@ function checkCommandRefs(problems, files, surface) {
           const subs = ref.subs.length ? ref.subs : entry.default ? [entry.default] : [...entry.subs.keys()];
           for (const s of ref.subs)
             if (!entry.subs.has(s)) problems.push(`${where}: names \`brain ${ref.cmd} ${s}\`, which is not a subcommand (\`brain ${ref.cmd} --help\` lists ${[...entry.subs.keys()].join(", ")})`);
-          for (const s of subs) for (const f of entry.subs.get(s) || []) allowed.add(f);
+          const known = subs.filter((s) => entry.subs.has(s)); // unknown ones are reported above
+          if (known.length) allowedSets = known.map((s) => new Set([...base, ...entry.subs.get(s)]));
+          every = !ref.map && (ref.subs.length > 0 || !!entry.default);
         }
+        const ok = (f) => (every ? allowedSets.every((a) => a.has(f)) : allowedSets.some((a) => a.has(f)));
         for (const f of ref.flags)
-          if (!allowed.has(f))
+          if (!ok(f))
             problems.push(`${where}: \`brain ${ref.cmd}${ref.subs.length ? " " + ref.subs.join("|") : ""}\` has no flag ${f} in --help`);
       }
     }

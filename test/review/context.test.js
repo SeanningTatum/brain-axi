@@ -151,6 +151,30 @@ test("withSuperseded: a pin goes superseded when its shot changes or disappears"
   assert.equal(withSuperseded([pin], root)[0].superseded, true);
 });
 
+test("withSuperseded: one shot under many pins is read once per change (size+mtime cache), and a same-size rewrite still supersedes", (t) => {
+  const { root } = seeded(t);
+  const rel = ".brain/shots/01-login.png";
+  const abs = path.join(root, rel);
+  const sha = sha256OfFile(abs);
+  const pins = Array.from({ length: 5 }, (_, i) => ({ id: `p${i}`, shot: rel, x: i, y: i, note: "n", shotSha256: sha }));
+  let reads = 0;
+  const orig = fs.readFileSync;
+  fs.readFileSync = function (p, ...rest) {
+    if (p === abs) reads++;
+    return orig.call(this, p, ...rest);
+  };
+  t.after(() => (fs.readFileSync = orig));
+  assert.ok(withSuperseded(pins, root).every((a) => !a.superseded));
+  assert.ok(withSuperseded(pins, root).every((a) => !a.superseded));
+  assert.equal(reads, 0, "an unchanged shot is not re-read");
+  const bytes = orig(abs);
+  fs.writeFileSync(abs, Buffer.from(bytes.map((b) => b ^ 0xff))); // same size, new bytes
+  const later = new Date(Date.now() + 5000);
+  fs.utimesSync(abs, later, later);
+  assert.ok(withSuperseded(pins, root).every((a) => a.superseded));
+  assert.equal(reads, 1, "five pins on one changed shot hash it once");
+});
+
 test("executionContext / planContext: a shot path recorded in two rounds is one carousel entry, newest caption", (t) => {
   const { db, root } = seeded(t);
   L.verifications.add(db, "auth", { verdict: "PASS", body: "again", shots: [{ path: ".brain/shots/01-login.png", caption: "login v2" }], root });

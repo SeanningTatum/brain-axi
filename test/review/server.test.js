@@ -348,6 +348,37 @@ test("watch: a brain.db replaced on disk (restore) sends context-update and serv
   assert.equal((await (await fetch(`${base}/watch/auth/context${qs}`)).json()).feature.status, "planned");
 });
 
+test("watch: a refetch that lands while brain.db is missing (mid-restore) does not wedge the dashboard", async (t) => {
+  const { base, brain, ok, brainDir } = await setup(t);
+  const url = urlOf(ok(brain(["watch", "auth", "--no-open"])).out);
+  const qs = url.slice(url.indexOf("?"));
+  assert.equal((await (await fetch(`${base}/watch/auth/context${qs}`)).json()).feature.status, "in-progress");
+  const events = [];
+  const req = http.get(`${base}/watch-events/auth${qs}`, (res) => res.on("data", (c) => events.push(String(c))));
+  t.after(() => req.destroy());
+  await new Promise((r) => setTimeout(r, 500));
+  const count = () => events.join("").split("event: context-update").length;
+  const waitMore = async (than, what) => {
+    const deadline = Date.now() + 5000;
+    while (count() <= than && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+    assert.ok(count() > than, `no context-update after ${what}: ${events.join("")}`);
+  };
+
+  // The restore removes brain.db; the page's refetch lands in the gap and fails.
+  let before = count();
+  for (const f of fs.readdirSync(brainDir)) if (f.startsWith("brain.db")) fs.rmSync(path.join(brainDir, f));
+  await waitMore(before, "brain.db disappeared");
+  assert.equal((await fetch(`${base}/watch/auth/context${qs}`)).status, 404);
+  await new Promise((r) => setTimeout(r, 600)); // a few ticks with no handle
+
+  // The restored file appears: the next tick reopens it and the page refetches.
+  before = count();
+  ok(brain(["init"]));
+  ok(brain(["features", "add", "auth", "--name", "Auth"]));
+  await waitMore(before, "the restored brain.db appeared");
+  assert.equal((await (await fetch(`${base}/watch/auth/context${qs}`)).json()).feature.status, "planned");
+});
+
 test("review: a poll that dies before the ack gets the same batch re-delivered; exactly one round; the ack clears it", async (t) => {
   const { base, brain, ok, post } = await setup(t);
   const open = ok(brain(["review", "open", "plans/auth.html", "--no-open"]));
@@ -520,6 +551,23 @@ test("watch from a worktree: the dashboard checks plan files in that worktree (r
   assert.match(files(mainCtx).detail, /plan plans\/wt-only\.html is missing/);
   const page = await (await fetch(url)).text();
   assert.ok(page.includes(`root: "${encodeURIComponent(fs.realpathSync(wt))}"`), "dashboard carries root into its fetches");
+});
+
+test("watch with an explicit --brain outside git: the dashboard checks plan files in the caller's checkout", async (t) => {
+  const { dir, base, brain, ok } = await setup(t);
+  const ext = path.join(tmp(t), "shared", ".brain");
+  ok(brain(["init", "--brain", ext]));
+  ok(brain(["features", "add", "auth", "--name", "Auth", "--brain", ext]));
+  const L = await import("../../lib/brain/index.js");
+  const b = L.openBrain(dir, { brain: ext });
+  L.plans.upsert(b.db, { file: "plans/auth.html", root: dir });
+  L.close(b.db);
+  const url = urlOf(ok(brain(["watch", "auth", "--no-open", "--brain", ext])).out);
+  const qs = url.slice(url.indexOf("?"));
+  assert.equal(new URLSearchParams(qs).get("root"), dir);
+  const ctx = await (await fetch(`${base}/watch/auth/context${qs}`)).json();
+  const files = ctx.checks.find((x) => x.check === "plan and shot files");
+  assert.equal(files.status, "pass", JSON.stringify(files));
 });
 
 test("watch: after a brain.db restore, a re-captured shot of the NEW brain still sends context-update", async (t) => {

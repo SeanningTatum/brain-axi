@@ -2,8 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { EventEmitter } from "node:events";
 import { features, verify } from "../../lib/brain/index.js";
 import { freshBrain, throwsCode, rejectsRaw } from "./helpers.js";
+import { supervise, killTree, TIMEOUT_MARK, TIMEOUT_EXIT } from "../../lib/brain/verify-supervisor.js";
 
 test("addCheck, listChecks by stage, CHECK_EXISTS and replace, removeCheck", (t) => {
   const { db } = freshBrain(t);
@@ -127,4 +129,43 @@ test("each finished check is recorded before the next one starts", (t) => {
   const seen = [];
   verify.run(db, { root, onResult: (r) => seen.push([r.check, verify.gateRuns(db).length]) });
   assert.deepEqual(seen, [["a", 1], ["b", 2]]);
+});
+
+test("supervisor platform branch: POSIX kills the process group + SIGALRM; Windows taskkill /T /F + a stderr mark, no SIGALRM", async () => {
+  const calls = [];
+  const kill = (pid, sig) => calls.push(["kill", pid, sig]);
+  const spawnSync = (cmd, args) => calls.push(["spawnSync", cmd, args]);
+  const run = (platform) =>
+    new Promise((resolve) => {
+      calls.length = 0;
+      const child = new EventEmitter();
+      child.pid = 4242;
+      const exit = (code) => {
+        calls.push(["exit", code]);
+        resolve(calls.slice());
+      };
+      const writeSync = (fd, s) => calls.push(["write", fd, s]);
+      const spawn = (cmd, opts) => {
+        calls.push(["spawn", cmd, opts.detached]);
+        return child;
+      };
+      supervise("sleep 60", 20, { platform, spawn, kill, spawnSync, exit, writeSync, onSignal: () => {}, pid: 7 });
+      if (platform !== "win32") setTimeout(() => resolve(calls.slice()), 100); // SIGALRM ends a real supervisor
+    });
+
+  assert.deepEqual(await run("linux"), [["spawn", "sleep 60", true], ["kill", -4242, "SIGKILL"], ["kill", 7, "SIGALRM"]]);
+  assert.deepEqual(await run("win32"), [
+    ["spawn", "sleep 60", false],
+    ["spawnSync", "taskkill", ["/pid", "4242", "/T", "/F"]],
+    ["write", 2, TIMEOUT_MARK],
+    ["exit", TIMEOUT_EXIT],
+  ]);
+  // A failing taskkill (or kill) is ignored.
+  assert.doesNotThrow(() => killTree(1, { platform: "win32", spawnSync: () => { throw new Error("ENOENT"); } }));
+  assert.doesNotThrow(() => killTree(1, { platform: "darwin", kill: () => { throw new Error("ESRCH"); } }));
+  // runOne's reading of a Windows supervisor's timeout: the mark, stripped from the tail.
+  const r = verify.outcome({ name: "w" }, { status: TIMEOUT_EXIT, signal: null, stdout: "partial\n", stderr: TIMEOUT_MARK }, 1);
+  assert.deepEqual([r.status, r.exit, r.tail], ["timeout", null, "partial"]);
+  const own = verify.outcome({ name: "w" }, { status: TIMEOUT_EXIT, signal: null, stdout: "x\n", stderr: "" }, 1);
+  assert.deepEqual([own.status, own.exit], ["fail", TIMEOUT_EXIT], "a check's own exit 124 is a plain failure");
 });

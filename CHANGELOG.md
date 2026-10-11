@@ -57,8 +57,15 @@ each other; a database gives those for free. Plan: `plans/2026-10-10-axi-archite
 - Review feedback is delivered at-least-once: a polled batch stays in flight on the server
   until the CLI has recorded it and acks it (`POST /api/ack`), so a poll killed mid-flight
   re-delivers the same batch; the batch id (schema migration `002`) keeps it to one round.
-- `verify` runs each check in its own process group: a timeout (or Ctrl-C) kills the whole
-  tree, so a timed-out suite cannot keep running into the next check.
+- `verify` runs each check under a small supervisor (`lib/brain/verify-supervisor.js`) that
+  kills the whole tree on a timeout (or Ctrl-C), so a timed-out suite cannot keep running
+  into the next check. On macOS/Linux that is the check's own process group; on Windows,
+  which has neither process groups nor `SIGALRM`, it is `taskkill /pid <pid> /T /F` and the
+  timeout is reported on the supervisor's own stderr instead of a signal.
+- In a linked worktree of a `--separate-git-dir` repo (git records no path for its main
+  checkout), the main checkout records itself in the git dir the first time any `brain`
+  command runs there, so its worktrees share its brain; until then a worktree refuses with
+  `MAIN_CHECKOUT_UNKNOWN` rather than creating a second brain.
 - `check` is rewritten: SQLite integrity, foreign keys, search index, cross-entity rules
   (shipped features verified or grandfathered, no open tasks), plan/shot file hashes.
 - Eval suites are repo-dev tooling in `evals/` and `evals-plugin/`, run by standalone

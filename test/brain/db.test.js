@@ -393,3 +393,37 @@ test("locate: an explicit --brain outside any repo keeps the caller's checkout a
   const nowhere = tmpDir(t);
   assert.equal(locate(nowhere, { brain: shared }).root, path.dirname(shared), "no caller repo: the brain's parent");
 });
+
+test("locate: worktrees of a --separate-git-dir repo share the main checkout's brain (never a second one)", (t) => {
+  const base = tmpDir(t);
+  const main = path.join(base, "main");
+  git(base, "init", "-q", "-b", "main", "--separate-git-dir", path.join(base, "store.git"), main);
+  git(main, "config", "user.email", "t@example.com");
+  git(main, "config", "user.name", "Test Author");
+  git(main, "commit", "-q", "--allow-empty", "-m", "init");
+  const wt = path.join(base, "wt");
+  git(main, "worktree", "add", "-q", wt, "-b", "wt-branch");
+
+  // The main checkout has not run brain yet: git records no path for it, so
+  // the worktree refuses to guess (no split brain), naming the two ways out.
+  assert.equal(locate(wt).mainUnknown, true);
+  const e = throwsCode(() => create(wt), "MAIN_CHECKOUT_UNKNOWN");
+  assert.ok(e.help.some((h) => /--brain/.test(h)));
+  throwsCode(() => openBrain(wt), "MAIN_CHECKOUT_UNKNOWN");
+  assert.ok(!fs.existsSync(path.join(wt, ".brain")));
+
+  const b = create(main);
+  t.after(() => close(b.db));
+  const loc = locate(wt);
+  assert.equal(loc.brainDir, path.join(main, ".brain"));
+  assert.equal(loc.root, wt);
+  assert.equal(loc.worktree, true);
+  assert.equal(loc.mainUnknown, undefined);
+  const w = openBrain(wt);
+  close(w.db);
+  assert.equal(locate(main).brainDir, path.join(main, ".brain"), "the main checkout is its own main");
+
+  // A stale record (that checkout no longer points at this git dir) is ignored.
+  fs.writeFileSync(path.join(base, "store.git", "brain-axi-main-checkout"), base + "\n");
+  assert.equal(locate(wt).mainUnknown, true);
+});

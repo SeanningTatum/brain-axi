@@ -101,9 +101,11 @@ THE LOOP
    step with the VERBATIM observed output (`--observed -` reads stdin, so
    pipe a command's output straight in). This is what makes the run a real
    record instead of a summary you wrote from memory. Small, frequent steps
-   beat one giant step at the end — if the session gets interrupted,
-   `brain runs view <slug>` is what a fresh session (or the coordinator)
-   reads to pick up exactly where you left off.
+   beat one giant step at the end — if the session gets interrupted, a
+   fresh session (or the coordinator) lists the runs with
+   `brain runs view <slug>`, then reads the linked run's steps with
+   `brain runs view <slug> --run <name> --full` to pick up exactly where
+   you left off.
 
 3b. **On every visual test, pass AND fail — save the screenshot under
    `.brain/shots/<slug>/`** (a worktree: the MAIN checkout's) (`NN-name.png`, or `E1-name.png` for an

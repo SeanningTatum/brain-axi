@@ -41,3 +41,16 @@ test("a literal feature name after a command with a default subcommand is that d
   assert.deepEqual(scan(t, "`brain runs auth --run 2026-10-10-progress`\n"), []);
   assert.match(scan(t, "`brain runs auth --verdict PASS`\n").join("\n"), /has no flag --verdict/);
 });
+
+test("an a|b subcommand form is checked per subcommand: a flag must work on every alternative", (t) => {
+  const p = scan(t, "`brain tasks list|claim auth --by worker`\n");
+  assert.equal(p.length, 1, p.join("\n"));
+  assert.match(p[0], /`brain tasks list\|claim` has no flag --by/);
+  assert.deepEqual(scan(t, "`brain tasks claim auth t1 --by worker`\n"), []);
+  assert.deepEqual(scan(t, "`brain features list|view --brain x`\n"), [], "global flags work on every subcommand");
+});
+
+test("a bare command-map summary (no `brain` prefix) lists its subcommands' flags together", (t) => {
+  assert.deepEqual(scan(t, "- `verify list|add|run [--stage verify] [--only <name>]` — checks\n"), []);
+  assert.match(scan(t, "- `verify list|add|run [--stagez verify]` — checks\n").join("\n"), /has no flag --stagez/);
+});
