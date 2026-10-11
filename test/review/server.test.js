@@ -497,6 +497,33 @@ test("review: a lost-ack re-delivery leaves the End to the user's final batch qu
   assert.match(view.out, /^rounds\[2\]/m);
 });
 
+test("review: two servers on different ports sharing sessions.json never erase each other's queued feedback", async (t) => {
+  const { base, dir, brain, ok, post } = await setup(t);
+  fs.writeFileSync(path.join(dir, "plans", "billing.html"), "<!doctype html><title>Billing</title><body><p>Bill monthly.</p></body>");
+  const port2 = await freePort();
+  const base2 = `http://127.0.0.1:${port2}`;
+  t.after(() => fetch(`${base2}/shutdown`, { method: "POST" }).catch(() => {}));
+  const keyA = urlOf(ok(brain(["review", "open", "plans/auth.html", "--no-open"])).out).split("/").pop();
+  const keyB = urlOf(ok(brain(["review", "open", "plans/billing.html", "--no-open", "--port", String(port2)])).out).split("/").pop();
+  const N = 60;
+  const sends = [];
+  for (let i = 0; i < N; i++) {
+    sends.push(post("/api/feedback", { key: keyA, prompts: [{ tag: "message", prompt: `a${i}` }] }, { origin: base }));
+    sends.push(
+      fetch(`${base2}/api/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: base2 },
+        body: JSON.stringify({ key: keyB, prompts: [{ tag: "message", prompt: `b${i}` }] }),
+      })
+    );
+  }
+  for (const r of await Promise.all(sends)) assert.equal(r.status, 200);
+  const a = await (await fetch(`${base}/api/poll?key=${keyA}`)).json();
+  const b = await (await fetch(`${base2}/api/poll?key=${keyB}`)).json();
+  assert.equal(a.prompts.length, N, "server A's batch lost prompts to server B's writes");
+  assert.equal(b.prompts.length, N, "server B's batch lost prompts to server A's writes");
+});
+
 test("watch: replacing a recorded shot file (no brain.db write) sends context-update", async (t) => {
   const { base, brain, ok, brainDir } = await setup(t);
   fs.mkdirSync(path.join(brainDir, "shots"), { recursive: true });
@@ -515,6 +542,48 @@ test("watch: replacing a recorded shot file (no brain.db write) sends context-up
   const deadline = Date.now() + 4000;
   while (count() <= before && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
   assert.ok(count() > before, `no context-update after a shot replace: ${events.join("")}`);
+});
+
+test("watch: editing a registered plan file (no brain.db write) sends context-update and the health strip sees it", async (t) => {
+  const { base, dir, brain, ok } = await setup(t);
+  ok(brain(["review", "open", "plans/auth.html", "--no-open"]));
+  const url = urlOf(ok(brain(["watch", "auth", "--no-open"])).out);
+  const qs = url.slice(url.indexOf("?"));
+  const events = [];
+  const req = http.get(`${base}/watch-events/auth${qs}`, (res) => res.on("data", (c) => events.push(String(c))));
+  t.after(() => req.destroy());
+  await new Promise((r) => setTimeout(r, 600));
+  const count = () => events.join("").split("event: context-update").length;
+  const before = count();
+  fs.writeFileSync(path.join(dir, "plans", "auth.html"), "<!doctype html><title>Auth plan</title><body><p>Edited.</p></body>");
+  const deadline = Date.now() + 4000;
+  while (count() <= before && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+  assert.ok(count() > before, `no context-update after a plan edit: ${events.join("")}`);
+  const ctx = await (await fetch(`${base}/watch/auth/context${qs}`)).json();
+  assert.match(JSON.stringify(ctx.checks), /plan plans\/auth\.html changed since it was recorded/);
+});
+
+test("review: reopening a file with another brain rebinds an open tab's sidebar to that brain", async (t) => {
+  const { base, brain, ok } = await setup(t);
+  const key = urlOf(ok(brain(["review", "open", "plans/auth.html", "--no-open"])).out).split("/").pop();
+  const events = [];
+  const req = http.get(`${base}/events/${key}`, (res) => res.on("data", (c) => events.push(String(c))));
+  t.after(() => req.destroy());
+  await new Promise((r) => setTimeout(r, 600));
+  const count = () => events.join("").split("event: context-update").length;
+  const waitMore = async (n, what) => {
+    const deadline = Date.now() + 4000;
+    while (count() <= n && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+    assert.ok(count() > n, `no context-update after ${what}: ${events.join("")}`);
+  };
+  ok(brain(["init", "--brain", "other"]));
+  let before = count();
+  ok(brain(["review", "open", "plans/auth.html", "--no-open", "--brain", "other"]));
+  await waitMore(before, "the reopen");
+  await new Promise((r) => setTimeout(r, 600)); // let the reopen's own writes settle
+  before = count();
+  ok(brain(["features", "add", "later", "--name", "Later", "--brain", "other"]));
+  await waitMore(before, "a write to the new brain");
 });
 
 test("review: sessions saved by a pre-0.3 server (state.json) survive the upgrade, user-end latch included", async (t) => {

@@ -63,7 +63,9 @@ flags a missing or changed plan.
 - Port **4517** (`--port`, `BRAIN_AXI_PORT`). Bind `127.0.0.1` only.
 - State dir `~/.brain-axi/` (`BRAIN_AXI_STATE_DIR`): `sessions.json`, `server.log`. Until
   `sessions.json` exists, a pre-0.3 `state.json` (same session shape) is read, so queued
-  prompts and the user-end latch survive the upgrade.
+  prompts and the user-end latch survive the upgrade. Servers on different ports share
+  the store, so every read-modify-write holds `sessions.json.lock` (atomic `mkdir`; a lock
+  older than 2 s is broken).
 - Session key: first 16 hex of `sha256(realpath(file))` — `sessionKey()` in server.js,
   imported by the CLI.
 - Idle shutdown: 30 min with no SSE client and no in-flight poll
@@ -148,9 +150,12 @@ Poll payloads (wire contract unchanged; `batch` and `redelivered` are additive):
   the CLI's writes) and sends `context-update`. The baseline is taken at bind time, and
   every new stream gets one `context-update` so a page that fetched before connecting
   catches up. The same tick also compares a size+mtime signature of the brain's recorded
-  shot files (distinct paths, re-read only when `data_version` moves; one stat per file
-  per tick), so a shot replaced or deleted with no brain.db write (pins turn superseded,
-  file health changes) still sends `context-update`. A brain no page is bound to and
+  files — shots in the main checkout, plan files and plan snapshots in each checkout a
+  bound page checks them in (distinct paths, re-read only when `data_version` moves; one
+  stat per file per tick) — so a file replaced, edited or deleted with no brain.db write
+  (pins turn superseded, file health changes) still sends `context-update`. Reopening a
+  session (`/api/open`) rebinds an already-open tab to the brain it was reopened with and
+  sends it `context-update`. A brain no page is bound to and
   untouched for 5 minutes has its handle closed (reopened on the next request). Pin writes broadcast directly (they are not in brain.db) — to the feature's
   dashboard and to every review tab on the same brain.
 
