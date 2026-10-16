@@ -3853,13 +3853,11 @@ function cmdContext(argv) {
   const progress = parseProgress(brain);
   const counts = featureStats(list);
   const inProgress = list.features.filter((f) => f.status === "in-progress");
-  const lines = [
-    kv("brain", relBrain(brain)),
-    kv(
-      "features",
-      `${list.features.length} total (${Object.entries(counts).map(([s, n]) => `${n} ${s}`).join(", ")})`
-    ),
-  ];
+  let brainPath = relBrain(brain);
+  const features = kv(
+    "features",
+    `${list.features.length} total (${Object.entries(counts).map(([s, n]) => `${n} ${s}`).join(", ")})`
+  );
   // Free text, clipped below so the block stays within CONTEXT_CAP.
   const free = { "in-progress": inProgress.length ? inProgress.map((f) => f.slug).join(", ") : "none" };
   if (progress.entries.length) {
@@ -3872,14 +3870,24 @@ function cmdContext(argv) {
     kv("skills", "use the brain-* skills (brain, brain-start, brain-plan, ...); else `brain playbook <id>`"),
     ...toonList("help", ["Run `brain` for the full dashboard, `brain progress` for the latest checkpoint"]),
   ];
-  const render = () => [...lines, ...Object.entries(free).map(([k, v]) => kv(k, v)), ...tail];
+  const render = () => [kv("brain", brainPath), features, ...Object.entries(free).map(([k, v]) => kv(k, v)), ...tail];
   // Budget covers the whole block incl. the trailing newline print() adds.
+  const overBy = () => Buffer.byteLength(render().join("\n") + "\n") - CONTEXT_CAP;
   for (const key of ["next", "last-checkpoint", "in-progress"]) {
-    const over = Buffer.byteLength(render().join("\n") + "\n") - CONTEXT_CAP;
+    const over = overBy();
     if (over <= 0 || !free[key]) continue;
     const chars = [...free[key]];
+    if (chars.length <= 20) continue; // already at the floor: clipping would only add "…"
     free[key] = chars.slice(0, Math.max(20, chars.length - over - 8)).join("") + "…";
   }
+  // A very long --brain path: keep its tail (the repo-identifying end).
+  if (overBy() > 0) {
+    const chars = [...brainPath];
+    brainPath = "…" + chars.slice(Math.min(chars.length, overBy() + 8)).join("");
+  }
+  // Still over (pathological input): drop free fields until it fits.
+  for (const key of ["next", "last-checkpoint", "in-progress"]) if (overBy() > 0) delete free[key];
+  if (overBy() > 0) return; // never print a block over the cap
   print(render());
 }
 
