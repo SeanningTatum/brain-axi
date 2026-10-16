@@ -64,6 +64,13 @@ function gen() {
   const cases = loadAll();
   if (!cases.length) die("no cases in evals/skill-routing/{cases,heldout}.jsonl");
   fs.mkdirSync(evalDir, { recursive: true });
+  // Remove generated folders for deleted or renamed cases, or `live` keeps
+  // running (and paying for) them while convert() drops their results.
+  const ids = new Set(cases.map((c) => c.id));
+  for (const ent of fs.readdirSync(evalDir, { withFileTypes: true })) {
+    if (!ent.isDirectory() || ids.has(ent.name)) continue;
+    if (fs.existsSync(path.join(evalDir, ent.name, "case.yaml"))) fs.rmSync(path.join(evalDir, ent.name), { recursive: true });
+  }
   for (const c of cases) {
     const { none, accept } = parseExpected(c.expected);
     const noBrain = c.tags.includes("no-brain");
