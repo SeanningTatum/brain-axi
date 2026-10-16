@@ -911,3 +911,135 @@ test("review: two polls that both see the user's End record one closing round", 
   const view = ok(brain(["plans", "view", "auth"]), /^rounds\[1\]/m);
   assert.match(view.out, /^ {2}1,\S+,user,0$/m);
 });
+
+test("review: a refused --plan switch keeps the session's plan; its batches are recorded there, once", async (t) => {
+  // Regression (Greptile PR #26): a `review open --plan` that the server
+  // refused (feedback landed between the CLI's check and /api/open) had
+  // already registered the new slug, and the poll recorded the batch into
+  // that newer plan — a lost-ack re-delivery a second time.
+  const { base, dir, brain, ok, post, brainDir } = await setup(t);
+  const key = urlOf(ok(brain(["review", "open", "plans/auth.html", "--no-open"])).out).split("/").pop();
+  assert.equal((await post("/api/feedback", { key, prompts: [{ tag: "message", prompt: "for auth" }] }, { origin: base })).status, 200);
+  const lost = await (await fetch(`${base}/api/poll?key=${key}`)).json(); // fetched, never acked
+  assert.equal(lost.plan, "auth");
+  const { openBrain, plans, close } = await import("../../lib/brain/index.js");
+  const bump = (fn) => {
+    const b = openBrain(dir);
+    fn(b.db);
+    close(b.db);
+  };
+  // The CLI recorded the batch and died before the ack; then a racing
+  // switch registered auth-v2 (the newest row for the file) and was refused.
+  bump((db) => {
+    plans.addRound(db, "auth", { prompts: lost.prompts.map((p) => ({ tag: p.tag, prompt: p.prompt })), batchId: lost.batch });
+    plans.upsert(db, { file: "plans/auth.html", slug: "auth-v2", root: dir });
+  });
+  assert.equal((await post("/api/open", { file: path.join(dir, "plans", "auth.html"), plan: "auth-v2", brain: brainDir }, { origin: base })).status, 409);
+  // The re-delivery is deduplicated; the next batch still lands in auth.
+  ok(brain(["review", "poll", "plans/auth.html", "--timeout-ms", "5000"]), /^redelivered: true$/m);
+  assert.equal((await post("/api/feedback", { key, prompts: [{ tag: "message", prompt: "second pass" }] }, { origin: base })).status, 200);
+  ok(brain(["review", "poll", "plans/auth.html", "--timeout-ms", "5000"]), /second pass/);
+  ok(brain(["plans", "view", "auth"]), /^rounds\[2\]/m);
+  assert.doesNotMatch(ok(brain(["plans", "view", "auth-v2"])).out, /^rounds\[[1-9]/m);
+  // A plain reopen with feedback pending defaults to the session's plan, not
+  // the file's newest registration (no PLAN_MISMATCH).
+  assert.equal((await post("/api/feedback", { key, prompts: [{ tag: "message", prompt: "third" }] }, { origin: base })).status, 200);
+  bump((db) => plans.upsert(db, { file: "plans/auth.html", slug: "auth-v2", root: dir }));
+  ok(brain(["review", "open", "plans/auth.html", "--no-open"]), /^ {2}plan: auth$/m);
+  ok(brain(["review", "poll", "plans/auth.html", "--timeout-ms", "5000"]), /third/);
+  ok(brain(["plans", "view", "auth"]), /^rounds\[3\]/m);
+  ok(brain(["check"]), /^ok: true$/m);
+});
+
+for (const by of ["user", "agent"])
+  test(`review: a recorded, unacked user-End batch does not stand in for the ${by}'s End after --reopen`, async (t) => {
+    // Regression (Greptile PR #26): the re-delivery re-attached the old End
+    // (attributed to the user), which the batch-id dedup then swallowed while
+    // still closing the reopened session: the new closing round was lost.
+    const { base, dir, brain, ok, post } = await setup(t);
+    const key = urlOf(ok(brain(["review", "open", "plans/auth.html", "--no-open"])).out).split("/").pop();
+    assert.equal((await post("/api/feedback", { key, end: true, prompts: [{ tag: "message", prompt: "last words" }] }, { origin: base })).status, 200);
+    const lost = await (await fetch(`${base}/api/poll?key=${key}`)).json(); // fetched, never acked
+    assert.equal(lost.session_ended, true);
+    // The CLI recorded it as the closing round, then died before the ack.
+    const { openBrain, plans, close } = await import("../../lib/brain/index.js");
+    const b = openBrain(dir);
+    plans.addRound(b.db, "auth", { prompts: lost.prompts.map((p) => ({ tag: p.tag, prompt: p.prompt })), endedBy: "user", batchId: lost.batch });
+    plans.endSession(b.db, "auth");
+    close(b.db);
+    ok(brain(["review", "open", "plans/auth.html", "--no-open", "--reopen"]), /^ {2}status: open$/m);
+    if (by === "user") assert.equal((await post("/api/end", { key, by: "user" }, { origin: base })).status, 200);
+    else ok(brain(["review", "end", "plans/auth.html"]));
+    const again = ok(brain(["review", "poll", "plans/auth.html", "--timeout-ms", "5000"]), /^redelivered: true$/m);
+    assert.doesNotMatch(again.out, /^ended_by:/m);
+    const end = ok(brain(["review", "poll", "plans/auth.html", "--timeout-ms", "5000"]), /^status: ended$/m);
+    assert.match(end.out, new RegExp(`^ended_by: ${by}$`, "m"));
+    const view = ok(brain(["plans", "view", "auth"]), /^session_open: false$/m);
+    if (by === "user") {
+      assert.match(again.out, /^next_step: .*The user ended the session after this batch/m);
+      assert.match(view.out, /^rounds\[2\]/m);
+      assert.match(view.out, /^ {2}2,\S+,user,0$/m);
+    } else {
+      assert.doesNotMatch(again.out, /The user ended/);
+      assert.match(view.out, /^rounds\[1\]/m);
+    }
+  });
+
+test("review: the sessions.json lock of a live holder is not broken at 2 s; a dead holder's is", async (t) => {
+  const { base, brain, ok, post, state } = await setup(t);
+  const key = urlOf(ok(brain(["review", "open", "plans/auth.html", "--no-open"])).out).split("/").pop();
+  const lock = path.join(state, "sessions.json.lock");
+  const hold = (pid, token) => {
+    fs.mkdirSync(lock);
+    fs.writeFileSync(path.join(lock, "owner"), JSON.stringify({ pid, token }));
+  };
+  // A live holder (this test process): the server waits instead of stealing.
+  hold(process.pid, "live-holder");
+  let settled = false;
+  const sent = post("/api/feedback", { key, prompts: [{ tag: "message", prompt: "after the lock" }] }, { origin: base }).finally(() => (settled = true));
+  await new Promise((r) => setTimeout(r, 2600));
+  assert.equal(settled, false, "the server broke a live holder's lock");
+  assert.equal(JSON.parse(fs.readFileSync(path.join(lock, "owner"), "utf8")).token, "live-holder");
+  fs.rmSync(lock, { recursive: true, force: true });
+  assert.equal((await sent).status, 200);
+  // A holder that died mid-hold: broken right away, long before the age bound.
+  hold(spawnSync(process.execPath, ["-e", ""]).pid, "dead-holder");
+  const t0 = Date.now();
+  assert.equal((await post("/api/feedback", { key, prompts: [{ tag: "message", prompt: "again" }] }, { origin: base })).status, 200);
+  assert.ok(Date.now() - t0 < 5000, "a dead holder's lock waited for the age bound");
+  assert.ok(!fs.existsSync(lock));
+  ok(brain(["review", "poll", "plans/auth.html", "--timeout-ms", "5000"]), /after the lock/);
+});
+
+test("sessions.json lock: a writer that lost its lock redoes the write on fresh state and never removes another's lock", async (t) => {
+  const { _stateStore: S } = await import("../../lib/review/server.js");
+  const state = tmp(t);
+  const prev = process.env.BRAIN_AXI_STATE_DIR;
+  process.env.BRAIN_AXI_STATE_DIR = state;
+  t.after(() => (prev === undefined ? delete process.env.BRAIN_AXI_STATE_DIR : (process.env.BRAIN_AXI_STATE_DIR = prev)));
+  const lock = path.join(state, "sessions.json.lock");
+  const takeOver = (pid, token, write) => {
+    fs.rmSync(lock, { recursive: true, force: true });
+    fs.mkdirSync(lock);
+    fs.writeFileSync(path.join(lock, "owner"), JSON.stringify({ pid, token }));
+    if (write) fs.writeFileSync(path.join(state, "sessions.json"), JSON.stringify({ sessions: { theirs: { key: "theirs" } }, pins: {} }));
+  };
+  // Paused mid-hold: another writer (since dead) broke the lock and saved.
+  // This writer's stale copy is refused, and its retry keeps both writes.
+  const deadPid = spawnSync(process.execPath, ["-e", ""]).pid;
+  let attempts = 0;
+  S.withStateLock(() => {
+    attempts++;
+    const st = S.loadState();
+    st.sessions.mine = { key: "mine" };
+    if (attempts === 1) takeOver(deadPid, "other-writer", true);
+    S.saveState(st);
+  });
+  assert.equal(attempts, 2);
+  assert.deepEqual(Object.keys(S.loadState().sessions).sort(), ["mine", "theirs"]);
+  assert.ok(!fs.existsSync(lock));
+  // Cleanup only removes a lock that still carries this writer's token.
+  S.withStateLock(() => takeOver(process.pid, "live-other"));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(lock, "owner"), "utf8")).token, "live-other");
+  fs.rmSync(lock, { recursive: true, force: true });
+});

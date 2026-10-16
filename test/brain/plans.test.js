@@ -76,6 +76,17 @@ test("addRound with a batchId is idempotent: a re-delivered batch is one round",
   assert.deepEqual(g.reviews.map((r) => r.prompts.map((p) => p.prompt)), [["once"], ["next"]]);
 });
 
+test("addRound dedups a batchId across plans: a file re-registered under another slug never records the batch twice", (t) => {
+  const { db, root } = freshBrain(t);
+  const file = planFile(root);
+  plans.upsert(db, { file, slug: "p1", root });
+  plans.upsert(db, { file, slug: "p2", root });
+  plans.addRound(db, "p1", { prompts: [{ prompt: "once" }], batchId: "b-1" });
+  const again = plans.addRound(db, "p2", { prompts: [{ prompt: "once" }], batchId: "b-1" });
+  assert.deepEqual(again, { slug: "p1", round: 1, status: "in-review", duplicate: true });
+  assert.equal(plans.get(db, "p2").rounds, 0);
+});
+
 test("endSession closes the session; --approved-by approves headless and increments the round (#8)", (t) => {
   const { db, root } = freshBrain(t);
   plans.upsert(db, { file: planFile(root), slug: "p", root });

@@ -1183,14 +1183,20 @@ function assertSessionBrain(sessionBrain, brainDir, file, flags, verb = "poll") 
   ]);
 }
 
-function recordPoll(db, root, abs, data) {
+// `boundSlug` is the plan the session was bound to before this poll (the
+// fallback when a server predating per-batch plans sends none).
+function recordPoll(db, root, abs, data, boundSlug) {
   const userEnded = (data.session_ended || data.status === "ended") && data.ended_by === "user";
   const prompts = data.status === "feedback" ? data.prompts || [] : [];
   if (!prompts.length && !userEnded) return;
   // One write transaction (BEGIN IMMEDIATE): two polls that both see the
   // user's End serialize here, and only the first finds the session open.
   L.tx(db, () => {
-    const plan = RV.planForFile(db, root, abs) || L.plans.upsert(db, { file: abs, root });
+    // The plan the batch was given for (stamped by the server when it was
+    // sent), not merely the file's newest registration: a `review open
+    // --plan` the server refused may already have registered another slug.
+    const slug = (typeof data.plan === "string" && data.plan) || boundSlug;
+    const plan = RV.planForFile(db, root, abs, slug) || L.plans.upsert(db, { file: abs, root });
     // The first poll after the user's End (with or without a final batch)
     // records the closing round; the closed session makes repeat polls no-ops.
     const closing = userEnded && !!L.plans.get(db, plan.slug).session_open;
@@ -1247,9 +1253,11 @@ const review = {
         // (the server refuses the move too): say so before registering here.
         const prior = rv.readSession(rv.sessionKey(abs));
         if (rv.hasPendingFeedback(prior)) assertSessionBrain(prior.brain, brainDir, file, flags);
-        const known = rv.planForFile(db, root, abs);
         // ...and with its plan: re-registering the file under another slug
         // would record the batch into that plan (or twice, after a lost ack).
+        // The session's plan stays the default even if a refused switch left
+        // the file registered under another slug too.
+        const known = rv.planForFile(db, root, abs, prior && prior.plan);
         const wanted = flags.plan || (known && known.slug);
         if (rv.hasPendingFeedback(prior) && prior.plan && wanted && wanted !== prior.plan)
           fail("PLAN_MISMATCH", `${file} has unrecorded feedback for plan "${prior.plan}"; it cannot move to plan "${wanted}" yet; nothing was changed`, [
@@ -1320,7 +1328,7 @@ const review = {
         if (session) await ensureServer(reviewPort(flags));
         // The agent edits the plan between polls: keep the recorded hash current.
         const abs = realFile(file);
-        const known = rv.planForFile(db, root, abs);
+        const known = rv.planForFile(db, root, abs, session && session.plan);
         if (known) L.plans.upsert(db, { file: abs, slug: known.slug, root });
         process.stderr.write("waiting for feedback… leave this running (Ctrl-C safe: feedback is never lost)\n");
         let url = `http://127.0.0.1:${reviewPort(flags)}/api/poll?key=${encodeURIComponent(key)}`;
@@ -1346,7 +1354,7 @@ const review = {
         }
         // Unacked, a refused batch stays queued for the right brain's poll.
         assertSessionBrain(data.brain, brainDir, file, flags);
-        recordPoll(db, root, abs, data);
+        recordPoll(db, root, abs, data, session && session.plan);
         // Print (flushed) first, then ack: a CLI killed in between leaves the
         // batch unacked, so it is redelivered (and the batch_id dedups the round).
         await printFlushed(renderPoll(data, file, flags));
@@ -1375,7 +1383,7 @@ const review = {
         const session = sessionKey ? rv.readSession(sessionKey) : null;
         assertSessionBrain(session && session.brain, brainDir, file, flags, "end");
         const abs = realFile(file);
-        let plan = rv.planForFile(db, root, abs);
+        let plan = rv.planForFile(db, root, abs, session && session.plan);
         if (!plan && flags["approved-by"] !== undefined) plan = L.plans.upsert(db, { file: abs, root });
         if (plan) L.plans.upsert(db, { file: abs, slug: plan.slug, root });
         const ended = plan ? L.plans.endSession(db, plan.slug, { approvedBy: flags["approved-by"], root }) : null;
