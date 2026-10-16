@@ -8,7 +8,7 @@ import {
   openBrain, open, create, close, locate, migrate, loadMigrations, schemaVersion, isLegacyBrain, check,
   features, plans, verifications,
 } from "../../lib/brain/index.js";
-import { ensureGitignore } from "../../lib/brain/db.js";
+import { ensureGitignore, publishExclusive } from "../../lib/brain/db.js";
 import { tmpDir, git, gitRepo, freshBrain, throwsCode } from "./helpers.js";
 
 const LATEST = loadMigrations().at(-1).version;
@@ -558,4 +558,59 @@ test("locate: a worktree of a --separate-git-dir named .git stays unresolved unt
   const ploc = locate(pwt);
   assert.equal(ploc.mainUnknown, undefined);
   assert.equal(ploc.brainDir, path.join(plain, ".brain"));
+});
+
+// A filesystem without hard links (FAT, some network shares): linkSync fails.
+function withoutLinks(t) {
+  const realLink = fs.linkSync;
+  fs.linkSync = () => {
+    throw Object.assign(new Error("EPERM: operation not permitted, link"), { code: "EPERM" });
+  };
+  t.after(() => {
+    fs.linkSync = realLink;
+  });
+}
+
+test("create without hard links: brain.db appears only complete, by rename under an exclusive claim (Greptile #23)", (t) => {
+  const root = gitRepo(tmpDir(t));
+  const dbPath = path.join(root, ".brain", "brain.db");
+  withoutLinks(t);
+  const realRename = fs.renameSync;
+  let atRename = null;
+  fs.renameSync = (from, to) => {
+    const peek = new DatabaseSync(from, { readOnly: true });
+    atRename = { visible: fs.existsSync(dbPath), claimed: fs.existsSync(`${dbPath}.creating`), complete: schemaVersion(peek) };
+    peek.close();
+    return realRename(from, to);
+  };
+  t.after(() => {
+    fs.renameSync = realRename;
+  });
+  const b = create(root);
+  t.after(() => close(b.db));
+  assert.deepEqual(atRename, { visible: false, claimed: true, complete: LATEST }, "a fully migrated file, published while claimed");
+  assert.equal(schemaVersion(b.db), LATEST);
+  assert.deepEqual(fs.readdirSync(path.join(root, ".brain")).filter((f) => !f.startsWith("brain.db-")), ["brain.db"], "no temp or claim left");
+});
+
+test("create without hard links: a brain.db or a live claim from another create is never clobbered", (t) => {
+  const root = gitRepo(tmpDir(t));
+  const brainDir = path.join(root, ".brain");
+  const dbPath = path.join(brainDir, "brain.db");
+  withoutLinks(t);
+  fs.mkdirSync(brainDir);
+  // Another create holds the claim: refused, nothing published, its claim kept.
+  fs.writeFileSync(`${dbPath}.creating`, "4242");
+  const e = throwsCode(() => create(root, { gitignore: false }), "CREATE_IN_PROGRESS");
+  assert.match(e.message, /pid 4242/);
+  assert.ok(e.help.some((h) => h.includes(`delete ${dbPath}.creating`)), e.help.join(" | "));
+  assert.deepEqual(fs.readdirSync(brainDir), ["brain.db.creating"], "no brain.db, no temp; the claim is not ours to remove");
+  fs.rmSync(`${dbPath}.creating`);
+  // Another create published between our existence check and our claim.
+  const tmp = path.join(brainDir, ".tmp");
+  fs.writeFileSync(tmp, "mine");
+  fs.writeFileSync(dbPath, "someone else's brain");
+  throwsCode(() => publishExclusive(tmp, dbPath), "BRAIN_EXISTS");
+  assert.equal(fs.readFileSync(dbPath, "utf8"), "someone else's brain", "the winner's file is untouched");
+  assert.deepEqual(fs.readdirSync(brainDir).sort(), [".tmp", "brain.db"], "our claim is released");
 });
