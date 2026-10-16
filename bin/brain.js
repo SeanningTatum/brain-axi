@@ -332,6 +332,7 @@ const context = {
       const over = overBy();
       if (over <= 0 || !free[key]) continue;
       const chars = [...free[key]];
+      if (chars.length <= 20) continue; // already at the floor: clipping would only add "…"
       free[key] = chars.slice(0, Math.max(20, chars.length - over - 8)).join("") + "…";
     }
     // Multi-byte text can keep it over (≥20 chars per field): drop the
