@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { features, verifications, create, close, openBrain, check } from "../../lib/brain/index.js";
 import { freshBrain, git, gitRepo, tmpDir, throwsCode, rejectsRaw } from "./helpers.js";
+import { isInside } from "../../lib/brain/util.js";
 
 test("add stamps the commit, author and a clean tree; rounds increment", (t) => {
   const { db, root } = freshBrain(t, { withGit: true });
@@ -164,4 +165,32 @@ test("a custom brain dir keeps its shots beside its DB (<brainDir>/shots), not .
   assert.match(e.message, /\.state\/shots\//);
   assert.equal(verifications.shotsDirHint("f", { root, brainDir: b.brainDir }), ".state/shots/f/");
   assert.equal(verifications.shotsDirHint("f", { root }), ".brain/shots/f/", "default stays .brain/shots");
+});
+
+test("a brain dir outside mainRoot: shots inside its shots/ are accepted, others refused", (t) => {
+  const root = tmpDir(t);
+  const shared = path.join(tmpDir(t), ".brain");
+  const b = create(root, { brain: shared, gitignore: false });
+  t.after(() => close(b.db));
+  features.add(b.db, { slug: "f", name: "F" });
+  fs.mkdirSync(path.join(shared, "shots", "f"), { recursive: true });
+  fs.writeFileSync(path.join(shared, "shots", "f", "a.png"), "a");
+  fs.writeFileSync(path.join(shared, "loose.png"), "l");
+  const opts = { verdict: "PASS", body: "ok", root, brainDir: b.brainDir };
+  const v = verifications.add(b.db, "f", { ...opts, shots: [path.join(shared, "shots", "f", "a.png")] });
+  assert.deepEqual(v.shots.map((s) => s.path), [path.join(shared, "shots", "f", "a.png")], "absolute: outside mainRoot");
+  throwsCode(() => verifications.add(b.db, "f", { ...opts, shots: [path.join(shared, "loose.png")] }), "SHOT_OUTSIDE_SHOTS_DIR");
+});
+
+test("isInside decides containment with native path ops, Windows paths included (Greptile #23)", () => {
+  const w = path.win32;
+  // mainRoot C:\repo, brainDir D:\shared\.brain: the shots dir is absolute with backslashes.
+  assert.equal(isInside("D:\\shared\\.brain\\shots", "D:\\shared\\.brain\\shots\\f\\a.png", w), true);
+  assert.equal(isInside("D:\\shared\\.brain\\shots", "d:\\Shared\\.brain\\shots\\a.png", w), true, "case-insensitive");
+  assert.equal(isInside("D:\\shared\\.brain\\shots", "D:\\shared\\.brain\\loose.png", w), false);
+  assert.equal(isInside("D:\\shared\\.brain\\shots", "C:\\repo\\.brain\\shots\\a.png", w), false, "other drive");
+  assert.equal(isInside("D:\\shared\\.brain\\shots", "D:\\shared\\.brain\\shots", w), false, "the dir itself");
+  assert.equal(isInside("D:\\shared\\.brain\\shots", "D:\\shared\\.brain\\shots-old\\a.png", w), false, "sibling prefix");
+  assert.equal(isInside("/s/.brain/shots", "/s/.brain/shots/..a.png", path.posix), true, "a name starting with ..");
+  assert.equal(isInside("/s/.brain/shots", "/s/.brain/shots/../x.png", path.posix), false);
 });
