@@ -1,0 +1,176 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { features, plans, check } from "../../lib/brain/index.js";
+import { freshBrain, throwsCode, rejectsRaw } from "./helpers.js";
+
+function planFile(root, name = "plan.html", html = "<html><title>  My   plan </title>body</html>") {
+  fs.mkdirSync(path.join(root, "plans"), { recursive: true });
+  fs.writeFileSync(path.join(root, "plans", name), html);
+  return `plans/${name}`;
+}
+
+test("upsert registers path + sha256 + <title>; re-upsert refreshes the hash", (t) => {
+  const { db, root } = freshBrain(t);
+  features.add(db, { slug: "f", name: "F" });
+  const rel = planFile(root);
+  const p = plans.upsert(db, { file: rel, feature: "f", root });
+  assert.equal(p.created, true);
+  assert.equal(p.slug, "plan");
+  assert.equal(p.title, "My plan");
+  assert.equal(p.file_path, "plans/plan.html");
+  assert.equal(p.sha256, crypto.createHash("sha256").update(fs.readFileSync(path.join(root, rel))).digest("hex"));
+  assert.equal(p.status, "draft");
+  assert.equal(p.feature, "f");
+  fs.writeFileSync(path.join(root, rel), "<title>New</title>");
+  const q = plans.upsert(db, { file: path.join(root, rel), root });
+  assert.equal(q.created, false);
+  assert.equal(q.title, "New");
+  assert.equal(q.feature, "f", "feature binding kept");
+  assert.notEqual(q.sha256, p.sha256);
+  assert.deepEqual(plans.list(db).map((x) => x.slug), ["plan"]);
+  assert.equal(plans.list(db, { feature: "f" }).length, 1);
+  throwsCode(() => plans.upsert(db, { file: "plans/none.html", root }), "NOT_FOUND");
+  throwsCode(() => plans.upsert(db, {}), "INVALID_ARG");
+  throwsCode(() => plans.get(db, "ghost"), "NOT_FOUND");
+});
+
+test("sessions, rounds with prompts and snapshots, addPrompts", (t) => {
+  const { db, root } = freshBrain(t);
+  const rel = planFile(root);
+  plans.upsert(db, { file: rel, slug: "p1", root });
+  plans.startSession(db, "p1", { port: 4517 });
+  assert.deepEqual(plans.openSessions(db).map((p) => [p.slug, p.session_port, p.session_open]), [["p1", 4517, true]]);
+
+  const target = { type: "decision", question: "Q", choice: "A" };
+  const r1 = plans.addRound(db, "p1", { prompts: [{ prompt: "change X", tag: "comment", selector: "#x" }, { prompt: "Q: A", tag: "decision", target }] });
+  assert.deepEqual(r1, { slug: "p1", round: 1, status: "in-review" });
+  plans.addPrompts(db, "p1", [{ prompt: "late note" }]);
+  const snap = planFile(root, "p1-v2.html", "<title>v2</title>");
+  const r2 = plans.addRound(db, "p1", { endedBy: "sean", snapshotPath: snap, root });
+  assert.equal(r2.status, "reviewed");
+  const g = plans.get(db, "p1");
+  assert.equal(g.rounds, 2);
+  assert.deepEqual(g.reviews[0].prompts.map((p) => p.prompt), ["change X", "Q: A", "late note"]);
+  assert.deepEqual(g.reviews[0].prompts[1].target, target);
+  assert.equal(g.reviews[1].ended_by, "sean");
+  assert.equal(g.reviews[1].snapshot_path, "plans/p1-v2.html");
+  throwsCode(() => plans.addPrompts(db, "p1", [{ prompt: "x" }], { round: 9 }), "NOT_FOUND");
+  throwsCode(() => plans.addPrompts(db, "p1", [{ nope: 1 }]), "INVALID_ARG");
+  throwsCode(() => plans.addRound(db, "p1", { snapshotPath: "missing.html", root }), "NOT_FOUND");
+  rejectsRaw(db, "UPDATE review_prompts SET target = '{bad' WHERE seq = 1");
+});
+
+test("addRound with a batchId is idempotent: a re-delivered batch is one round", (t) => {
+  const { db, root } = freshBrain(t);
+  plans.upsert(db, { file: planFile(root), slug: "p1", root });
+  const r1 = plans.addRound(db, "p1", { prompts: [{ prompt: "once" }], batchId: "b-1" });
+  assert.deepEqual(r1, { slug: "p1", round: 1, status: "in-review" });
+  const again = plans.addRound(db, "p1", { prompts: [{ prompt: "once" }], batchId: "b-1" });
+  assert.deepEqual(again, { slug: "p1", round: 1, status: "in-review", duplicate: true });
+  assert.equal(plans.addRound(db, "p1", { prompts: [{ prompt: "next" }], batchId: "b-2" }).round, 2);
+  const g = plans.get(db, "p1");
+  assert.equal(g.rounds, 2);
+  assert.deepEqual(g.reviews.map((r) => r.prompts.map((p) => p.prompt)), [["once"], ["next"]]);
+});
+
+test("endSession closes the session; --approved-by approves headless and increments the round (#8)", (t) => {
+  const { db, root } = freshBrain(t);
+  plans.upsert(db, { file: planFile(root), slug: "p", root });
+  plans.startSession(db, "p", { port: 1 });
+  const plain = plans.endSession(db, "p");
+  assert.equal(plain.session_open, false);
+  assert.equal(plain.status, "draft");
+  assert.equal(plain.approved_round, null);
+  const ok = plans.endSession(db, "p", { approvedBy: "ci-bot", root });
+  assert.equal(ok.status, "approved");
+  assert.equal(ok.approved_by, "ci-bot");
+  assert.equal(ok.rounds, 1);
+  assert.equal(ok.approved_round, 1);
+  assert.equal(plans.get(db, "p").reviews[0].ended_by, "ci-bot");
+  assert.deepEqual(plans.openSessions(db), []);
+  throwsCode(() => plans.endSession(db, "p", { approvedBy: " " }), "INVALID_ARG");
+  rejectsRaw(db, "UPDATE plans SET status = 'approved', approved_by = NULL");
+});
+
+test("endSession refuses to approve a plan whose file is missing; nothing is recorded (Greptile r8)", (t) => {
+  const { db, root } = freshBrain(t);
+  const rel = planFile(root);
+  plans.upsert(db, { file: rel, slug: "p", root });
+  fs.rmSync(path.join(root, rel));
+  throwsCode(() => plans.endSession(db, "p", { approvedBy: "sean", root }), "NOT_FOUND");
+  const p = plans.get(db, "p");
+  assert.equal(p.status, "draft");
+  assert.equal(p.rounds, 0);
+  assert.equal(p.approved_by, null);
+});
+
+test("check flags a plan file changed after registration", (t) => {
+  const { db, root } = freshBrain(t);
+  const rel = planFile(root);
+  plans.upsert(db, { file: rel, root });
+  assert.equal(check(db, { root }).find((r) => r.check === "plan and shot files").status, "pass");
+  fs.appendFileSync(path.join(root, rel), "edit");
+  assert.equal(check(db, { root }).find((r) => r.check === "plan and shot files").status, "fail");
+});
+
+test("re-registering an approved plan whose file changed drops the approval; an unchanged file keeps it", (t) => {
+  const { db, root } = freshBrain(t);
+  const rel = planFile(root);
+  plans.upsert(db, { file: rel, slug: "p", root });
+  plans.endSession(db, "p", { approvedBy: "sean", root });
+  const same = plans.upsert(db, { file: rel, slug: "p", root });
+  assert.equal(same.status, "approved");
+  assert.equal(same.approved_by, "sean");
+  fs.appendFileSync(path.join(root, rel), "edit after approval");
+  const edited = plans.upsert(db, { file: rel, slug: "p", root });
+  assert.equal(edited.status, "in-review");
+  assert.equal(edited.approved_by, null);
+});
+
+test("approving a plan edited during review stamps the approved file's hash; a re-register keeps the approval", (t) => {
+  const { db, root } = freshBrain(t);
+  const rel = planFile(root);
+  plans.upsert(db, { file: rel, slug: "p", root });
+  fs.appendFileSync(path.join(root, rel), "edited during review");
+  const approved = plans.endSession(db, "p", { approvedBy: "sean", root });
+  const sha = crypto.createHash("sha256").update(fs.readFileSync(path.join(root, rel))).digest("hex");
+  assert.equal(approved.sha256, sha);
+  assert.equal(check(db, { root }).find((r) => r.check === "plan and shot files").status, "pass");
+  const again = plans.upsert(db, { file: rel, slug: "p", root });
+  assert.equal(again.status, "approved");
+  assert.equal(again.approved_by, "sean");
+});
+
+test("addRound: a retried batch returns its round even after the snapshot file is gone", (t) => {
+  const { db, root } = freshBrain(t);
+  plans.upsert(db, { file: planFile(root), slug: "p1", root });
+  const snap = path.join(root, "snap.html");
+  fs.writeFileSync(snap, "<p>dom</p>");
+  plans.addRound(db, "p1", { prompts: [{ prompt: "once" }], batchId: "b-1", snapshotPath: "snap.html", root });
+  fs.rmSync(snap);
+  const again = plans.addRound(db, "p1", { prompts: [{ prompt: "once" }], batchId: "b-1", snapshotPath: "snap.html", root });
+  assert.deepEqual(again, { slug: "p1", round: 1, status: "in-review", duplicate: true });
+});
+
+test("a slug already bound to another file is refused (PLAN_SLUG_TAKEN); the same file reuses it (Greptile r8)", (t) => {
+  const { db, root } = freshBrain(t);
+  const a = planFile(root);
+  fs.mkdirSync(path.join(root, "other"), { recursive: true });
+  fs.writeFileSync(path.join(root, "other", "plan.html"), "<title>Other</title>");
+  plans.upsert(db, { file: a, root });
+  plans.addRound(db, "plan", { prompts: [{ prompt: "first file's feedback" }] });
+  // Same default slug (basename "plan"), different file: refused, nothing merged.
+  const e = throwsCode(() => plans.upsert(db, { file: "other/plan.html", root }), "PLAN_SLUG_TAKEN", /bound to plans\/plan\.html/);
+  assert.equal(e.exitCode, 1);
+  assert.match(e.help[0], /brain review open other\/plan\.html --plan <other-slug>/);
+  throwsCode(() => plans.upsert(db, { file: "other/plan.html", slug: "plan", root }), "PLAN_SLUG_TAKEN");
+  const p = plans.get(db, "plan");
+  assert.equal(p.file_path, "plans/plan.html");
+  assert.equal(p.rounds, 1);
+  // The same file keeps its slug; the other file registers under its own.
+  assert.equal(plans.upsert(db, { file: a, root }).created, false);
+  assert.equal(plans.upsert(db, { file: "other/plan.html", slug: "other-plan", root }).created, true);
+});
