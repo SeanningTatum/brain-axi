@@ -1,6 +1,6 @@
 {
   "$schema": "Machine-readable feature state tracker. Source of truth for status; per-feature MD docs are source of truth for design/runtime.",
-  "updated": "2026-09-29",
+  "updated": "2026-10-10",
   "policy": {
     "one_in_progress_at_a_time": true,
     "definition_of_done": "implementation complete + verify-done passed (CLI invoked against .brain, exit codes + TOON eyeballed, stderr diagnostics-only) + feature MD updated + brain skill --check green + brain coherent",
@@ -167,6 +167,51 @@
         "sean"
       ],
       "doc": ".brain/features/plan-phase/plan-phase.md"
+    },
+    {
+      "id": "feat-011",
+      "name": "skills-plugin — the method as skills, packaged as a Claude Code plugin",
+      "slug": "skills-plugin",
+      "status": "shipped",
+      "description": "Per plan 2026-10-10-2026-10-09-skills-plugin-sqlite (reviewed round 1, phases 1-3): the 10 playbooks move out of lib/review/playbooks.js into 11 superpowers-style skills (skills/brain*/SKILL.md, references/ on demand) that trigger by description and name their successor; `brain playbook <id>` prints the skill file; the 31KB brain skill becomes a router; brain context gains a one-line bootstrap; packaged as a Claude Code plugin (.claude-plugin/, hooks/, commands/) versioned with npm. Non-goals: codex/opencode skill install (Claude only for now), adopting obra/superpowers itself, any storage change (that is sqlite-engine).",
+      "dependencies": [
+        "core-cli",
+        "plan-phase"
+      ],
+      "owners": [
+        "sean"
+      ],
+      "doc": ".brain/features/skills-plugin/skills-plugin.md",
+      "evidence": "2026-10-10 verification PASS round 2 (features/skills-plugin/verifications/2026-10-10-r2.md, receipt bound to 680e9de; round 1 FAIL fixed in 449f0ed): 11 skills within caps, skill --check catches 8 breakage kinds, plugin validates+installs (11 skills, SessionStart hook), plugin-aware setup idempotent, context<=600B enforced, verify 4/4, check 18/18, skill-coverage 37/37, skill-routing 31/34=0.912 vs 0.294 no-plugin, held-out 8/8"
+    },
+    {
+      "id": "feat-012",
+      "name": "sqlite-engine — node:sqlite storage for new brains, FTS5 search",
+      "slug": "sqlite-engine",
+      "status": "cut",
+      "description": "Per plan 2026-10-10-2026-10-09-skills-plugin-sqlite (phases 4-5): storage interface with files + sqlite backends; new brains get a gitignored .brain/brain.db (everything incl. docs; plan HTML + screenshots as path+hash), worktrees share the main checkout DB via git common dir, WAL; node >=24 for FTS5; this repo brain re-scaffolded on the DB. Open before start: brain export/import for backup + CI check. CUT 2026-10-10: superseded by axi-core (plan 2026-10-10-2026-10-10-axi-architecture).",
+      "dependencies": [
+        "skills-plugin",
+        "state-integrity"
+      ],
+      "owners": [
+        "sean"
+      ],
+      "doc": ".brain/features/sqlite-engine/sqlite-engine.md"
+    },
+    {
+      "id": "feat-013",
+      "name": "axi-core — skills over a thin AXI over a SQLite library",
+      "slug": "axi-core",
+      "status": "planned",
+      "description": "Per plan 2026-10-10-2026-10-10-axi-architecture (reviewed round 1, all decisions at recommended): three layers only. lib/brain/ owns brain.db (node:sqlite, node>=24, FTS5, WAL, worktree-shared, numbered migrations via user_version with .bak) and exposes plain per-domain functions; bin/brain.js becomes a thin dispatcher with 15 commands (init, context, export/import, features, tasks, progress, runs, docs, plans, review, watch, verifications, verify, search, check); review + watch UIs re-plumbed onto lib/brain; skills name real commands; evals become repo-dev; node:test replaces check-state-invariants; this repo brain rebuilt from live parts. Cut: playbook, skill, setup, metrics, timeline, evals; folded: brief, receipt, pr, shots.",
+      "dependencies": [
+        "skills-plugin"
+      ],
+      "owners": [
+        "sean"
+      ],
+      "doc": ".brain/features/axi-core/axi-core.md"
     }
   ]
 }

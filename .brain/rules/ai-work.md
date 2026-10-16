@@ -12,7 +12,7 @@ Read when: editing the `ai` playbook, adding/altering an AI branch inside anothe
 | CLI verbs | `cmdEvals` in `bin/brain.js` | `evals` list/view/cases/runs/run/record/golden — TOON output + `help:` lists only |
 | The gate | `cmdVerifyEvals` in `bin/brain.js` | `brain verify --stage evals`: runs every suite, records, applies `gateVerdict`, exits 1 |
 | Checkpoint stamp | `cmdProgressAdd` `--eval` | Reads score/delta/frozen/cost out of the run record — never from the caller |
-| Dogfood suite | `.brain/evals/skill-coverage/` + `scripts/eval-skill-coverage.mjs` | Scores the generated skill: command coverage, contracts, no fabricated tooling |
+| Dogfood suite | `.brain/evals/skill-coverage/` + `scripts/eval-skill-coverage.mjs` | Scores the whole `skills/` tree (router + phase skills + references, concatenated): command coverage, contracts, no fabricated tooling |
 
 Boundaries that matter: **`evals.js` never spawns, writes prompts, or calls a model** — execution lives in `bin/brain.js`, model calls live in the project's own runner. `evals` is a stage of `brain verify` but NOT a legal stage inside `verify.json` (`VERIFY_STAGES` vs `ALL_VERIFY_STAGES`): gate logic belongs in brain, not in a shell string.
 
@@ -25,15 +25,15 @@ Boundaries that matter: **`evals.js` never spawns, writes prompts, or calls a mo
 | Start §3, §5 | `PLAYBOOKS.start` | Read `.brain/evals/` state; take an eval baseline before editing prompts |
 | Execute step 3b | `PLAYBOOKS.execute` | Re-run the suite per prompt change; record per-case delta; a red frozen case kills the change |
 | Done §2b + DoD | `PLAYBOOKS.done` | Suite re-run after the last edit, no failing frozen case, every fixed bug encoded as a frozen case, human eval feedback answered |
-| Skill "AI work" | `skillContent()` in `bin/brain.js` | Same contract, condensed, plus the full `brain evals` command surface and the runner/adapter envelope |
-| Verify docs | `skillContent()` verify section | `--stage evals` is the gate and is opt-in; `evals` is not a verify.json stage |
+| Skill "AI work" | `skills/brain/SKILL.md` (router) + `skills/brain-ai/` | Same contract, condensed, plus the full `brain evals` command surface and the runner/adapter envelope |
+| Verify docs | `skills/brain-verify/` + `skills/brain-done/` | `--stage evals` is the gate and is opt-in; `evals` is not a verify.json stage |
 
 ## Do
 
 - **Keep the six surfaces above consistent.** A rule stated in `playbook ai` and contradicted (or silently missing) in `playbook done` is worse than one that lives in a single place — agents read whichever one the task routed them to.
 - **Escape every backtick** (`` \` ``) and avoid `${` in playbook template literals — this module is a plain data module and must stay syntactically inert.
 - **Plain text only in playbook content.** No HTML tags (`<mark>`, `<code>`); these are printed to a terminal, not rendered. Emphasis is `**bold**` and section rules are the `---...` bars.
-- **Re-run `node bin/brain.js skill --check` after any playbook or skill edit**, and `skill --write` when it reports stale. The generated skill drifting from the playbooks is the one invariant CI enforces here.
+- **Re-run `node bin/brain.js skill --check` after any playbook or skill edit**; fix the router/skills it reports. The skills/plugin files drifting from the playbooks is the one invariant CI enforces here.
 - **Reference only commands that exist.** Guidance naming an unbuilt command teaches agents to run something that errors. Describe the artifact (`.brain/evals/<suite>/cases.jsonl`) and an existing verb until the command actually ships — then update the playbooks in the same change that ships it.
 - **Adapters stay pure JSON normalizers.** No vendor SDK, no network. A schema drift produces a NAMED error (which adapter, which file, which field) plus the `--adapter envelope` escape hatch — never a run of silently-zero scores.
 - **Nothing gets recorded from a failed run.** Runner non-zero, timeout, or unparseable output = `opError`, no `runs.jsonl` line. A half-run that looks like evidence is worse than no run.
@@ -47,7 +47,7 @@ Boundaries that matter: **`evals.js` never spawns, writes prompts, or calls a mo
 
 ## Update triggers
 
-- New eval command lands → update `playbook ai` §5 + `execute` 3b + `done` §2b to name it, then `skill --write`
+- New eval command lands → update `playbook ai` §5 + `execute` 3b + `done` §2b to name it, then `skill --check`
 - New adapter → `EVAL_ADAPTERS` + `adaptRunOutput` + the skill's runner/adapter contract paragraph + a case in `skill-coverage`
 - `.brain/evals/` shape changes → `validateSuiteShape`/`loadCases` + `playbook ai` §3 + `initEvalsIndexMd` + this doc
 - Agent topology state lands (`.brain/agents/`) → `playbook ai` §7 + `plan` §16 + new `brain check` rows

@@ -51,7 +51,7 @@ import {
   writeTasksCas,
 } from "../lib/state.js";
 import { sessionKey, stateDir, listSessions } from "../lib/review/store.js";
-import { PLAYBOOKS } from "../lib/review/playbooks.js";
+import { PLAYBOOKS, readRef } from "../lib/review/playbooks.js";
 import {
   listSuiteNames,
   loadSuite,
@@ -3842,6 +3842,7 @@ function cmdSearch(argv) {
 }
 
 // Compact dashboard for session-start hooks. Ruthlessly minimal.
+const CONTEXT_CAP = 600; // bytes — runs on every session start
 function cmdContext(argv) {
   const { flags } = parseArgs(argv, {}, "context");
   if (flags.help)
@@ -3852,22 +3853,42 @@ function cmdContext(argv) {
   const progress = parseProgress(brain);
   const counts = featureStats(list);
   const inProgress = list.features.filter((f) => f.status === "in-progress");
-  const lines = [
-    kv("brain", relBrain(brain)),
-    kv(
-      "features",
-      `${list.features.length} total (${Object.entries(counts).map(([s, n]) => `${n} ${s}`).join(", ")})`
-    ),
-    kv("in-progress", inProgress.length ? inProgress.map((f) => f.slug).join(", ") : "none"),
-  ];
+  let brainPath = relBrain(brain);
+  const features = kv(
+    "features",
+    `${list.features.length} total (${Object.entries(counts).map(([s, n]) => `${n} ${s}`).join(", ")})`
+  );
+  // Free text, clipped below so the block stays within CONTEXT_CAP.
+  const free = { "in-progress": inProgress.length ? inProgress.map((f) => f.slug).join(", ") : "none" };
   if (progress.entries.length) {
     const top = progress.entries[0];
-    lines.push(kv("last-checkpoint", `${top.date} — ${top.summary}`));
+    free["last-checkpoint"] = `${top.date} — ${top.summary}`;
     const next = top.body.match(/^- next: (.+)$/m);
-    if (next) lines.push(kv("next", next[1]));
+    if (next) free.next = next[1];
   }
-  lines.push(...toonList("help", ["Run `brain` for the full dashboard, `brain progress` for the latest checkpoint"]));
-  print(lines);
+  const tail = [
+    kv("skills", "use the brain-* skills (brain, brain-start, brain-plan, ...); else `brain playbook <id>`"),
+    ...toonList("help", ["Run `brain` for the full dashboard, `brain progress` for the latest checkpoint"]),
+  ];
+  const render = () => [kv("brain", brainPath), features, ...Object.entries(free).map(([k, v]) => kv(k, v)), ...tail];
+  // Budget covers the whole block incl. the trailing newline print() adds.
+  const overBy = () => Buffer.byteLength(render().join("\n") + "\n") - CONTEXT_CAP;
+  for (const key of ["next", "last-checkpoint", "in-progress"]) {
+    const over = overBy();
+    if (over <= 0 || !free[key]) continue;
+    const chars = [...free[key]];
+    if (chars.length <= 20) continue; // already at the floor: clipping would only add "…"
+    free[key] = chars.slice(0, Math.max(20, chars.length - over - 8)).join("") + "…";
+  }
+  // A very long --brain path: keep its tail (the repo-identifying end).
+  if (overBy() > 0) {
+    const chars = [...brainPath];
+    brainPath = "…" + chars.slice(Math.min(chars.length, overBy() + 8)).join("");
+  }
+  // Still over (pathological input): drop free fields until it fits.
+  for (const key of ["next", "last-checkpoint", "in-progress"]) if (overBy() > 0) delete free[key];
+  if (overBy() > 0) return; // never print a block over the cap
+  print(render());
 }
 
 // ---------------------------------------------------------------------------
@@ -4680,31 +4701,52 @@ function cmdTimeline(argv) {
 // ---------------------------------------------------------------------------
 
 function cmdPlaybook(argv) {
-  const { flags, positionals } = parseArgs(argv, {}, "playbook");
+  const spec = {
+    "--ref": { value: true, desc: "print one reference file of the playbook (skills/brain-<id>/references/<topic>.*) instead of the body" },
+  };
+  const { flags, positionals } = parseArgs(argv, spec, "playbook");
   if (flags.help)
     helpBlock(
       "playbook",
-      "Show authoring playbooks for agent-produced artifacts (e.g. the plan review HTML)",
-      {},
-      ["brain playbook", "brain playbook plan"],
+      "Show authoring playbooks (the brain-* skill bodies) for agent-produced artifacts; long material lives in per-playbook references",
+      spec,
+      ["brain playbook", "brain playbook plan", "brain playbook plan --ref decision-cards"],
       ["[id] — playbook id from `brain playbook`"]
     );
   const id = positionals[0];
   if (!id) {
+    if (flags.ref !== undefined) usageError("--ref needs a playbook id", ["Run `brain playbook <id> --ref <topic>`", "Run `brain playbook` to list playbooks"]);
     const rows = Object.values(PLAYBOOKS).map((p) => ({ id: p.id, use_when: p.use_when }));
     print([
       ...toonTable("playbooks", rows, ["id", "use_when"]),
-      ...toonList("help", ["Run `brain playbook <id>` to see the full playbook"]),
+      ...toonList("help", ["Run `brain playbook <id>` to see the full playbook", "Each is also a skill: brain-<id> (see `brain skill`)"]),
     ]);
     return;
   }
   const pb = PLAYBOOKS[id];
   if (!pb) opError(`no playbook "${id}"`, [`known playbooks: ${Object.keys(PLAYBOOKS).join(", ")}`]);
+  if (flags.ref !== undefined) {
+    const text = readRef(id, flags.ref);
+    if (text === null)
+      usageError(`no reference "${flags.ref}" for playbook "${id}"`, [
+        pb.refs.length ? `valid refs for ${id}: ${pb.refs.map((r) => r.name).join(", ")}` : `playbook ${id} has no references`,
+        `Run \`brain playbook ${id}\` for the body`,
+      ]);
+    print([
+      "reference: |",
+      ...text.split("\n").map((l) => "  " + l),
+      ...toonList("help", [`Run \`brain playbook ${id}\` for the playbook body`]),
+    ]);
+    return;
+  }
+  const refHelp = pb.refs.length ? [`Long material: \`brain playbook ${id} --ref <topic>\` (see refs[])`] : [];
   print([
     "playbook: |",
     ...pb.content.split("\n").map((l) => "  " + l),
+    ...(pb.refs.length ? toonList("refs", pb.refs.map((r) => r.name)) : []),
     ...toonList("help", [
       "Follow this playbook step by step while writing the artifact",
+      ...refHelp,
       "Run `brain playbook` to see all available playbooks",
     ]),
   ]);
@@ -5174,8 +5216,62 @@ function readJsonSafe(p) {
 const isBrainHookCommand = (cmd) =>
   typeof cmd === "string" && /(^|[/\\"'\s])brain(\.js)?"? context$/.test(cmd);
 
+// Is the `brain` Claude Code plugin installed AND enabled for this repo?
+// Installed = installed_plugins.json under CLAUDE_CONFIG_DIR (default ~/.claude).
+// Enabled follows Claude Code settings precedence: the LAST defined
+// enabledPlugins[key] across user settings.json, <repo>/.claude/settings.json,
+// then <repo>/.claude/settings.local.json wins; `false` disables. Missing or
+// malformed files count as "not set" and never throw.
+function brainPluginInstalled(repoRoot) {
+  const dir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude");
+  const enabledIn = (file) => {
+    try {
+      const e = JSON.parse(fs.readFileSync(file, "utf8")).enabledPlugins;
+      return e && typeof e === "object" ? e : {};
+    } catch {
+      return {};
+    }
+  };
+  try {
+    const data = JSON.parse(fs.readFileSync(path.join(dir, "plugins", "installed_plugins.json"), "utf8"));
+    const plugins = data && typeof data.plugins === "object" && data.plugins ? data.plugins : {};
+    const keys = Object.keys(plugins).filter((k) => k.startsWith(`${PLUGIN_NAME}@`));
+    const layers = [
+      path.join(dir, "settings.json"),
+      path.join(repoRoot, ".claude", "settings.json"),
+      path.join(repoRoot, ".claude", "settings.local.json"),
+    ].map(enabledIn);
+    return keys.some((k) => {
+      const eff = layers.map((l) => l[k]).filter((v) => v !== undefined).pop();
+      return eff !== false;
+    });
+  } catch {
+    return false;
+  }
+}
+
 function setupClaude(repoRoot, command) {
   const settingsPath = path.join(repoRoot, ".claude", "settings.json");
+  if (brainPluginInstalled(repoRoot)) {
+    // The plugin's hooks/hooks.json supplies the context hook; drop our duplicate.
+    const cur = readJsonSafe(settingsPath);
+    const list = Array.isArray(cur.hooks?.SessionStart) ? cur.hooks.SessionStart : null;
+    let removed = false;
+    if (list) {
+      for (const m of list) {
+        if (!Array.isArray(m.hooks)) continue;
+        const kept = m.hooks.filter((h) => !isBrainHookCommand(h.command));
+        if (kept.length !== m.hooks.length) { removed = true; m.hooks = kept; }
+      }
+      if (removed) {
+        cur.hooks.SessionStart = list.filter((m) => !(Array.isArray(m.hooks) && m.hooks.length === 0));
+        if (!cur.hooks.SessionStart.length) delete cur.hooks.SessionStart;
+        if (!Object.keys(cur.hooks).length) delete cur.hooks;
+        fs.writeFileSync(settingsPath, JSON.stringify(cur, null, 2) + "\n");
+      }
+    }
+    return { path: settingsPath, action: removed ? "plugin installed — removed duplicate settings hook" : "plugin installed (no-op)", plugin: true };
+  }
   const settings = readJsonSafe(settingsPath);
   settings.hooks = settings.hooks || {};
   settings.hooks.SessionStart = settings.hooks.SessionStart || [];
@@ -5281,20 +5377,26 @@ function cmdSetup(argv) {
   const targets = flags.app === "all" ? ["claude", "codex", "opencode", "copilot"] : [flags.app];
 
   const rows = [];
+  let claudeNoPlugin = false;
   for (const app of targets) {
     const r =
       app === "claude" ? setupClaude(repoRoot, command)
       : app === "codex" ? setupCodex(repoRoot, command)
       : app === "copilot" ? setupCopilot(command)
       : setupOpencode(command);
+    if (app === "claude" && !r.plugin) claudeNoPlugin = true;
     rows.push({ app, action: r.action, file: collapseHome(r.path), note: r.note || "" });
   }
+  // With the plugin installed, claude's context comes from the plugin's own
+  // hooks/hooks.json — the settings hook command is irrelevant to that row.
+  const pluginOnly = targets.length === 1 && targets[0] === "claude" && !claudeNoPlugin;
   print([
-    kv("hook-command", command),
+    ...(pluginOnly ? [] : [kv("hook-command", command)]),
     ...toonTable("setup", rows, ["app", "action", "file", "note"]),
     ...toonList("help", [
       "New sessions in this repo now start with compact brain context",
-      "Run `brain skill --write` to also ship an installable agent skill (on-demand, no per-session cost)",
+      ...(claudeNoPlugin ? [`Install the plugin instead: /plugin marketplace add SeanningTatum/brain-axi then /plugin install ${PLUGIN_NAME}@${MARKETPLACE_NAME}`] : []),
+      "Skills are Claude Code-only for now; `brain playbook <id>` prints any skill for other agents",
     ]),
   ]);
 }
@@ -5303,456 +5405,129 @@ function cmdSetup(argv) {
 // Skill — installable SKILL.md generated from the same guidance the CLI prints
 // ---------------------------------------------------------------------------
 
+const SKILLS_DIR = fileURLToPath(new URL("../skills/", import.meta.url));
+// Claude Code plugin identity: install id `${PLUGIN_NAME}@${MARKETPLACE_NAME}`; skills are
+// namespaced `${PLUGIN_NAME}:<skill>`. Not "brain" — that collides with other plugins named brain.
+const PLUGIN_NAME = "brain-axi";
+const MARKETPLACE_NAME = "SeanningTatum";
+const ROUTER_CAP = 6144; // bytes — the router is read on every session
+const PHASE_CAP = 10240; // bytes — a phase skill; long material goes to references/
+
+// The generated agent skill IS skills/brain/SKILL.md (the router) — one source.
+// Static by design: no live state, npx-runnable command forms. Its frontmatter
+// description is YAML double-quoted (it contains ": " mid-string, invalid in a
+// plain scalar — some installers silently drop the skill on a parse failure).
 function skillContent() {
-  // Static by design: strips live state, uses npx-runnable command forms.
-  // Description is YAML double-quoted: it contains a mid-string ": " (colon
-  // + space), which is invalid in an unquoted YAML plain scalar — some
-  // frontmatter parsers (e.g. the `npx skills` installer) silently drop the
-  // whole skill on a parse failure rather than erroring loudly.
-  const description =
-    "Query and update a repo's .brain agent harness (features, progress checkpoints, rules, recipes, run notes, human plan reviews). Use when working in a repo with a .brain directory — before starting a task (read state), during (search docs/rules), and after (checkpoint progress, flip feature status). ALSO use whenever the user asks for a plan, proposal, design, or review of an approach: write the plan as an HTML artifact and open an interactive brain review session in their browser instead of printing the plan in chat.";
-  return `---
-name: brain
-description: ${JSON.stringify(description)}
----
+  const file = path.join(SKILLS_DIR, "brain", "SKILL.md");
+  if (!fs.existsSync(file)) opError(`missing ${path.relative(process.cwd(), file)}`, ["The router skill is the source of `brain skill`; restore it from git"]);
+  return fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n");
+}
 
-# brain — .brain harness CLI
+// Validate the skills/ tree: frontmatter, size caps, `## Next` successors,
+// references/ links, and router coverage of every COMMANDS name. Returns problems.
+function validateSkillsTree() {
+  const problems = [];
+  if (!fs.existsSync(SKILLS_DIR)) return [`skills/ directory missing (${SKILLS_DIR})`];
+  const dirs = fs.readdirSync(SKILLS_DIR, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort();
+  const known = new Set(dirs);
+  for (const dir of dirs) {
+    const rel = `skills/${dir}/SKILL.md`;
+    const file = path.join(SKILLS_DIR, dir, "SKILL.md");
+    if (!fs.existsSync(file)) {
+      problems.push(`${rel}: missing`);
+      continue;
+    }
+    const raw = fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n"); // CRLF checkouts
+    const fm = /^---\n([\s\S]*?)\n---\n/.exec(raw);
+    if (!fm) {
+      problems.push(`${rel}: missing frontmatter`);
+      continue;
+    }
+    const name = /^name: (.+)$/m.exec(fm[1]);
+    const desc = /^description: (.+)$/m.exec(fm[1]);
+    if (!name) problems.push(`${rel}: frontmatter has no name`);
+    else if (name[1].trim() !== dir) problems.push(`${rel}: name "${name[1].trim()}" does not match directory "${dir}"`);
+    if (!desc || !desc[1].trim()) problems.push(`${rel}: frontmatter has no description`);
+    const cap = dir === "brain" ? ROUTER_CAP : PHASE_CAP;
+    const size = Buffer.byteLength(raw);
+    if (size > cap) problems.push(`${rel}: ${size} bytes exceeds the ${cap}-byte cap — move long material to references/`);
+    if (dir !== "brain") {
+      const next = /^## Next\n([\s\S]*)$/m.exec(raw);
+      if (!next) problems.push(`${rel}: no \`## Next\` section`);
+      else
+        for (const m of next[1].matchAll(/`(brain-[a-z]+)`/g))
+          if (!known.has(m[1])) problems.push(`${rel}: ## Next names skill "${m[1]}", which does not exist`);
+    }
+    const refDir = path.join(SKILLS_DIR, dir, "references");
+    const have = fs.existsSync(refDir) ? fs.readdirSync(refDir) : [];
+    for (const m of raw.matchAll(/`references\/([A-Za-z0-9._-]+)`/g))
+      if (!have.includes(m[1])) problems.push(`${rel}: links references/${m[1]}, which does not exist`);
+  }
+  const routerFile = path.join(SKILLS_DIR, "brain", "SKILL.md");
+  if (fs.existsSync(routerFile)) {
+    const router = fs.readFileSync(routerFile, "utf8").replace(/\r\n/g, "\n");
+    for (const c of Object.keys(COMMANDS)) {
+      const re = new RegExp("(?:`|brain(?:-axi)? )" + c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?![A-Za-z0-9-])");
+      if (!re.test(router)) problems.push(`skills/brain/SKILL.md: router never names command "${c}"`);
+    }
+  } else problems.push("skills/brain/SKILL.md: router missing");
+  return problems;
+}
 
-All commands print TOON-structured output. Run from anywhere inside the repo; the CLI walks up to find \`.brain/\`. If \`brain\` is not on PATH, use \`npx -y brain-axi <command>\`.
-
-## Playbooks (\`brain playbook <id>\`)
-
-Ten standing playbooks — each a full text standard printed by \`brain playbook <id>\`, meant to be followed step by step while doing the thing it names:
-
-- \`start\` — starting any non-trivial task — frame it, read the brain, baseline, open state
-- \`grill\` — before writing a plan that will carry any decision — interview the human, memory-checked
-- \`plan\` — writing any plan/proposal/design artifact for human review
-- \`product\` — any plan for user-facing work — the product case before the technical one
-- \`ux\` — any plan that adds or changes a screen — wireframes, screen states, user flows
-- \`ai\` — any work involving prompts, models, or agents — evals, golden sets, regression gates, topology
-- \`verify\` — verifying a user-visible feature works — independent, skeptical browser walk of every acceptance criterion: golden + error paths, quality floors, screenshot evidence
-- \`execute\` — implementing an approved plan / working a feature to shipped
-- \`done\` — before declaring any task complete — full verify, harness invariants, coherence
-- \`write\` — writing anything into the brain — checkpoints, run notes, feature docs, verdicts, commit bodies
-
-Run \`brain playbook\` for the live id/use_when index; \`brain playbook <id>\` for the full text. Referenced inline below at the point each one applies.
-
-## No \`.brain/\` yet?
-
-- \`npx -y brain-axi init\` — scaffolds a minimal .brain skeleton (HARNESS.md,
-  feature_list.json, progress.md with a first checkpoint, verify.json, doc
-  section stubs) into the current repo, terse and placeholder-marked for the
-  project to fill in. Errors (exit 1) if \`.brain/\` already exists — never
-  clobbers. \`--agents-md\` also writes an AGENTS.md pointer + CLAUDE.md
-  symlink; interactively prompts for that choice only in a real terminal,
-  else skips it by default.
-
-## Orient (start of session)
-
-- \`brain\` — dashboard: feature counts, in-progress feature, last checkpoint
-- \`brain progress\` — latest session checkpoint in full (branch, next step)
-- \`brain features\` — feature list with status
-- \`npx -y brain-axi playbook start\` — starting any non-trivial task: read brain
-  state, frame intent/scope/affected feature(s), read the relevant docs, check
-  scope policy (\`brain check\`), establish a baseline (\`brain verify --stage
-  baseline\`), then claim + open state — before writing a line of code
-
-## Look things up (during work)
-
-- \`brain docs\` — doc sections; \`brain docs rules\` — list; \`brain docs view rules/errors\` — read
-- \`brain search "<query>"\` — find text anywhere in the brain (\`--section rules\` to narrow)
-- \`brain features view <slug>\` — tracker fields + feature doc
-- \`brain runs view <name>\` — deep per-task state (baselines, dead ends, decisions); merges the legacy flat pool with every feature's own \`runs/\` (pass \`--feature <slug>\` if the name exists in more than one place)
-- \`npx -y brain-axi playbook plan\` — the plan artifact standard (structure, decision cards, diagrams)
-- \`npx -y brain-axi playbook product\` — the product case: problem + evidence, user + job, success metric, non-goals, scope tiers, prior art, product decision cards (plan sections 3 and 7)
-- \`npx -y brain-axi playbook ux\` — wireframes, screen-state matrix, user-journey flow, layout variant cards (plan section 6)
-
-## Record state (end of task / checkpoint)
-
-- \`npx -y brain-axi playbook write\` — HOW to write any of it: the record is reference, not release notes. Slots per artifact (checkpoint, run-note step, feature doc, verification doc, commit body), the register rules, and three prune tests. Read it before writing a checkpoint or a feature doc, not after
-- \`brain progress add --summary "..." --next "..."\` — append a session checkpoint. The summary is the rolling CURSOR and is capped at 200 chars (exit 2 over it, nothing written) — a headline, not the story; verbatim output goes to \`runs append --observed\`
-- \`brain features set-status <slug> --status <planned|in-progress|shipped|blocked|cut>\` — flip feature state (enforces one-in-progress policy; \`--status shipped\` requires \`--evidence\` **and passes the same preflight as \`brain ship\` — it refuses and writes nothing if any check would fail**. Transitions *out* of a state are never gated, so a broken record stays repairable)
-- \`brain check\` — deterministic harness invariants (feature-list **schema** validity — duplicate ids/slugs, unknown status, shipped-without-evidence all fail — one-in-progress per declared policy, doc paths, dependency refs, \`features/index.md\` agreeing with the tracker, plan/review file integrity, verification docs having a **readable** verdict with resolvable image links, \`tasks.json\` schema validity, no \`shipped\` feature with an open task, verify.json shape when present); exit 1 on any failure, CI-usable
-- \`brain features index [--write]\` — GENERATE the \`features/index.md\` status table from \`feature_list.json\` (bounded by \`<!-- brain:features-table -->\` markers so surrounding prose survives). Hand-maintaining that mirror is how a tracker and its human-facing index end up disagreeing
-- \`brain receipt <feature> [--date <d>] [--verified-by <who>] [--implemented-by <who>] [--allow-dirty]\` — stamp a commit-bound provenance receipt into a verification doc, written BY THE TOOL: HEAD at stamp time plus the actual gate results for that feature from \`runs/gates.jsonl\`. Refuses on a dirty tree (a receipt naming HEAD while the tree differs describes code in no commit) and refuses to stamp a doc whose verdict is unreadable — a hand-written receipt is a claim about provenance, not provenance. Records \`implemented_by\` (default: git author of HEAD) next to \`verified_by\` (default: \`git config user.name\`, then \`$USER\`); records \`verified_by_source\` / \`implemented_by_source\` (\`flag\` when passed, \`default\` when taken from git identity) and adds "identities defaulted — pass --verified-by/--implemented-by" to the \`warning:\` key unless both flags are given; when the two are the same identity it still stamps but prints a \`warning:\` — **the evaluator must not be the generator** (self-grading is lenient), so have a separate agent run \`npx -y brain-axi playbook verify\` and stamp with its own \`--verified-by\`
-- \`brain check --strict\` — adds three: every \`shipped\` feature must have a verification doc whose verdict parses to PASS, **and** that doc must carry a \`brain:verification\` receipt naming a commit that is an ancestor of HEAD; plus a verifier-independence row that is \`warn\` (exit stays 0) when the latest receipt's \`implemented_by\` equals its \`verified_by\` — declaring \`- **Independence**: self-verified — <reason>\` in the doc marks it acknowledged, still \`warn\` (a bare \`self-verified\` with no reason is reported as "no reason given"); distinct names only \`pass\` when \`verified_by\` was passed explicitly — a \`verified_by_source: default\` receipt is \`warn\` ("identities not declared"; receipts predating the source fields are judged as before); only the feature's newest verification doc is judged (a \`<date>-rN.md\` round counts as newer): \`warn\` when it is not PASS, names no verifier, or is an unstamped PASS behind an older stamped one (an older receipt never stands in for it); receipts predating \`implemented_by\` are reported, never failed (full decision table: \`rules/state.md\`). Opt-in here so brains predating the invariants do not go red on upgrade; \`brain ship\` and \`set-status --status shipped\` **always** enforce the first two, since shipping is the moment the claim is made
-- **Verification receipts** — a verdict with no commit is unfalsifiable (the doc is mutable and date-named, so "it passed" could describe any tree that ever existed). Put this block in every verification doc; it renders as nothing:
-  \`\`\`
-  <!-- brain:verification
-  commit: <short sha, e.g. \`git rev-parse --short HEAD\`>
-  verified_by: feature-verifier
-  implemented_by: builder-agent
-  verified_by_source: flag
-  implemented_by_source: flag
-  commands: bun run test (exit 0); bun run typecheck (exit 0)
-  -->
-  \`\`\`
-- \`brain metrics [--limit N]\` — gate effectiveness over \`runs/gates.jsonl\` (written by every \`brain verify\`): first-pass rate, per-check failure counts, p50/p95 duration. It also names any check that has never failed in 3+ runs — a gate with no failing fixture is a claim, not a check. Without this the harness can only prove it is *intact*, never that it *works*
-- \`brain init --state-only --dir <repo> --yes\` — for a repo CLONED from a template: wipes inherited state (\`features/\`, \`runs/\`, \`plans/\`, \`screenshots/\`, \`evals/\`) and keeps the docs (\`rules/\`, \`recipes/\`, \`codebase/\`, \`high-level-architecture/\`, \`HARNESS.md\`, \`verify.json\`) — the clone inherits the stack along with the code, but not another project's history. Bare \`brain init\` still refuses a non-empty \`.brain\`
-- \`brain\` (home) shows an open \`sessions[...]\` table whenever a review session isn't ended yet
-
-## Verify — run declared project checks (\`.brain/verify.json\`)
-
-\`.brain/verify.json\` registers the project's own checks (typecheck, tests,
-lint, e2e, ...) so an agent runs the SAME commands the project actually uses
-instead of guessing. Shape:
-
-\`\`\`json
-{"version":1,"checks":[{"name":"typecheck","run":"bun run typecheck","stages":["baseline","verify"]}]}
-\`\`\`
-
-Each check: \`name\` (unique), \`run\` (shell command), \`stages\` (non-empty subset
-of \`bootstrap|baseline|verify\`), optional \`timeout\` in seconds (default 300).
-
-- \`brain verify\` — runs every check whose \`stages\` includes \`verify\` (the
-  default), sequentially and in registry order (checks may share
-  caches/DBs — never parallelized), from the repo root. Reports
-  \`results[]{check,status,exit,seconds}\` plus a \`tail_<name>:\` block (last 15
-  lines of combined output) for every non-pass check. Exits 1 if any executed
-  check fails or times out; exits 0 (no-op) if zero checks match the stage.
-- \`brain verify --stage bootstrap|baseline|verify\` — run a different stage.
-- \`brain verify --stage evals\` — the AI gate: runs the eval suites in
-  \`.brain/evals/\`, not verify.json checks (\`evals\` is NOT a legal stage inside
-  verify.json). Opt-in only — see the AI-work section below.
-- \`brain verify --only <name>\` — run just one check by name; wins over \`--stage\`.
-- \`brain verify --feature <slug>\` — also appends the results verbatim as a
-  run-note step under that feature (same write path as \`runs append\`).
-- Missing or malformed \`.brain/verify.json\` exits 1 with a copy-pasteable
-  registry snippet in the \`help:\` lines — self-serve, no need to ask.
-
-## Feature-centric \`.brain/\` layout
-
-Everything about a feature lives in its own folder. Every reader below merges
-this layout with the legacy flat one, so older brains keep working:
-
-\`\`\`
-.brain/features/feature_list.json          tracker (doc paths point at features/<slug>/<slug>.md)
-.brain/features/<slug>/
-  <slug>.md                                feature doc
-  screenshots/NN-<step>.png                golden path (01-, 02-, ...); error paths E1-, E2-, ...; A<N>- acceptance, X<N>- edge probes; round N >= 2 prefixes rN-
-  verifications/<YYYY-MM-DD>[-rN].md       verdict docs (browser walk + command runs), one per round (PASS/FAIL/BLOCKED)
-  runs/<YYYY-MM-DD>-<task>.md              per-feature run notes
-  plans/<plan-slug>/                       review plans scoped to this feature
-.brain/runs/progress.md                    stays global — rolling session cursor
-.brain/plans/<plan-slug>/                  fallback pool: plans not tied to a feature
-\`\`\`
-
-- \`npx -y brain-axi shots add <img> --feature <slug> --step 01-signin\` — primary
-  form; lands at \`.brain/features/<slug>/screenshots/01-signin.png\`. \`--scope\`
-  still works as a legacy alias.
-- Capturing the screenshots is YOUR job, not the CLI's (brain-axi ships no
-  browser automation): scaffold a throwaway Playwright script per
-  \`npx -y brain-axi playbook verify\` (project-pinned playwright, or
-  \`npx -y playwright install chromium\`), screenshot each step, add via
-  \`shots add\`, delete the script.
-- \`brain shots [<feature>]\` — merged list (per-feature + legacy); shows an
-  open-notes count per shot once any exist.
-- \`npx -y brain-axi shots notes <feature>\` — list reviewer pin+note
-  annotations dropped on a feature's screenshots from the \`watch\` carousel
-  (pin, note, timestamp, open/superseded, sent). Re-capturing a shot via
-  \`shots add\` supersedes its open annotations. The reviewer accumulates pins
-  freely (delete/adjust) and only hands a batch off with an explicit "Send to
-  Claude" click in the carousel — an unsent pin (sent: no) is still being
-  drafted, not yet ready to act on; only pins with a sent date are a settled
-  ask.
-- \`brain review <plan.html> --feature <slug>\` — binds the plan under that
-  feature's \`plans/\` dir instead of the legacy fallback pool.
-
-## Verifications — proof a feature actually works
-
-- \`npx -y brain-axi playbook verify\` — the verification-doc standard: an
-  INDEPENDENT verifier (fresh context, did not write the code; declared in an
-  \`- **Independence**:\` header line) walks EVERY acceptance criterion (plan
-  of record + task acceptance) in an \`## Acceptance criteria\` table, plus a
-  golden path, at least one error path, and edge probes; \`## Quality scores\`
-  with hard floors (product-depth 2, functionality 2, design 2 UI-only,
-  code-quality 1 — a stub or display-only control is a FAIL). Evidence: a
-  screenshot for what a browser can reach; for a CLI-only / non-browser
-  criterion, the named command run, with command + exit code + output.
-  Also screenshot naming (round N >= 2 prefixes \`rN-\`), the
-  jsErrors/networkErrors console policy, and how to persist the evidence.
-  On FAIL a fresh verifier re-walks in a new doc,
-  \`<date>-rN.md\` for round N >= 2 (\`- **Round**: N\`, one Verdict per
-  doc, cap 3, then escalate — \`playbook execute\` step 4b).
-- \`brain verifications [<feature>]\` — list verdict docs (feature, date, verdict).
-- \`brain verifications view <feature> <date>\` — read one in full.
-
-After implementing a user-visible feature, hand it to a fresh-context verifier
-(a sub-agent or new session — never the implementer) that writes the
-verification doc at \`.brain/features/<slug>/verifications/<date>.md\`
-(fix round N >= 2: \`<date>-rN.md\`) following \`brain playbook verify\` — this is how "it works" becomes checkable
-evidence instead of a claim. Solo self-verification only when no second agent
-is possible, declared as \`- **Independence**: self-verified — <reason>\`.
-
-## Tasks — coordination BELOW a feature (\`brain tasks\`)
-
-A task is the unit a coordinator hands to a worker: smaller than a feature,
-tracked in \`features/<slug>/tasks.json\`, so the phase list survives a
-compaction or a handoff instead of living only in one agent's context window.
-Claims are compare-and-swap (a content hash from the read that must still
-match at write time), so two workers claiming at once cannot silently lose
-each other's write — the loser gets exit 1 and a \`help:\` line to re-list and
-retry, never a corrupted file.
-
-- \`brain tasks <slug>\` — list: \`id,title,status,owner\` plus a \`count:\` line
-  that already includes how many are unblocked (open, every \`depends_on\`
-  done) — no second call needed. A claimed row shows how long it has been
-  held (\`held 41m\`) right there, so a stale claim is visible without \`view\`.
-- \`brain tasks view <slug> <id>\` — full detail: acceptance, \`verify\`,
-  \`depends_on\`, files, owner, \`claimed_at\`, evidence, receipt, and what it
-  is **blocked by** right now (computed from the other tasks' current status,
-  not just the declared list).
-- \`brain tasks add <slug> --title "..." --acceptance "..." [--verify "..."]
-  [--depends-on t1,t2] [--files a,b] [--id <id>]\` — creates \`tasks.json\` on
-  the first task; \`--id\` auto-generates (\`t1\`, \`t2\`, ...) from the current
-  max when omitted. \`--title\`/\`--acceptance\` are required — a task with no
-  checkable acceptance is the same premature-"done" shape the feature-level
-  evidence rule exists to prevent, one level further down. \`--verify\` is the
-  **verification contract** (optional flag, but every task should carry one —
-  omitting it prints a \`help:\` nudge): how the separate verifier will check
-  the acceptance, agreed by generator and verifier BEFORE coding (stored as the
-  task's \`verify\` field; shown by \`tasks view\` and \`brief\`).
-- \`brain tasks claim <slug> <id> --owner <name>\` — refuses (exit 1, naming
-  the current owner) if held by someone else; refuses (naming the unmet
-  dependency) if any \`depends_on\` is not \`done\`; re-claiming your OWN
-  claim is an idempotent no-op at exit 0.
-- \`brain tasks done <slug> <id> --evidence "..." [--no-autoship]\` —
-  \`--evidence\` is required (mirrors \`brain ship\`'s gate) and refuses on
-  missing/blank (exit 2). Already-done is an idempotent no-op at exit 0 and
-  never overwrites the recorded evidence. **Closing the LAST open/claimed task
-  on a feature runs \`brain ship\`'s identical strict preflight automatically**
-  (gated autoship) — on a verified feature it ships; on an unverified one it
-  refuses, but the task stays closed and the feature stays untouched (nothing
-  is written by the refused ship), reported together in one result, still exit
-  0 — the task close is the primary operation here and it succeeded; the ship
-  refusal is the gate working as designed, not a failure of this command.
-  \`--no-autoship\` skips the automatic ship attempt entirely.
-- \`brain tasks release <slug> <id>\` — the stale-claim escape hatch: clears
-  owner/\`claimed_at\` back to \`open\`. No TTL by design — any fixed timeout is
-  wrong for some task, so release is always an explicit act.
-- \`brain brief <slug> <task-id> [--full]\` — the handoff: one payload a COLD
-  worker can act on without reading the plan artifact or being told anything
-  else. Composes the task (acceptance, its \`verify\` contract or \`none\`, \`depends_on\` with their current
-  statuses, declared \`files\`), the **approved** decision prompts read verbatim
-  from that feature's bound plan(s) (\`plans/<slug>/reviews.jsonl\` — the round
-  that concluded review, filtered to \`tag: decision\`; names which plan they
-  came from when more than one is bound), the rules docs that own each
-  declared file (derived from \`rules/index.md\`'s own Touches column — see
-  \`rules_source\` in the output for exactly how), and the feature's one-line
-  \`description\` for orientation. A task with no decisions or no owning rules
-  still gets a definitive line saying so, never a silently empty section. Run
-  this FIRST on a claimed task, before reading anything else.
-
-Every mutation preflights: read → project the change → validate the
-projection → only then write with the hash from the read (the same
-preflight-then-commit order \`brain ship\` already uses) — a bad write never
-lands partially. Two more \`brain check\` rows exist just for this layer:
-\`tasks.json files parse\` and \`no shipped feature has an open task\` — both
-scoped exactly like every other per-feature row (an unrelated feature's open
-task never blocks THIS feature's ship), and both PASS vacuously when a feature
-has no \`tasks.json\` at all (read-compat).
-
-## Execution loop — implementing an approved plan / working a feature to shipped
-
-Run \`npx -y brain-axi playbook execute\` and follow it. Short version: \`features
-set-status <slug> --status in-progress\` → per step \`runs append <slug> --step
-"..." --observed "..." [--task <id>] [--author <name>]\` (verbatim command
-output, not a paraphrase — \`--task\`/\`--author\` are both optional and additive,
-so a step on a coordinated task no longer has to be folded into \`--step\` text
-by hand; both are visible via \`runs view\`) → \`shots add --feature <slug>
---step NN-name\` on every visual test, pass AND fail → a verification doc per
-\`playbook verify\` → \`brain ship <slug> --evidence "..."\` (requires evidence;
-no-ops if already shipped; **preflights \`brain check\` against the projected
-state and refuses the ship if anything would fail — nothing is written, the
-feature keeps its previous status, exit 1**; on pass it writes atomically,
-warns — does not block — on zero screenshots, and checkpoints).
-\`runs/progress.md\` stays a rolling cursor; \`features/<slug>/runs/*.md\` is the
-deep, verbatim record.
-
-- \`npx -y brain-axi watch <feature>\` — opens the live execution dashboard in
-  the browser (feature status, harness health, checkpoints, run-step logs,
-  verification verdicts, screenshots, PR state). Run it UNPROMPTED as the first
-  act of execution, right after flipping the feature in-progress — the human
-  should never have to ask to see progress. Infer the slug; never ask for it:
-  the plan's bound feature (\`brain plans view <plan-slug>\`), else the single
-  in-progress feature (\`brain features\`), else the slug you are about to flip.
-  It live-updates as the commands above write state.
-- After opening a PR, record it: \`npx -y brain-axi pr <slug> --url <pr-url>\`
-  — this is the dashboard's terminal state (approval → execution → PR).
-
-## AI work — prompts, models, agents
-
-Run \`npx -y brain-axi playbook ai\` and follow it whenever the work involves a
-prompt, a model call, a chain, retrieval, or an agent — it is additive to
-start/execute/done, not a replacement. Short version: write the prompt contract
-(job, inputs, output shape, known failure modes, model + settings pin) → build a
-golden set in \`.brain/evals/<suite>/\` (min ~20 cases, real before synthetic, four
-coverage bands — typical / edge / adversarial / refusal-correct, a held-out slice
-you never tune against) → score with the cheapest kind that discriminates
-(deterministic assertions before rubric+judge before human) → baseline, change ONE
-thing, re-run, compare per-case → record the real numbers via \`brain runs append\`
-and carry the delta into \`brain progress add\`.
-
-Non-negotiables: every bug you fix becomes a frozen regression case in the same
-session; a failing frozen case blocks the change no matter what the aggregate did;
-a model/settings change is a prompt change (re-run the suite); prompts and eval
-outputs get reviewed by a human, and unreviewed feedback blocks "done". Plans for
-AI work carry section 16 of \`playbook plan\` (prompt contract, eval plan + golden
-set, regression gate, agent topology).
-
-Suites live in \`.brain/evals/<suite>/\` (\`suite.json\` + \`cases.jsonl\` + committed
-run history). Commands:
-
-- \`brain evals\` — every suite: cases, frozen count, last run, score, state
-  (\`never-run\` | \`stale\` | \`regressed\` | \`ok\`). \`stale\` means a prompt the suite
-  points at changed after the last run — the number on screen no longer describes
-  the prompt on disk.
-- \`brain evals view <suite>\` — config, coverage by origin/tag, thresholds, last
-  run + delta + cost, failing case ids. \`brain evals cases <suite>\`
-  (\`--frozen\`, \`--origin\`, \`--tag\`) reads the golden set; \`brain evals runs
-  <suite>\` is the history.
-- \`brain evals run <suite>\` — runs the suite's declared runner (a shell command
-  in \`suite.json\`; brain never calls a model itself), records the run, applies the
-  gate, exits 1 when it fails. \`--dry-run\` to skip recording.
-- \`brain evals record <suite> --from <file> [--adapter promptfoo]\` — record a run
-  produced elsewhere (promptfoo output, a python harness, an agent-scored pass).
-  Runner/adapter contract: one JSON envelope,
-  \`{"cases":[{"id":"...","output":"...","pass":true,"score":1}],"usage":{...}}\`.
-- \`brain evals golden add <suite> --id <id> --input "..." --frozen\` — add a case;
-  \`brain evals golden freeze <suite> <case-id>\` — flip an existing case to frozen.
-  This is the move right after fixing an AI bug, in the same session.
-- \`brain verify --stage evals\` — runs every suite through the gate. Opt-in by
-  design: it never rides along on an ordinary \`brain verify\`, because model calls
-  cost money and time.
-- \`brain progress add --eval <suite> --summary "..."\` — stamps the checkpoint with
-  the suite's real last-run score and delta, read from the run record (never a
-  number you typed from memory).
-
-## Before declaring any task complete
-
-Run \`npx -y brain-axi playbook done\` and follow it before saying a task is
-finished. Short version: full \`brain verify\` (green, or fix and \`--only
-<name>\`) → feature verification for user-visible work (\`playbook verify\`,
-not duplicated here) → \`brain check\` (harness invariants) → brain coherence
-(every changed path's owning doc updated, or flagged) → close state
-(\`runs append\`, \`progress add\`, \`brain ship <slug> --evidence "..."\` if the
-feature itself is done). Anything unmet → say what's blocking, don't declare
-done.
-
-## Plan review (human-in-the-loop) — the DEFAULT for plans and approvals
-
-When the user asks for a plan, proposal, design, or a review of an approach, do NOT
-print the plan in chat and do NOT stop after writing a markdown file. Run this flow,
-in order, in the current turn:
-
-1. **Read the brain first** — \`brain progress\`, \`brain features\`, \`brain plans\`,
-   \`brain timeline\`. Weave what you find into the plan (cite prior plans, decisions,
-   in-progress feature, relevant rules).
-1b. **Grill before you write, if the plan will carry any decision.** Run
-   \`npx -y brain-axi playbook grill\` and follow it: check every past plan's recorded
-   decision rounds for an already-settled answer FIRST (cite those, never re-ask them),
-   then put the remaining open questions to the user in one numbered round, each with a
-   recommendation, and wait. Settled answers become pre-answered decision cards in step 2;
-   a question asked after the artifact exists cannot change the design it is asking about.
-2. **Run \`npx -y brain-axi playbook plan\` and follow it** to write the plan as ONE
-   standalone HTML file (inline CSS, system fonts, no build step — it must render
-   opened directly). Pick a TIER first — \`small\` (header, TL;DR, context, decisions,
-   plan of record, files) or \`full\` (every applicable section) — and state it in the
-   header strip; decisions are never cut, and a conditional section still fires in small.
-   The playbook covers the 17-section structure (0-16), decision cards,
-   and diagram options (a CDN-based Mermaid snippet that degrades to readable text
-   offline, or hand-rolled inline SVG for zero network dependency). Any path works;
-   \`<repo>/plans/<topic>.html\` is a good default.
-   Four of those sections are conditional, and each names the playbook that owns it —
-   read that playbook BEFORE writing the section, not after: sections 3 + 7
-   (product brief, product decisions) fire on any user-facing change →
-   \`playbook product\`; section 6 (UI mockups + UX flows) fires when a screen changes →
-   \`playbook ux\`; section 16 (AI addendum) fires on prompts/models/agents →
-   \`playbook ai\`. Skip a conditional section when it does not apply.
-3. **\`npx -y brain-axi review <plan.html>\`** — this pops the review UI in the user's
-   browser. The UI shows your plan beside brain memory panels (past plans, timeline,
-   screenshots), so the human reviews with full context.
-4. **Immediately run \`npx -y brain-axi review poll <plan.html>\` and wait for it in the
-   foreground of this same turn.** It blocks until the human annotates and clicks Send —
-   that is the point. Do not background-and-forget it, do not skip it, do not end your
-   turn while it waits. If it gets interrupted or times out, re-run the same command:
-   feedback is never lost.
-5. When the poll returns prompts, apply each requested change to the SAME html file
-   (the browser hot-reloads it), then
-   \`npx -y brain-axi review poll <plan.html> --agent-reply "what you changed"\`
-   and wait again. Each prompt carries \`line\` + \`text\` anchors (server-resolved
-   against the artifact's current content) — apply edits with targeted reads
-   (offset/limit) and anchored replacements; do NOT re-read the whole artifact
-   just to find what a prompt refers to.
-6. Repeat step 5 until the plan is approved or the session ends.
-
-Rules:
-
-- If a poll response shows \`ended_by: user\` (or \`next_step\` says the user ended it): **stop polling, do not reopen the browser**, apply any remaining feedback, and report the outcome in the conversation. Only reopen with \`review <plan.html> --reopen\` if the user explicitly asks to resume.
-- If a poll response carries \`layout_warnings\`, fix any \`severity: error\` entry and wait for the next poll to confirm a clean audit; if the SAME warning comes back \`persistent: true\`, proceed and mention it to the human instead of looping.
-- A poll's DOM snapshot is a compact outline, not the raw page — it prints as \`snapshot_chars: N\` by default; pass \`--snapshot\` to see the full outline block only when you actually need it.
-- \`npx -y brain-axi review end <plan.html>\` — end the session yourself once the plan is fully approved
-- \`npx -y brain-axi shots add <img> --feature <slug> --step <NN-name>\` — attach a screenshot to a feature (\`--scope <plan-or-feature>\` is the legacy form)
-- \`npx -y brain-axi plans\` / \`plans view <slug>\` — see past plan artifacts and their review rounds. Each round prints a \`snapshot:\` path (\`plans/<slug>/vN.html\`) — the FROZEN copy of the artifact as it stood at that round. A snapshot is written for every round, so the newest one is NOT automatically the approved one: the approved snapshot — the FROZEN copy the human approved — is the one for the round that ended the review (\`ended by\` in the round header). \`plans view\` names it for you in its \`help:\` line, and says so explicitly when no round has ended yet. When verifying a feature whose plan carried wireframes, compare the shipped UI against that approved snapshot, never against the live artifact path (the agent has been editing it); record each difference in the verification doc's mockup-reconciliation table per \`playbook verify\` 5b.
-- \`npx -y brain-axi timeline\` — merged history across checkpoints, run notes, plan reviews, and verifications
-
-## Install & session hooks (run once per repo)
-
-- \`brain setup --app claude|codex|opencode\` — installs a SessionStart hook so the
-  agent gets brain context automatically at the start of every session.
-  Idempotent: re-running repairs stale paths and JSON-merges into existing
-  settings without clobbering them.
-- \`brain context\` — what that hook runs: a compact orientation block (features,
-  latest checkpoint, open sessions). Silent no-op outside a repo with a
-  \`.brain/\`, so it is safe to wire unconditionally.
-- \`brain skill --write\` — regenerate this skill file after changing the CLI;
-  \`brain skill --check\` exits 1 when it has drifted (wire it into CI, or into
-  \`.brain/verify.json\` as a check).
-
-Every command supports \`--help\`. Errors print an \`error:\` line plus a \`help:\` line with the corrected command.
-`;
+// Validate the Claude Code plugin packaging: .claude-plugin/plugin.json,
+// marketplace.json, hooks/hooks.json. Returns problems.
+function validatePluginFiles() {
+  const problems = [];
+  const root = path.dirname(SKILLS_DIR);
+  const load = (rel) => {
+    const f = path.join(root, rel);
+    if (!fs.existsSync(f)) return void problems.push(`${rel}: missing`);
+    try { return JSON.parse(fs.readFileSync(f, "utf8")); }
+    catch (e) { return void problems.push(`${rel}: invalid JSON (${e.message})`); }
+  };
+  const pkg = load("package.json");
+  const plugin = load(".claude-plugin/plugin.json");
+  if (plugin) {
+    if (plugin.name !== PLUGIN_NAME) problems.push(`.claude-plugin/plugin.json: name is "${plugin.name}", expected "${PLUGIN_NAME}"`);
+    if (pkg && plugin.version !== pkg.version)
+      problems.push(`.claude-plugin/plugin.json: version "${plugin.version}" does not match package.json "${pkg.version}"`);
+  }
+  const market = load(".claude-plugin/marketplace.json");
+  if (market && !(Array.isArray(market.plugins) && market.plugins.some((p) => p && p.name === PLUGIN_NAME)))
+    problems.push(`.claude-plugin/marketplace.json: does not list plugin "${PLUGIN_NAME}"`);
+  const hooks = load("hooks/hooks.json");
+  if (hooks) {
+    const entries = Array.isArray(hooks.hooks?.SessionStart) ? hooks.hooks.SessionStart : [];
+    const ok = entries.some((m) => (m.hooks || []).some((h) => typeof h.command === "string" && /bin\/brain\.js"? context\b/.test(h.command)));
+    if (!ok) problems.push("hooks/hooks.json: no SessionStart hook runs `bin/brain.js context`");
+  }
+  return problems;
 }
 
 function cmdSkill(argv) {
   const spec = {
-    "--write": { value: false, desc: "write .claude/skills/brain/SKILL.md at the repo root" },
-    "--check": { value: false, desc: "exit 1 if the committed skill file is stale (for CI)" },
+    "--check": { value: false, desc: "exit 1 if the skills/ tree or the Claude Code plugin files (.claude-plugin/, hooks/) are invalid (for CI)" },
   };
   const { flags } = parseArgs(argv, spec, "skill");
   if (flags.help)
-    helpBlock("skill", "Print, write, or check the installable agent skill for this CLI", spec,
-      ["brain skill", "brain skill --write", "brain skill --check"]);
+    helpBlock("skill", "Print the router skill (skills/brain/SKILL.md), or validate the skills/ tree and plugin packaging", spec,
+      ["brain skill", "brain skill --check"]);
   const content = skillContent();
-  if (!flags.write && !flags.check) {
+  if (!flags.check) {
     process.stdout.write(content);
     return;
   }
-  const brain = findBrain(flags.brain);
-  const skillPath = path.join(path.dirname(brain), ".claude", "skills", "brain", "SKILL.md");
-  if (flags.check) {
-    if (fs.existsSync(skillPath) && fs.readFileSync(skillPath, "utf8") === content) {
-      print([`skill: ${path.relative(process.cwd(), skillPath)} is up to date`]);
-      return;
-    }
-    print([
-      `error: ${path.relative(process.cwd(), skillPath)} is stale or missing`,
-      ...toonList("help", ["Run `brain skill --write` to regenerate it"]),
-    ]);
-    process.exit(1);
-  }
-  const existed = fs.existsSync(skillPath) && fs.readFileSync(skillPath, "utf8") === content;
-  if (existed) {
-    print([`skill: ${path.relative(process.cwd(), skillPath)} already up to date (no-op)`]);
+  const problems = [...validateSkillsTree(), ...validatePluginFiles()];
+  if (!problems.length) {
+    print(["skill: skills/ tree and plugin files (.claude-plugin/, hooks/) are valid"]);
     return;
   }
-  fs.mkdirSync(path.dirname(skillPath), { recursive: true });
-  fs.writeFileSync(skillPath, content);
   print([
-    "skill:",
-    kv("file", path.relative(process.cwd(), skillPath), 2),
-    kv("action", "written", 2),
-    ...toonList("help", ["Install into an agent with: npx skills add <owner>/<repo> --skill brain"]),
+    "error: skills/ tree or plugin files invalid",
+    ...toonList("problems", problems),
+    ...toonList("help", ["Fix the problems listed above, then re-run `brain skill --check`"]),
   ]);
+  process.exit(1);
 }
 
 // ---------------------------------------------------------------------------

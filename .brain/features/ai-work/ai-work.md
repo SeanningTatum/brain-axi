@@ -31,7 +31,7 @@ Later phases (planned, per `plans/2026-07-28-ai-work-harness.html`):
 
 ### Persistence details
 
-- Phase 1: none — playbook text is code, and the generated skill is the only artifact written (`.claude/skills/brain/SKILL.md`).
+- Phase 1: none — playbook text is code, and the skills/ tree is the only artifact written (`skills/brain/SKILL.md`).
 - Phase 2+: `.brain/evals/<suite>/` (committed in full, including per-case outputs, with a `max_output_chars` truncation cap); `.brain/agents/agents.json`.
 
 ### Testability

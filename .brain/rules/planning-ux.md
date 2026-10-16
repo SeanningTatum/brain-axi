@@ -17,7 +17,7 @@ Read when: editing the `product` or `ux` playbook, adding/renumbering a section 
 | Verify §5b + verdict table | `PLAYBOOKS.verify` | Reconcile shipped screenshots against the approved `vN.html` snapshot; undisclosed differences fail |
 | Snapshot surfacing | `listSnapshots` in `lib/review/brain-data.js` + `cmdPlansView` | Per-round `snapshot:` path in `brain plans view`, plus the help line pointing at the frozen copy |
 | Regression check | `scripts/check-playbook-refs.mjs` (declared in `verify.json`, stages baseline + verify) | Every playbook section cross-reference resolves, every `.wf-*` class an example uses is defined by the kit, every backticked `playbook <id>` exists |
-| Skill playbook index | `skillContent()` in `bin/brain.js` | Eight playbook rows + the conditional-section map in the plan-review flow |
+| Skill phase table | `skills/brain/SKILL.md` (router) + `skills/brain-plan/` | The phase-skill table + the conditional-section map in the plan skill |
 
 ## The plan artifact's section numbering (0-16)
 
@@ -51,7 +51,7 @@ Section numbers are cross-referenced from inside the playbook text, from the `ai
 - **Every interactive wireframe control carries `data-brain-action`** — the same rule decision cards follow. Without it, annotate mode's click interception (`shouldSkip` in `lib/review/sdk.js`) swallows the click as an element annotation.
 - **Product decision cards reuse `queueDecision` verbatim** — same `decision-card` class, same queueKey discipline, same `data-brain-action` rule. A second queuing path is a second thing to keep in sync.
 - **Every product decision card carries a recommendation with a rationale.** A card that lists options and takes no position is the planner outsourcing its job to the reviewer.
-- **Re-run `node bin/brain.js skill --check`** after any playbook edit, and `skill --write` when it reports stale.
+- **Re-run `node bin/brain.js skill --check`** after any playbook edit; fix the router/skills it reports.
 
 ## Don't
 
@@ -63,7 +63,7 @@ Section numbers are cross-referenced from inside the playbook text, from the `ai
 
 ## Update triggers
 
-- New or renumbered plan section → this doc's numbering table + every cross-reference in `PLAYBOOKS.plan`, `PLAYBOOKS.ai`, `skillContent()`, `.brain/rules/ai-work.md`, then `skill --write`
+- New or renumbered plan section → this doc's numbering table + every cross-reference in `PLAYBOOKS.plan`, `PLAYBOOKS.ai`, `skillContent()`, `.brain/rules/ai-work.md`, then `skill --check`
 - New `.wf-*` class or kit change → `PLAYBOOKS.ux` section 1 + plan §0's style block guidance
 - Annotation behaviour changes in `lib/review/sdk.js` → `PLAYBOOKS.ux` section 6 (it documents the real `shouldSkip` / pin-drop rules; stale text there is worse than none) + `.brain/rules/review-browser.md`
 - Plan snapshot naming (`vN.html`) or location changes → `listSnapshots` + `PLAYBOOKS.verify` §5b + the `plans view` help line + `skillContent()`

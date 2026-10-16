@@ -1,0 +1,212 @@
+{
+  "schemaVersion": 1,
+  "claudeVersion": "2.1.296",
+  "startedAt": "2026-10-10T06:14:03.752Z",
+  "durationSeconds": 12,
+  "costUsd": 0.060554199999999996,
+  "partial": false,
+  "suite": {
+    "root": "/Users/sean/Desktop/personal-projects/brain-axi",
+    "ablation": "with-without",
+    "caseFilter": "refuse-nobrain-plan",
+    "threshold": 0,
+    "concurrency": 1,
+    "plugins": [
+      {
+        "name": "brain",
+        "version": "0.2.0",
+        "path": "/Users/sean/Desktop/personal-projects/brain-axi"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "refuse-nobrain-plan",
+      "dir": "evals-plugin/refuse-nobrain-plan",
+      "source": "mixed",
+      "promptMarkdown": "let's plan adding rate limiting to the API",
+      "runsPerCase": 1,
+      "timeoutSeconds": 300,
+      "maxTurns": 3,
+      "graders": [
+        {
+          "name": "no-unexpected-brain-skill",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "input_match": "\"skill\":\\s*\"(?:[\\w-]+:)?(?:brain-ai|brain-done|brain-execute|brain-grill|brain-plan|brain-product|brain-start|brain-ux|brain-verify|brain-write)\"",
+            "min": 0,
+            "max": 0,
+            "arm": "both"
+          }
+        },
+        {
+          "name": "fired-brain",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "input_match": "\"skill\":\\s*\"(?:[\\w-]+:)?(?:brain)\"",
+            "arm": "with-only"
+          }
+        },
+        {
+          "name": "fired-brain-ai",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "input_match": "\"skill\":\\s*\"(?:[\\w-]+:)?(?:brain-ai)\"",
+            "arm": "with-only"
+          }
+        },
+        {
+          "name": "fired-brain-done",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "input_match": "\"skill\":\\s*\"(?:[\\w-]+:)?(?:brain-done)\"",
+            "arm": "with-only"
+          }
+        },
+        {
+          "name": "fired-brain-execute",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "input_match": "\"skill\":\\s*\"(?:[\\w-]+:)?(?:brain-execute)\"",
+            "arm": "with-only"
+          }
+        },
+        {
+          "name": "fired-brain-grill",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "input_match": "\"skill\":\\s*\"(?:[\\w-]+:)?(?:brain-grill)\"",
+            "arm": "with-only"
+          }
+        },
+        {
+          "name": "fired-brain-plan",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "input_match": "\"skill\":\\s*\"(?:[\\w-]+:)?(?:brain-plan)\"",
+            "arm": "with-only"
+          }
+        },
+        {
+          "name": "fired-brain-product",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "input_match": "\"skill\":\\s*\"(?:[\\w-]+:)?(?:brain-product)\"",
+            "arm": "with-only"
+          }
+        },
+        {
+          "name": "fired-brain-start",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "input_match": "\"skill\":\\s*\"(?:[\\w-]+:)?(?:brain-start)\"",
+            "arm": "with-only"
+          }
+        },
+        {
+          "name": "fired-brain-ux",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "input_match": "\"skill\":\\s*\"(?:[\\w-]+:)?(?:brain-ux)\"",
+            "arm": "with-only"
+          }
+        },
+        {
+          "name": "fired-brain-verify",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "input_match": "\"skill\":\\s*\"(?:[\\w-]+:)?(?:brain-verify)\"",
+            "arm": "with-only"
+          }
+        },
+        {
+          "name": "fired-brain-write",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "input_match": "\"skill\":\\s*\"(?:[\\w-]+:)?(?:brain-write)\"",
+            "arm": "with-only"
+          }
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 0,
+            "passed": false,
+            "turns": 0,
+            "costUsd": 0,
+            "judgeCostUsd": 0,
+            "durationSeconds": 0,
+            "startedAt": "2026-10-10T06:14:03.783Z",
+            "error": "plugin entry directory name \"\"# Rules\\n\\nAdd layer-aligned do\"\" contains a character that cannot be scoped safely in a permission rule (one of ( ) [ ] { } * ? ! # or a backslash) — rename it",
+            "tracePath": "",
+            "skippedPaidGraders": false,
+            "graders": []
+          }
+        ],
+        "without": [
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 2,
+            "costUsd": 0.060554199999999996,
+            "judgeCostUsd": 0,
+            "durationSeconds": 12,
+            "startedAt": "2026-10-10T06:14:03.859Z",
+            "error": null,
+            "tracePath": "/private/tmp/e-560Y8h/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "no-unexpected-brain-skill",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 0x (expected 0..0)",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {
+        "score": 0,
+        "passRate": 0,
+        "scoreWithout": 1,
+        "passRateWithout": 1,
+        "delta": -1
+      }
+    }
+  ],
+  "aggregates": {
+    "casesTotal": 1,
+    "casesPassed": 1,
+    "overallScore": 0,
+    "overallPassRate": 0,
+    "meanDelta": -1
+  }
+}

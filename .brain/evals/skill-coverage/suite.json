@@ -1,13 +1,63 @@
 {
   "version": 1,
   "kind": "assertions",
-  "description": "The generated agent skill (.claude/skills/brain/SKILL.md) is brain-axi's own agent-facing prompt. This suite scores it the way any other prompt gets scored: every command reachable, the output contract stated, the AI rules present, and no fabricated tooling.",
+  "description": "The agent-facing skills tree (skills/: the brain router, ten brain-* phase skills, and their references/) is brain-axi's own agent-facing prompt. This suite scores the whole tree, concatenated, the way any other prompt gets scored: every command reachable, the output contract stated, the AI rules present, and no fabricated tooling. (Staleness is mtime-based: each SKILL.md is listed; the skills dir pointer catches added/removed reference files.)",
   "runner": "node scripts/eval-skill-coverage.mjs",
   "adapter": "envelope",
   "model": "n/a — deterministic assertions, no model call",
   "prompts": [
-    { "name": "generated-skill", "path": ".claude/skills/brain/SKILL.md" },
-    { "name": "skill-source", "path": "bin/brain.js" }
+    {
+      "name": "skill-router",
+      "path": "skills/brain/SKILL.md"
+    },
+    {
+      "name": "skill-start",
+      "path": "skills/brain-start/SKILL.md"
+    },
+    {
+      "name": "skill-grill",
+      "path": "skills/brain-grill/SKILL.md"
+    },
+    {
+      "name": "skill-plan",
+      "path": "skills/brain-plan/SKILL.md"
+    },
+    {
+      "name": "skill-product",
+      "path": "skills/brain-product/SKILL.md"
+    },
+    {
+      "name": "skill-ux",
+      "path": "skills/brain-ux/SKILL.md"
+    },
+    {
+      "name": "skill-ai",
+      "path": "skills/brain-ai/SKILL.md"
+    },
+    {
+      "name": "skill-execute",
+      "path": "skills/brain-execute/SKILL.md"
+    },
+    {
+      "name": "skill-verify",
+      "path": "skills/brain-verify/SKILL.md"
+    },
+    {
+      "name": "skill-done",
+      "path": "skills/brain-done/SKILL.md"
+    },
+    {
+      "name": "skill-write",
+      "path": "skills/brain-write/SKILL.md"
+    },
+    {
+      "name": "skills-tree",
+      "path": "skills"
+    },
+    {
+      "name": "skill-source",
+      "path": "bin/brain.js"
+    }
   ],
   "thresholds": {
     "min_pass_rate": 1,

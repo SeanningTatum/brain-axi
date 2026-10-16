@@ -21,6 +21,76 @@
 
 ---
 
+## 2026-10-10 — Mapped 13 test-run findings onto axi-core (eb46fa1); skill-text fixes #10/#11/#13 for PR #21 (f3b1e23); Greptile 5/5 on f3b1e23
+- branch: `feat/skills-plugin`
+- in-progress feature: none
+- run note: none
+- next: Push feat/skills-plugin + merge PR #21 (user call); then axi-core phase 1 (lib/brain) on new branch; drop stash@{0} once axi-core lands
+
+---
+
+## 2026-10-10 — Paused fresh-brain bug fixes (stashed); 13 test-run findings recorded in features/axi-core/axi-core.md for mapping onto axi-core
+- branch: `feat/skills-plugin`
+- in-progress feature: none
+- run note: none
+- next: Sub-agent maps the 13 findings onto axi-core phases (covered/add/fix-now-in-#21/obsolete); then decide #21 merge + Greptile confirm on its HEAD
+
+---
+
+## 2026-10-10 — Opened PR #21 for skills-plugin (plugin renamed brain-axi@SeanningTatum, installed locally); Greptile 5/5 on 13e64eb, 2 commits after
+- branch: `feat/skills-plugin`
+- in-progress feature: none
+- run note: none
+- next: Greptile confirm on PR head; merge #21; then axi-core phase 1 (lib/brain) on a new branch
+
+---
+
+## 2026-10-10 — PR opened for skills-plugin: https://github.com/SeanningTatum/brain-axi/pull/21
+- branch: `feat/skills-plugin`
+- in-progress feature: none
+- run note: none
+
+---
+
+## 2026-10-10 — Planned axi-core (plans/2026-10-10-axi-architecture.html, reviewed r1, all recommended): skills -> thin AXI -> lib/brain SQLite; sqlite-engine cut
+- branch: `feat/skills-plugin`
+- in-progress feature: none
+- run note: none
+- next: Greploop skills-plugin to 5/5, open PR; after merge start axi-core phase 1 (lib/brain) on a new branch
+
+---
+
+## 2026-10-10 — skills-plugin shipped on feat/skills-plugin (8 commits, not pushed); verification r1 FAIL -> r2 PASS; routing eval 0.912
+- branch: `feat/skills-plugin`
+- in-progress feature: none
+- run note: none
+- next: Push + PR (Greptile loop to 5/5); follow-ups: F10 playbooks.js import crash, routing misses (done outside brain, product, quick-fix), trim plugin cache; then answer brain export/CI Q for sqlite-engine
+
+---
+
+## 2026-10-10 — shipped skills-plugin: 2026-10-10 verification PASS round 2 (features/skills-plugin/verifications/2026-10-10-r2.md, receipt bound to 680e9de; r
+- branch: `feat/skills-plugin`
+- in-progress feature: none
+- run note: none
+
+---
+
+## 2026-10-10 — Started skills-plugin (feat-011) on feat/skills-plugin: baseline verify 4/4, check green, skill-coverage 1.000; sqlite-engine (feat-012) registered planned
+- branch: `feat/skills-plugin`
+- in-progress feature: none
+- run note: none
+- next: Phase 1: move playbooks into skills/brain-<id>/SKILL.md, brain playbook byte-identical
+
+---
+
+## 2026-10-10 — Planned skills-plugin + sqlite-engine (plans/2026-10-09-skills-plugin-sqlite.html): reviewed round 1, 9 decisions confirmed; brain.db gitignored, Claude-only, re-scaffold this brain
+- branch: `main`
+- in-progress feature: none
+- run note: none
+- next: Open feat skills-plugin (phases 1-3) via brain-start; answer open Q on brain export/backup + CI check before phase 4
+
+---
+
 ## 2026-09-29 — Merged evaluator-separation W1-W4 clean + integrate pass; verify 4/4, check/strict exit 0 (independence row skip), 459 invariants, evals 37/37
 - branch: `feat/evaluator-separation`
 - in-progress feature: none

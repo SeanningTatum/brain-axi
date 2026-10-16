@@ -1,0 +1,2 @@
+# Skills and plugin files are parsed as LF; keep them LF on every checkout.
+* text=auto eol=lf

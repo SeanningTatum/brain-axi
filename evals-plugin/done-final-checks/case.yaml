@@ -1,0 +1,73 @@
+schema_version: "1.1"
+name: done-final-checks
+description: '[typical] expected first skill: brain-done.'
+tags: [typical, core]
+runs: 1
+execution:
+  max_turns: 3
+  allowed_tools: [Read, Glob, Grep, Skill]
+context:
+  scaffold_script: fixture.sh
+graders:
+  - name: routed-to-expected
+    type: tool_used
+    tool: Skill
+    input_match: '"skill":\s*"(?:[\w-]+:)?(?:brain-done)"'
+    min: 1
+    arm: both
+    weight: 1
+  - name: fired-brain
+    type: tool_used
+    tool: Skill
+    input_match: '"skill":\s*"(?:[\w-]+:)?(?:brain)"'
+    arm: with-only
+  - name: fired-brain-ai
+    type: tool_used
+    tool: Skill
+    input_match: '"skill":\s*"(?:[\w-]+:)?(?:brain-ai)"'
+    arm: with-only
+  - name: fired-brain-done
+    type: tool_used
+    tool: Skill
+    input_match: '"skill":\s*"(?:[\w-]+:)?(?:brain-done)"'
+    arm: with-only
+  - name: fired-brain-execute
+    type: tool_used
+    tool: Skill
+    input_match: '"skill":\s*"(?:[\w-]+:)?(?:brain-execute)"'
+    arm: with-only
+  - name: fired-brain-grill
+    type: tool_used
+    tool: Skill
+    input_match: '"skill":\s*"(?:[\w-]+:)?(?:brain-grill)"'
+    arm: with-only
+  - name: fired-brain-plan
+    type: tool_used
+    tool: Skill
+    input_match: '"skill":\s*"(?:[\w-]+:)?(?:brain-plan)"'
+    arm: with-only
+  - name: fired-brain-product
+    type: tool_used
+    tool: Skill
+    input_match: '"skill":\s*"(?:[\w-]+:)?(?:brain-product)"'
+    arm: with-only
+  - name: fired-brain-start
+    type: tool_used
+    tool: Skill
+    input_match: '"skill":\s*"(?:[\w-]+:)?(?:brain-start)"'
+    arm: with-only
+  - name: fired-brain-ux
+    type: tool_used
+    tool: Skill
+    input_match: '"skill":\s*"(?:[\w-]+:)?(?:brain-ux)"'
+    arm: with-only
+  - name: fired-brain-verify
+    type: tool_used
+    tool: Skill
+    input_match: '"skill":\s*"(?:[\w-]+:)?(?:brain-verify)"'
+    arm: with-only
+  - name: fired-brain-write
+    type: tool_used
+    tool: Skill
+    input_match: '"skill":\s*"(?:[\w-]+:)?(?:brain-write)"'
+    arm: with-only

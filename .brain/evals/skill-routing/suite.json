@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "kind": "judge",
+  "description": "Does the right brain-* skill fire FIRST for a given prompt? Engine: the built-in `claude plugin eval` (tool_used: Skill graders, deterministic; an LLM judge is not needed). Cases are mirrored from cases.jsonl (gate, 34 non-held-out) and heldout.jsonl (8 held-out, run and reported in split-runs.jsonl but not in the gate) into evals-plugin/<id>/ by scripts/eval-skill-routing.mjs. Each case runs twice: with the plugin and as a no-plugin baseline arm. Cases tagged no-brain run in a cwd without .brain/. `expected` grammar: 'skill', 'a|b' alternatives, 'none' (no brain-* skill may fire), 'none|X'. The converter grades the with-plugin arm on the FIRST skill from the fired-* set (tool results record which skills fired, not order): a case passes only if every brain skill that fired is acceptable, so multi-skill outcomes with an unacceptable skill fail. Only the with-plugin arm is the pass/fail score; the baseline arm and delta are in split-runs.jsonl. LIVE: spends the credential (~$8 per run).",
+  "runner": "node scripts/eval-skill-routing.mjs live",
+  "adapter": "envelope",
+  "model": "claude-sonnet-5-5 (child agent default; plugin eval picks the model; judge grader unused)",
+  "prompts": [
+    { "name": "skills-tree", "path": "skills" }
+  ],
+  "thresholds": {
+    "min_pass_rate": 0.9,
+    "aggregate_tolerance": 0.05
+  },
+  "timeout": 1800,
+  "max_output_chars": 4000
+}

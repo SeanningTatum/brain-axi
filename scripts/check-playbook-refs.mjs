@@ -9,6 +9,12 @@
 // `brain check` (that validates .brain data, not guidance text) nor in the
 // skill-coverage eval (that scores the generated skill, not the playbooks).
 //
+// A playbook is its SKILL.md body plus its references/ files (PLAYBOOKS[id].full):
+// long sections live in references/, so section inventories, kit classes and
+// pinned phrases are checked against the whole skill, not just the body. The
+// two things that must stay in the body itself (never only in a reference) are
+// the rN- screenshot rule and the skill/ref pointers, checked on `content`.
+//
 // Run: node scripts/check-playbook-refs.mjs   (exit 1 on any dangling ref)
 import { PLAYBOOKS } from "../lib/review/playbooks.js";
 
@@ -30,7 +36,7 @@ function sectionsOf(content) {
   return nums;
 }
 
-const sections = Object.fromEntries(ids.map((id) => [id, sectionsOf(PLAYBOOKS[id].content)]));
+const sections = Object.fromEntries(ids.map((id) => [id, sectionsOf(PLAYBOOKS[id].full)]));
 
 // ---------------------------------------------------------------------------
 // Cross-references. A reference is attributed to another playbook when the text
@@ -41,7 +47,7 @@ const sections = Object.fromEntries(ids.map((id) => [id, sectionsOf(PLAYBOOKS[id
 // self-reference would validate against the wrong inventory and pass while
 // dangling.
 // ---------------------------------------------------------------------------
-const NAME = String.raw`\`(?:brain playbook |npx -y brain-axi playbook )?(${ids.join("|")})\``;
+const NAME = String.raw`\`(?:brain playbook |npx -y brain-axi playbook |brain-)?(${ids.join("|")})\``;
 const REF_RE = new RegExp(
   String.raw`(?:${NAME}[^.\n]{0,40}?)?` + // leading form: `plan` §10
     String.raw`(?:§|[Ss]ection )(\d+)` +
@@ -50,7 +56,7 @@ const REF_RE = new RegExp(
 );
 
 for (const id of ids) {
-  const content = PLAYBOOKS[id].content;
+  const content = PLAYBOOKS[id].full;
   for (const m of content.matchAll(REF_RE)) {
     const target = m[1] || m[3] || id;
     const num = m[2];
@@ -72,7 +78,7 @@ for (const id of ids) {
 // Wireframe kit — every `.wf-*` class used in an HTML example must be defined
 // in the kit's own CSS block.
 // ---------------------------------------------------------------------------
-const uxContent = PLAYBOOKS.ux ? PLAYBOOKS.ux.content : "";
+const uxContent = PLAYBOOKS.ux ? PLAYBOOKS.ux.full : "";
 if (uxContent) {
   const defined = new Set();
   // Selector position: `.wf-block.tall {` / `.wf { ... }` — take every class in
@@ -97,12 +103,24 @@ if (uxContent) {
 // form counts — bare prose ("this playbook is…") is not a reference.
 // ---------------------------------------------------------------------------
 for (const id of ids) {
-  for (const m of PLAYBOOKS[id].content.matchAll(/`(?:npx -y brain-axi |brain )?playbook ([a-z][a-z-]*)`/g)) {
+  const text = PLAYBOOKS[id].full;
+  for (const m of text.matchAll(/`(?:npx -y brain-axi |brain )?playbook ([a-z][a-z-]*)`/g)) {
     const named = m[1];
     if (!ids.includes(named)) {
-      const where = PLAYBOOKS[id].content.slice(0, m.index).split("\n").length;
+      const where = text.slice(0, m.index).split("\n").length;
       failures.push(`${id}:${where}: names playbook "${named}", which does not exist (have: ${ids.join(", ")})`);
     }
+  }
+  // Skill form: "the `brain-X` skill" must name a real skill.
+  for (const m of text.matchAll(/the `brain-([a-z][a-z-]*)` skill/g)) {
+    if (!ids.includes(m[1])) failures.push(`${id}: names skill "brain-${m[1]}", which does not exist (have: ${ids.join(", ")})`);
+  }
+  // Reference pointers: "`brain playbook X --ref topic`" must name an existing reference file.
+  for (const m of text.matchAll(/`brain playbook ([a-z]+) --ref ([a-z0-9-]+)`/g)) {
+    const target = PLAYBOOKS[m[1]];
+    if (!target) failures.push(`${id}: --ref pointer names unknown playbook "${m[1]}"`);
+    else if (!target.refs.some((r) => r.name === m[2]))
+      failures.push(`${id}: --ref pointer names "${m[1]} --ref ${m[2]}", which does not exist (have: ${target.refs.map((r) => r.name).join(", ") || "none"})`);
   }
 }
 
@@ -123,14 +141,14 @@ if (PLAYBOOKS.verify && !/Round N >= 2: prefix every --step with rN-/.test(PLAYB
 // the browser walk covers only what a browser can reach.
 // ---------------------------------------------------------------------------
 for (const id of ids) {
-  if (/golden path \+ one error path/i.test(PLAYBOOKS[id].content))
+  if (/golden path \+ one error path/i.test(PLAYBOOKS[id].full))
     failures.push(`${id}: states the walk as "golden path + one error path" — the standard is at least one error path + edge probes`);
 }
 for (const id of ["verify", "execute", "done"]) {
-  if (PLAYBOOKS[id] && !/what a browser\s+can\s+reach/.test(PLAYBOOKS[id].content))
+  if (PLAYBOOKS[id] && !/what a browser\s+can\s+reach/.test(PLAYBOOKS[id].full))
     failures.push(`${id}: no longer scopes the browser walk to "what a browser can reach" (CLI-only criteria are checked by running the named command)`);
 }
-if (PLAYBOOKS.verify && !/Cap: 3\s+rounds/.test(PLAYBOOKS.verify.content))
+if (PLAYBOOKS.verify && !/Cap: 3\s+rounds/.test(PLAYBOOKS.verify.full))
   failures.push("verify: no longer states the 3-round fix-loop cap");
 
 if (failures.length) {

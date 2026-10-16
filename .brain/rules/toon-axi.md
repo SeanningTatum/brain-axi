@@ -1,6 +1,6 @@
 # Rule: TOON output + AXI ergonomics
 
-Applies to **all stdout**. Read the `brain-axi` skill (`.claude/skills/brain-axi/SKILL.md`) for the full standard.
+Applies to **all stdout**. Read the AXI standard (upstream [kunchenguid/axi](https://github.com/kunchenguid/axi); `npx skills add kunchenguid/axi`) for the full standard.
 
 ## Do
 

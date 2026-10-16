@@ -29,7 +29,7 @@ No test framework. Verify by invoking the command against `.brain/`, checking ex
 |------|------|
 | `bin/brain.js` | The entire core CLI — TOON encoder, errors, flags, discovery, all commands, `COMMANDS` dispatch |
 | `package.json` | Declares only the `brain` bin; `node >=18`, `type: module`, no scripts, no deps |
-| `skills/brain/SKILL.md` | Generated skill; must mirror the real commands (`skill --check`) |
+| `skills/brain/SKILL.md` | Router skill (source of `brain skill`); must name the real commands (`skill --check`) |
 
 ## Dependencies
 - Node stdlib only (`fs`, `path`, `crypto`, `child_process`, `url`). No npm deps.

@@ -15,7 +15,8 @@ evals/<suite>/
 
 | Suite | Kind | What it measures |
 |-------|------|------------------|
-| [`skill-coverage`](skill-coverage/) | assertions | `.claude/skills/brain/SKILL.md` names every command, states the TOON contract and the AI rules, and invents no tooling this repo lacks |
+| [`skill-coverage`](skill-coverage/) | assertions | `skills/` tree (router + phase skills) names every command, states the TOON contract and the AI rules, and invents no tooling this repo lacks |
+| [`skill-routing`](skill-routing/) | judge | Does the right `brain-*` skill fire first for a prompt (typical/edge/adversarial/no-.brain bands)? Driven by `claude plugin eval` (cases in `evals-plugin/`), with-plugin vs no-plugin baseline; 8 held-out cases in `heldout.jsonl`, reported in `split-runs.jsonl`, outside the gate. LIVE: ~$7 per run |
 
 ## Rules that bind here
 

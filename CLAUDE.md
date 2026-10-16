@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-`brain-axi` is a single-file, zero-dependency **AXI CLI** (`brain`) that queries and updates a `.brain/` agent-harness directory living in some *other* repo. Agents run it via shell (`brain <cmd>` or `npx -y brain-axi <cmd>`) to read/write project state: features, progress checkpoints, docs, run notes. It is a tool agents use — not a library — so agent ergonomics are the product. Read the `brain-axi` skill (`.claude/skills/brain-axi/SKILL.md`) before changing any agent-facing surface.
+`brain-axi` is a single-file, zero-dependency **AXI CLI** (`brain`) that queries and updates a `.brain/` agent-harness directory living in some *other* repo. Agents run it via shell (`brain <cmd>` or `npx -y brain-axi <cmd>`) to read/write project state: features, progress checkpoints, docs, run notes. It is a tool agents use — not a library — so agent ergonomics are the product. Read the AXI standard (upstream [kunchenguid/axi](https://github.com/kunchenguid/axi); install with `npx skills add kunchenguid/axi`) before changing any agent-facing surface.
 
-The implementation is **`bin/brain.js`** (Node ESM, `node >=18`, no runtime deps) plus the **`lib/review/`** modules it imports (review server, playbook texts, brain data access). There is no build step, no `src/`, no bundler, no test framework, no lint config. `package.json` declares only the `brain` bin and has no scripts.
+The implementation is **`bin/brain.js`** (Node ESM, `node >=18`, no runtime deps) plus the **`lib/review/`** modules it imports (review server, playbook loader, brain data access) and the **`skills/`** tree (router + `brain-<id>` phase skills whose bodies `brain playbook <id>` prints). There is no build step, no `src/`, no bundler, no test framework, no lint config. `package.json` declares only the `brain` bin and has no scripts.
 
 ### `.brain/` in this repo is REAL — brain-axi dogfoods its own harness
 
@@ -49,7 +49,7 @@ Top-to-bottom, the file is layered:
 
 - **stdout = TOON payload only; stderr = diagnostics/banners.** Agents parse stdout.
 - **Every command result ends with a `help:` list** guiding the next action (this is AXI contextual disclosure — the tool teaches through its output). `home()` / `cmdHome` is the master guidance surface.
-- **The generated skill (`cmdSkill` / `skillContent`) must stay in sync with the CLI's real commands.** `brain skill --check` exits 1 on drift (intended for CI). If you add/rename a command or change guidance, update `skillContent()` too. Skill uses `npx -y brain-axi` command forms and omits the version field by design.
+- **The agent skills (`skills/`, served by `cmdSkill` / `skillContent`) must stay in sync with the CLI's real commands.** `skillContent()` returns the router `skills/brain/SKILL.md` (one source; there is no generated copy). The repo ships as a Claude Code plugin (`.claude-plugin/plugin.json` + `marketplace.json`, `hooks/hooks.json`). `brain skill --check` exits 1 on an invalid `skills/` tree or plugin files (plugin.json version must equal package.json, name `brain-axi`, marketplace `SeanningTatum` lists it, hook runs `bin/brain.js context`) — frontmatter, size caps (router 6144 B, phase skills 10240 B), `## Next` successors, `references/` links, every `COMMANDS` name in the router (intended for CI). If you add/rename a command or change guidance, update the router (and the owning `skills/brain-<id>/`) too. Skills use `npx -y brain-axi` command forms and omit the version field by design.
 - **`setup` (`cmdSetup`) installs SessionStart hooks** for claude / codex / opencode — idempotent, repairs stale paths, JSON-merges into existing settings without clobbering. Keep it idempotent.
 - **`cmdContext` stays silent (exit 0, no output) outside a brain repo** (`findBrain(..., {optional:true})`) — it runs from installed hooks and must not error when the cwd has no `.brain/`.
 - New commands: add to `COMMANDS`, give a `--help` via `helpBlock`, reject unknown flags, return TOON + a `help:` next-step list.

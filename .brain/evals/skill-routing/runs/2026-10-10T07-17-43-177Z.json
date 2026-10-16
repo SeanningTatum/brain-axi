@@ -1,0 +1,330 @@
+{
+  "ts": "2026-10-10T07:17:43.177Z",
+  "suite": "skill-routing",
+  "branch": "feat/skills-plugin",
+  "commit": "1d9642f",
+  "runner": "node scripts/eval-skill-routing.mjs live",
+  "adapter": "envelope",
+  "model": "claude-sonnet-5-5 (child agent default; plugin eval picks the model; judge grader unused)",
+  "summary": {
+    "pass": 31,
+    "total": 34,
+    "score": 0.9117647058823529,
+    "failing": [
+      "product-dashboard-metric",
+      "edge-quick-bug",
+      "refuse-nobrain-done"
+    ],
+    "frozen_failing": [],
+    "partial": false
+  },
+  "unknown_case_ids": [],
+  "cases": [
+    {
+      "id": "grill-rate-limit",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "fired: brain-grill",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected brain-grill; baseline arm (no plugin) failed",
+      "missing": false
+    },
+    {
+      "id": "grill-notifications",
+      "frozen": false,
+      "pass": true,
+      "score": 1,
+      "output": "fired: brain-grill",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected brain-grill; baseline arm (no plugin) failed",
+      "missing": false
+    },
+    {
+      "id": "plan-retry-queue",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "fired: brain-plan",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected brain-plan; baseline arm (no plugin) failed",
+      "missing": false
+    },
+    {
+      "id": "plan-sqlite-approach",
+      "frozen": false,
+      "pass": true,
+      "score": 1,
+      "output": "fired: brain-plan",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected brain-plan; baseline arm (no plugin) failed",
+      "missing": false
+    },
+    {
+      "id": "execute-phase2",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "fired: brain-execute",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected brain-execute; baseline arm (no plugin) failed",
+      "missing": false
+    },
+    {
+      "id": "done-open-pr",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "fired: brain-done",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected brain-done; baseline arm (no plugin) failed",
+      "missing": false
+    },
+    {
+      "id": "done-final-checks",
+      "frozen": false,
+      "pass": true,
+      "score": 1,
+      "output": "fired: brain-done",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected brain-done; baseline arm (no plugin) failed",
+      "missing": false
+    },
+    {
+      "id": "verify-signup-browser",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "fired: brain-verify",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected brain-verify; baseline arm (no plugin) failed",
+      "missing": false
+    },
+    {
+      "id": "start-login-bug",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "fired: brain-start",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected brain-start; baseline arm (no plugin) failed",
+      "missing": false
+    },
+    {
+      "id": "start-csv-feature",
+      "frozen": false,
+      "pass": true,
+      "score": 1,
+      "output": "fired: brain-start",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected brain-start; baseline arm (no plugin) failed",
+      "missing": false
+    },
+    {
+      "id": "router-in-progress",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "fired: brain",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected brain; baseline arm (no plugin) failed",
+      "missing": false
+    },
+    {
+      "id": "write-checkpoint",
+      "frozen": true,
+      "pass": true,
+      "score": 1,
+      "output": "fired: brain-write",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected brain-write; baseline arm (no plugin) failed",
+      "missing": false
+    },
+    {
+      "id": "write-run-note",
+      "frozen": false,
+      "pass": true,
+      "score": 1,
+      "output": "fired: brain-write",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected brain-write; baseline arm (no plugin) failed",
+      "missing": false
+    },
+    {
+      "id": "ai-summarizer-prompt",
+      "frozen": false,
+      "pass": true,
+      "score": 1,
+      "output": "fired: brain-ai",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected brain-ai; baseline arm (no plugin) failed",
+      "missing": false
+    },
+    {
+      "id": "ai-golden-set",
+      "frozen": false,
+      "pass": true,
+      "score": 1,
+      "output": "fired: brain-ai",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected brain-ai; baseline arm (no plugin) failed",
+      "missing": false
+    },
+    {
+      "id": "ux-onboarding-wireframes",
+      "frozen": false,
+      "pass": true,
+      "score": 1,
+      "output": "fired: brain-ux",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected brain-ux; baseline arm (no plugin) failed",
+      "missing": false
+    },
+    {
+      "id": "ux-billing-mock",
+      "frozen": false,
+      "pass": true,
+      "score": 1,
+      "output": "fired: brain-ux",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected brain-ux; baseline arm (no plugin) failed",
+      "missing": false
+    },
+    {
+      "id": "product-export-flag",
+      "frozen": false,
+      "pass": true,
+      "score": 1,
+      "output": "fired: brain-product",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected brain-product; baseline arm (no plugin) failed",
+      "missing": false
+    },
+    {
+      "id": "product-dashboard-metric",
+      "frozen": false,
+      "pass": false,
+      "score": 0,
+      "output": "fired: (no brain skill)",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected brain-product; baseline arm (no plugin) failed",
+      "missing": false
+    },
+    {
+      "id": "edge-quick-bug",
+      "frozen": false,
+      "pass": false,
+      "score": 0,
+      "output": "fired: (no brain skill)",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected brain-start; baseline arm (no plugin) failed",
+      "missing": false
+    },
+    {
+      "id": "edge-plan-casual",
+      "frozen": false,
+      "pass": true,
+      "score": 1,
+      "output": "fired: (no brain skill)",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected brain-start|none; baseline arm (no plugin) passed",
+      "missing": false
+    },
+    {
+      "id": "edge-plan-then-fix",
+      "frozen": false,
+      "pass": true,
+      "score": 1,
+      "output": "fired: brain-start",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected brain-start; baseline arm (no plugin) failed",
+      "missing": false
+    },
+    {
+      "id": "edge-product-vs-plan",
+      "frozen": false,
+      "pass": true,
+      "score": 1,
+      "output": "fired: brain-grill",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected brain-grill|brain-product; baseline arm (no plugin) failed",
+      "missing": false
+    },
+    {
+      "id": "edge-ux-vs-product",
+      "frozen": false,
+      "pass": true,
+      "score": 1,
+      "output": "fired: brain-product",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected brain-ux|brain-product; baseline arm (no plugin) failed",
+      "missing": false
+    },
+    {
+      "id": "edge-merge-ready",
+      "frozen": false,
+      "pass": true,
+      "score": 1,
+      "output": "fired: brain-done",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected brain-done; baseline arm (no plugin) failed",
+      "missing": false
+    },
+    {
+      "id": "edge-css-tweak",
+      "frozen": false,
+      "pass": true,
+      "score": 1,
+      "output": "fired: (no brain skill)",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected brain-start|none; baseline arm (no plugin) passed",
+      "missing": false
+    },
+    {
+      "id": "adv-pr-description",
+      "frozen": false,
+      "pass": true,
+      "score": 1,
+      "output": "fired: (no brain skill)",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected none; baseline arm (no plugin) passed",
+      "missing": false
+    },
+    {
+      "id": "adv-regex",
+      "frozen": false,
+      "pass": true,
+      "score": 1,
+      "output": "fired: (no brain skill)",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected none; baseline arm (no plugin) passed",
+      "missing": false
+    },
+    {
+      "id": "adv-haiku",
+      "frozen": false,
+      "pass": true,
+      "score": 1,
+      "output": "fired: (no brain skill)",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected none; baseline arm (no plugin) passed",
+      "missing": false
+    },
+    {
+      "id": "adv-translate-code",
+      "frozen": false,
+      "pass": true,
+      "score": 1,
+      "output": "fired: (no brain skill)",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected none; baseline arm (no plugin) passed",
+      "missing": false
+    },
+    {
+      "id": "adv-tcp-udp",
+      "frozen": false,
+      "pass": true,
+      "score": 1,
+      "output": "fired: (no brain skill)",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected none; baseline arm (no plugin) passed",
+      "missing": false
+    },
+    {
+      "id": "refuse-nobrain-progress",
+      "frozen": false,
+      "pass": true,
+      "score": 1,
+      "output": "fired: brain",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected none|brain; baseline arm (no plugin) passed",
+      "missing": false
+    },
+    {
+      "id": "refuse-nobrain-bug",
+      "frozen": false,
+      "pass": true,
+      "score": 1,
+      "output": "fired: (no brain skill)",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected none|brain; baseline arm (no plugin) passed",
+      "missing": false
+    },
+    {
+      "id": "refuse-nobrain-done",
+      "frozen": false,
+      "pass": false,
+      "score": 0,
+      "output": "fired: brain-done",
+      "notes": "rescored from 2026-10-10T06:20:03.680Z: first-skill grading, same raw data; expected none|brain; baseline arm (no plugin) passed",
+      "missing": false
+    }
+  ]
+}

@@ -44,6 +44,9 @@ Per-feature memory. **One MD per shipped or in-progress feature** — captures p
 | state-integrity — enforceable state, commit-bound evidence, gate telemetry | [`state-integrity/state-integrity.md`](state-integrity/state-integrity.md) | shipped | [2026-08-06 PASS](state-integrity/verifications/2026-08-06.md) |
 | task-coordination — a unit of work below the feature | [`task-coordination/task-coordination.md`](task-coordination/task-coordination.md) | shipped | [2026-08-06 PASS](task-coordination/verifications/2026-08-06.md) |
 | plan-phase — grill before the artifact, register for the record | [`plan-phase/plan-phase.md`](plan-phase/plan-phase.md) | shipped | [2026-08-10 PASS](plan-phase/verifications/2026-08-10.md) |
+| skills-plugin — the method as skills, packaged as a Claude Code plugin | [`skills-plugin/skills-plugin.md`](skills-plugin/skills-plugin.md) | shipped | [2026-10-10-r2 PASS](skills-plugin/verifications/2026-10-10-r2.md) |
+| sqlite-engine — node:sqlite storage for new brains, FTS5 search | [`sqlite-engine/sqlite-engine.md`](sqlite-engine/sqlite-engine.md) | cut | — |
+| axi-core — skills over a thin AXI over a SQLite library | [`axi-core/axi-core.md`](axi-core/axi-core.md) | planned | — |
 <!-- /brain:features-table -->
 
 ## Important things to look at
