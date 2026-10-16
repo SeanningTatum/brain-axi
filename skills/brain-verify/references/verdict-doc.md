@@ -1,20 +1,25 @@
-[brain-verify reference — sections 5, 5b, quality scores, 5c: the verdict doc]
+[brain-verify reference — sections 5, 5b, quality scores, 5c: the verdict body]
 
 -------------------------------------------------------------------------------
 5. WRITE THE VERDICT DOC
 -------------------------------------------------------------------------------
 
-Structure (mirror this shape exactly — a reviewer skimming the doc should get
+The body is a markdown file you write to a scratch path and record with
+`brain verifications add <slug> --verdict ... --body-from <file>` (see
+`persist-evidence.md`); it is stored in brain.db, not committed. Its Verdict
+line must agree with the `--verdict` flag. Evidence links below are
+`.brain/shots/<slug>/...`, relative to the MAIN checkout (from a worktree, the
+files live there too). Structure (mirror this shape exactly — a reviewer skimming the doc should get
 slug, date, verdict, the acceptance table, and the step tables without
 reading prose):
 
     # Verification: <Feature Name>
 
-    - **Slug**: `<slug>` (feature memo: `.brain/features/<slug>/<slug>.md`)
+    - **Slug**: `<slug>` (feature doc: `brain features view <slug>`)
     - **Date**: YYYY-MM-DD
     - **Verified by**: <you / your agent name> (<driver>, e.g. "Playwright CLI — headless script")
     - **Independence**: independent — <who, e.g. "fresh sub-agent, did not implement"> | self-verified — <why no second agent was possible>
-    - **Round**: N _(1 for the first walk, file `<date>.md`; a re-walk after a FAIL is round 2, 3, ... in its own `<date>-rN.md`)_
+    - **Round**: N _(1 for the first walk; a re-walk after a FAIL is round 2, 3, ... — its own `verifications add`, its own body; the round number is assigned automatically)_
     - **Base URL**: <url> _(dev server: started by agent | already running)_ — or `n/a — CLI-only`
     - **Role**: <the account/role state each path used>
     - **Verdict**: ✅ PASS | ❌ FAIL | ⛔ BLOCKED — _one line why_
@@ -26,8 +31,8 @@ reading prose):
 
     | # | Criterion (source) | How checked | Observed | Evidence | Result |
     |---|--------------------|-------------|----------|----------|--------|
-    | 1 | User can reorder frames (task t3) | Dragged frame 3 to slot 1, reloaded | Order reverted on reload | [`A1-reorder.png`](../screenshots/A1-reorder.png) | ❌ |
-    | 2 | `export --json` exits 0 (task t4 verify) | Ran the named command | exit 0, 3 records | `app export --json; echo $?` → `0` | ✅ |
+    | 1 | User can reorder frames (task t3) | Dragged frame 3 to slot 1, reloaded | Order reverted on reload | [`A1-reorder.png`](.brain/shots/<slug>/A1-reorder.png) | ❌ |
+    | 2 | Export prints 3 records, exits 0 (task t4 verify) | Ran the named command | exit 0, 3 records | `app export; echo $?` → `0` | ✅ |
 
     ## Golden path
 
@@ -35,7 +40,7 @@ reading prose):
 
     | # | Step | Expected | Observed | Screenshot | Result |
     |---|------|----------|----------|------------|--------|
-    | 01 | Sign in | Lands on /dashboard | ... | [`01-signin.png`](../screenshots/01-signin.png) | ✅ |
+    | 01 | Sign in | Lands on /dashboard | ... | [`01-signin.png`](.brain/shots/<slug>/01-signin.png) | ✅ |
 
     ## Error path
 
@@ -44,7 +49,7 @@ reading prose):
 
     | # | Step | Expected failure surface | Observed | Screenshot | Result |
     |---|------|--------------------------|----------|------------|--------|
-    | E1 | Submit invalid input | Inline error, no crash | ... | [`E1-error.png`](../screenshots/E1-error.png) | ✅ |
+    | E1 | Submit invalid input | Inline error, no crash | ... | [`E1-error.png`](.brain/shots/<slug>/E1-error.png) | ✅ |
 
     ## Edge probes
 
@@ -53,7 +58,7 @@ reading prose):
 
     | # | Probe | Expected | Observed | Evidence | Result |
     |---|-------|----------|----------|----------|--------|
-    | X1 | Reload after save | Saved state persists | ... | [`X1-reload.png`](../screenshots/X1-reload.png) | ✅ |
+    | X1 | Reload after save | Saved state persists | ... | [`X1-reload.png`](.brain/shots/<slug>/X1-reload.png) | ✅ |
 
     ## Console
 
@@ -69,7 +74,7 @@ reading prose):
 
     | Screen | Approved mockup | Shipped | Difference | Deliberate? |
     |--------|-----------------|---------|------------|-------------|
-    | Settings · empty | `plans/<slug>/v2.html` #screens | [`03-empty.png`](../screenshots/03-empty.png) | CTA moved above the fold | yes — round 2 annotation |
+    | Settings · empty | `plans/<date>-<slug>.html` #screens | [`03-empty.png`](.brain/shots/<slug>/03-empty.png) | CTA moved above the fold | yes — round 2 annotation |
 
     ## Quality scores
 
@@ -99,17 +104,14 @@ reading prose):
 Skip when the plan carried no wireframes. Otherwise, before writing the
 verdict:
 
-1. Find the approved snapshot. `brain plans view <plan-slug>` prints a
-   `snapshot:` path per round (`plans/<slug>/vN.html`, or
-   `features/<feature>/plans/<slug>/vN.html` for a feature-bound plan). A
-   snapshot is written for EVERY round, so the newest is not automatically the
-   approved one — read the snapshot for the round that ENDED the review (the
-   round header shows `ended by`). The `help:` line of `plans view` names that
-   snapshot outright, and tells you when no round has ended yet; if none has,
-   nothing is approved and there is nothing to reconcile against — stop and get
-   the plan approved first. Do not read the live artifact path either: the agent
-   has been editing it, so it reflects the latest draft, not the approved state.
-2. Open its `#screens` section and put each wireframe beside the screenshot
+1. Find the approved plan. `brain plans view <plan-slug>` prints `file:`,
+   `sha256:`, `status:`, `approved_by:` and `rounds`. The registered file at
+   `file:` is the FROZEN copy the human approved — `status:` must be
+   `approved` (a round with `ended_by` set); if it is not, nothing is approved
+   and there is nothing to reconcile against — stop and get the plan approved
+   first. `brain check` fails if the file's hash no longer matches `sha256:`,
+   so run it to confirm you are reading the approved bytes, not a later edit.
+2. Open that file's `#screens` section and put each wireframe beside the screenshot
    you just captured for the same screen and state.
 3. Fill the mockup-reconciliation table above. A difference is not a failure
    — an UNDISCLOSED difference is. Every row that differs names the change
@@ -149,14 +151,13 @@ the others are. Averaging is how a stubbed feature ships.
   broken) — this is not the same as FAIL; say what blocked you.
 
 On FAIL the implementer fixes, and a FRESH verifier re-walks — never the one
-who wrote the fix. Every round is its own doc with exactly ONE Verdict
-line: round 1 is `<YYYY-MM-DD>.md`, round N >= 2 is `<YYYY-MM-DD>-rN.md`
-(e.g. `2026-09-29-r2.md`), with `- **Round**: N` in the header. Never
-append a second verdict to an earlier round's doc — a doc holding FAIL and
-PASS reads as an unreadable verdict. The re-walk covers every acceptance row,
+who wrote the fix. Every round is its own body with exactly ONE Verdict
+line, recorded as its own `brain verifications add` (the CLI assigns the
+next round), with `- **Round**: N` in the header. Never edit an earlier
+round: a body holding FAIL and PASS reads as an unreadable verdict. The re-walk covers every acceptance row,
 not just the ones that failed last round: fixes break neighbors. Cap: 3
 rounds — still failing after round 3 escalates to the human
-(`brain playbook execute` step 4b, which also records refine vs pivot).
+(see the `brain-execute` skill, which also records refine vs pivot).
 
 -------------------------------------------------------------------------------
 5c. CALIBRATION — what a good finding looks like

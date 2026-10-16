@@ -4,8 +4,8 @@ description: "Use when starting any non-trivial task, bug fix, or feature in a r
 ---
 > CLI note: examples below say `brain <cmd>`. If `brain` is not on PATH, run `npx -y brain-axi <cmd>` instead.
 
-TASK KICKOFF PLAYBOOK
-=====================
+TASK KICKOFF
+============
 
 You are about to start a non-trivial task in a repo with a `.brain/` harness.
 This is the bookend that opens state before you touch anything — read what
@@ -14,14 +14,14 @@ that lets the next session (or the next poll of this one) pick up where you
 left off. Follow the seven steps below in order; do not start editing before
 step 7's readiness statement.
 
-Two principles carry over from the execution loop (the `brain-execute` skill (`brain playbook execute` if skills are unavailable))
-because they govern reading state exactly the way that one governs writing
-it:
+Two principles govern reading state exactly the way the `brain-execute`
+skill's loop governs writing it:
 
-- **Two-layer state.** `runs/progress.md` is the rolling CURSOR — read it
-  first for where the last session left off. `features/<slug>/runs/<name>.md`
-  is DEEP state — read it when you're picking up a feature already in flight,
-  not just the cursor's one-line summary of it.
+- **Two-layer state.** The latest checkpoint (`brain progress list`, its
+  `summary:` and `next:`) is the rolling CURSOR — read it first for where the
+  last session left off. The feature's run notes (`brain runs view <slug>
+  --run <name>`) are DEEP state — read them when you're picking up a feature
+  already in flight, not just the cursor's one-line summary of it.
 - **Retrieval over recall.** Every step below is a real command, not a memory
   of what this repo tends to look like. Training data does not reflect this
   repo's actual state — the brain does.
@@ -32,12 +32,15 @@ it:
 
 Reorient before acting — three commands, in this order:
 
-- `brain` (bare, no subcommand) — the home dashboard: feature counts, the
-  current in-progress feature (if any), the last checkpoint, any open review
-  sessions.
-- `brain features` — the full status tracker, one row per feature.
-- `brain progress` — the latest checkpoint in full: branch, what happened, and
-  what the last session said to do next.
+- `brain` (bare, no subcommand) — the home dashboard. Read `features:` (the
+  counts), `in-progress:` (the feature in flight, if any), `last-checkpoint:`
+  and `next:`.
+- `brain features list` — the full status tracker, one row per feature
+  (`slug`, `status`, `tasks`, `pr`).
+- `brain progress list` — recent checkpoints, newest first: `branch`,
+  `feature`, `summary`, `next`, and `run` (the linked run note). If the task
+  continues a feature in flight, also read `brain runs view <slug> --run <name>`
+  for that `run` name — the deep layer.
 
 Do not skip this because the task "sounds simple." A few seconds reading
 three commands is cheap; building on a stale assumption about feature state
@@ -51,7 +54,7 @@ Answer these three, in one sentence each:
 
 - **Intent** — what is actually being asked, not the literal wording.
 - **Scope** — one of: code / brain / both.
-- **Affected feature slug(s)** — cross-check against the `brain features`
+- **Affected feature slug(s)** — cross-check against the `brain features list`
   output from step 1, or "none" if this task doesn't touch tracked feature
   work.
 
@@ -73,7 +76,7 @@ dependency bump, CI config. Otherwise add two more sentences:
 
 Two sentences here, not a brief. The full standard — problem + evidence,
 success-metric fallback ladder, non-goals, scope tiers, prior art — lives in
-the `brain-product` skill (`brain playbook product` if skills are unavailable) and belongs in the plan artifact, not in kickoff.
+the `brain-product` skill and belongs in the plan artifact, not in kickoff.
 The point of doing it now is that a task you cannot frame this way is a task
 whose "done" nobody can check.
 
@@ -83,77 +86,78 @@ whose "done" nobody can check.
 
 For whatever layer you named in step 2's scope:
 
-- `brain docs <section>` — list the docs in a section (`rules`, `recipes`,
-  `codebase`, `high-level-architecture`, ...); `brain docs view
+- `brain docs list --section <section>` — list the docs in a section (`rules`,
+  `recipes`, `codebase`, `architecture`, ...); `brain docs view
   <section>/<name>` (add `--full` for the complete body) to read one.
-- `brain search "<query>"` (optionally `--section <section>`) — find text
-  anywhere in the brain when you don't know which doc has it.
+- `brain search "<query>"` (optionally `--kind doc`) — find text anywhere in
+  the brain when you don't know which doc has it; read `kind`, `ref`, `snippet`.
 
 Do not rely on training data for this project's own patterns and
 conventions — the brain's rules/codebase docs are the source of truth for
 "how this repo actually does it," and they can (and do) diverge from what a
 generic project of this shape would look like.
 
-**If this task touches prompts, models, or agents**, read
-the `brain-ai` skill (`brain playbook ai` if skills are unavailable) now as well, and run `brain evals` — the suites, their
-case counts, their last score, and whether any is stale or regressed — the
-same way you just read the feature tracker. A prompt change made without knowing which
-suite measures it — and what that suite last scored — is the AI equivalent of
-editing code with the tests hidden.
+**If this task touches prompts, models, or agents**, read the `brain-ai`
+skill now as well: know the prompt contract and the project's golden set
+before you edit a prompt, the way you just read the feature tracker.
 
 -------------------------------------------------------------------------------
 4. SCOPE POLICY CHECK
 -------------------------------------------------------------------------------
 
-`brain check` — run it and look at the one-in-progress-at-a-time row along
-with everything else. If it's failing because another feature is already
-in-progress and you're about to claim one, resolve that FIRST:
+`brain check` — run it and read the `checks` rows, the one-in-progress-at-a-time
+row along with everything else.
 
-    brain features set-status <other-slug> --status blocked   # or shipped / cut
+**One in-progress feature at a time.** `brain features set` and `brain check`
+enforce it (tasks under a feature run in parallel; features do not). If another
+feature is already in-progress and you're about to claim one, resolve that
+FIRST:
+
+    brain features set <other-slug> --status blocked   # or ship / cut it properly
 
 Only claim a new feature once the policy check is clean. Every other failing
-check row is also worth fixing before you add to the pile, not just the
-in-progress one.
+check row is also worth fixing before you add to the pile.
+
+**Anti-creep.** If you catch yourself thinking "while I'm here…" and touching
+something unrelated to the task, stop and open a new task
+(`brain tasks add <slug> --title "..."`) instead of folding it into this diff.
 
 -------------------------------------------------------------------------------
 5. ESTABLISH BASELINE
 -------------------------------------------------------------------------------
 
-First, open `.brain/verify.json`. If it still holds the `init` placeholder
-(a check named `placeholder` that only runs `echo`), replace it with this
-project's real checks (typecheck, tests, lint, ...) — a baseline on `echo`
-proves nothing. Then run:
+Run `brain verify list` — the project's declared checks (`name`, `stages`,
+`run`). If it reports no checks (or `brain verify run` exits 1 with NO_CHECKS),
+declare this project's real ones first (typecheck, tests, lint, ...) — a
+baseline on nothing proves nothing:
 
-    brain verify --stage baseline
+    brain verify add <name> --run "<cmd>" --stages baseline,verify
+
+Then run:
+
+    brain verify run --stage baseline
 
 MUST pass before you make a single edit. This is what lets you tell your own
 changes apart from something that was already broken: a pre-existing failure
 here gets NOTED, not silently folded into your diff as if you caused it or
-fixed it.
+fixed it. Read the results table and the exit code (`echo $?`).
 
-Fresh clone (verify.json checks never ran here before)? Run
-`brain verify --stage bootstrap` first — it's the one-time setup stage
-(installs, migrations, whatever the project's own checks need before
-`baseline`/`verify` can run at all).
-
-AI work needs a SECOND baseline: `brain evals run <suite>` for the suite that
-measures the prompt you are about to touch, before you edit anything.
-Same logic as above — without a pre-change score, "it seems better now" is
-unfalsifiable, and a pre-existing failure gets silently folded into your diff.
-See `brain playbook ai` section 5.
+Fresh clone? If `brain verify list --stage bootstrap` lists checks, run
+`brain verify run --stage bootstrap` first (one-time setup: installs,
+migrations). None declared? Skip it — that run would exit NO_CHECKS.
 
 -------------------------------------------------------------------------------
 6. CLAIM + OPEN STATE
 -------------------------------------------------------------------------------
 
-- Working a tracked feature: `brain features set-status <slug> --status
-  in-progress` — claims it, enforcing the one-in-progress policy from step 4.
-- Always: `brain progress add --summary "<what you're starting>"` — opens the
-  rolling cursor entry for this session.
+- Working a tracked feature: `brain features set <slug> --status in-progress`
+  — claims it, enforcing the one-in-progress policy from step 4.
+- Always: `brain progress add --summary "<what you're starting>" --next "<first
+  action>" [--feature <slug>]` — opens the rolling cursor entry for this
+  session (summary ≤ 200 chars).
 - As you work: per-step evidence goes to `brain runs append <slug> --step
-  "..." --observed "..."` — that loop belongs to the execution playbook
-  (`brain playbook execute`), not this one; this playbook's job ends once
-  state is open, that one's begins.
+  "..." --observed "..."` — that loop belongs to the `brain-execute` skill;
+  this skill's job ends once state is open, that one's begins.
 
 -------------------------------------------------------------------------------
 7. READINESS STATEMENT
@@ -167,8 +171,8 @@ Before writing a line of code, state one line:
 Only after this line — and no user redirect in response to it — start
 working.
 
-**If the next act is a plan, that is not code.** Run the `brain-grill` skill (`brain playbook grill` if skills are unavailable)
-before the `brain-plan` skill (`brain playbook plan` if skills are unavailable): it interviews the human while the design can
+**If the next act is a plan, that is not code.** Run the `brain-grill` skill
+before the `brain-plan` skill: it interviews the human while the design can
 still change, and checks the brain for an already-settled answer before asking
 anything. Skip it only for a change with nothing to decide.
 
@@ -176,7 +180,8 @@ anything. Skip it only for a change with nothing to decide.
 DEFINITION OF READY
 -------------------------------------------------------------------------------
 
-- [ ] Brain state read (home, features, progress) — not skimmed from memory
+- [ ] Brain state read (home, features list, progress list; run notes if the
+      feature is in flight) — not skimmed from memory
 - [ ] Task framed: intent, scope, affected feature(s) — or a clarifying
       question was asked instead
 - [ ] User-facing work only: product framing said (§2b) — the specific user
@@ -185,10 +190,10 @@ DEFINITION OF READY
 - [ ] Relevant docs read via `brain docs` / `brain search`
 - [ ] `brain check` clean on the one-in-progress policy (and ideally
       everything else)
-- [ ] Baseline established on REAL checks, not the placeholder (`brain verify
-      --stage baseline`, or `bootstrap` first on a fresh clone) — pass/fail
+- [ ] Baseline established on REAL declared checks (`brain verify run --stage
+      baseline`, or `bootstrap` first on a fresh clone) — pass/fail
       recorded, not assumed
-- [ ] Feature claimed (`features set-status ... in-progress`) if applicable
+- [ ] Feature claimed (`features set ... --status in-progress`) if applicable
 - [ ] `progress add` checkpoint opened
 - [ ] Readiness statement said
 

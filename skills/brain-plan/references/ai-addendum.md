@@ -5,7 +5,7 @@
 -------------------------------------------------------------------------------
 Skip this section entirely for ordinary deterministic work. Include it when
 the plan proposes a prompt, a model call, a chain, retrieval, or an agent —
-read `brain playbook ai` first, then add the following to the sections above:
+read the `brain-ai` skill first, then add the following to the sections above:
 two new sections, a gate folded into section 14, and (for multi-agent work) a
 topology table. They exist because a plan for AI work that omits them is a
 plan whose success cannot be judged.
@@ -16,12 +16,13 @@ plan whose success cannot be judged.
   settings pin. A reviewer should be able to tell what the prompt is
   responsible for without reading it.
 
-- **Eval plan + golden set** (right after the prompt contract). Which suite
-  measures this, how many cases and where they come from (real / synthetic /
+- **Golden set + how it is judged** (right after the prompt contract). Where
+  the project keeps its cases (in its own repo, not in the brain) and what
+  runs them, how many cases and where they come from (real / synthetic /
   regression), the four coverage bands (typical, edge, adversarial,
-  refusal-correct), the held-out slice, and which eval kind scores it
+  refusal-correct), the held-out slice, and which kind of check scores it
   (deterministic assertions / rubric + judge / human). State the baseline
-  number if a suite already exists, or say plainly that building the suite is
+  number if a set already exists, or say plainly that building the set is
   step one.
 
 - **Regression gate** (fold into section 14's testing plan). What must never
@@ -39,7 +40,7 @@ both are shortlist questions a reviewer can click through in seconds:
 - **Model choice** — the pin, with the cost/latency/quality tradeoff spelled
   out per option. Never leave this implicit; it silently sets the quality
   ceiling and the bill.
-- **Eval kind** — deterministic assertions vs rubric + judge vs human sample,
+- **How outputs are judged** — deterministic assertions vs rubric + judge vs human sample,
   with what each one can and cannot see for THIS task.
 
 Cost and latency belong in the plan too, in whatever section fits: a plan that

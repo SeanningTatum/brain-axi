@@ -6,14 +6,14 @@
 
 Product decisions get their own section in the plan artifact — call it
 "Product decisions," placed BEFORE the technical "Decisions needed" section
-from `brain playbook plan` (section 8). This was decision 5 of the approved
+of the `brain-plan` skill (section 8). This was decision 5 of the approved
 planning-ux plan, and the reasoning is worth repeating: the human answers
 what you're building before how, and a bad product answer invalidates every
 technical card below it.
 
-Reuse the plan playbook's decision-card structure exactly — the same
+Reuse the plan skill's decision-card structure exactly — the same
 `decision-card` class, the same `data-brain-action` rule, the same
-`queueDecision(...)` helper and queueKey discipline (`brain playbook plan`
+`queueDecision(...)` helper and queueKey discipline (`brain-plan` skill,
 sections 8 and 9.3). Never invent a parallel mechanism; a second queuing path
 is a second thing to keep in sync and a second thing a reviewer has to learn.
 
@@ -27,7 +27,7 @@ position, not to invent one from a blank multiple-choice list.
 
 Frame the question in the USER's terms, not the implementation's. "Should
 scope tiers use a JSON array or a markdown table" is implementation-framed
-and does not belong here at all (it goes in the plan playbook's technical
+and does not belong here at all (it goes in the plan skill's technical
 decisions, if anywhere). "Should the reviewer be able to approve a smaller
 version of this feature without a second planning round" is product-framed —
 it is the same underlying decision as "scope tiers, yes or no," stated as a
@@ -43,7 +43,7 @@ question about what the reviewer can do.
 
 Full worked product decision card — copy this shape, adjust ids, copy, and
 table rows per question. It reuses the exact classes and helper from
-`brain playbook plan` section 8, verbatim:
+the `brain-plan` skill's section 8, verbatim:
 
     <section id="product-decisions">
       <h2>Product decisions</h2>
@@ -81,7 +81,7 @@ table rows per question. It reuses the exact classes and helper from
       </div>
     </section>
 
-Note what did NOT change from the plan playbook's version (section 8): the class names
+Note what did NOT change from the plan skill's version (section 8): the class names
 (`decision-card`, `tag-recommended`, `btn-queue`, `queue-ack`), the
 `data-brain-action` attribute on the card and on every input and button, the
 `queueDecision(cardId, question)` call signature, and the queueKey

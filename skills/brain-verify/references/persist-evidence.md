@@ -1,56 +1,62 @@
-[brain-verify reference — section 6: persist the evidence]
+[brain-verify reference — step 6: persist the evidence]
 
 -------------------------------------------------------------------------------
-6. PERSIST THE EVIDENCE (brain-axi commands)
+6. PERSIST THE EVIDENCE (brain commands)
 -------------------------------------------------------------------------------
 
-Copy each screenshot in with the naming convention baked into --step:
+0. Commit the implementation FIRST. `verifications add` stamps HEAD's commit
+   and records `dirty: true` when the tree has uncommitted changes (including
+   untracked files). It does not fail, but a dirty verdict binds to code that
+   is in no commit: it shows in `brain verifications view`, and you should
+   re-take it (the next round) after committing so the receipt is clean.
 
-    npx -y brain-axi shots add ./01-signup.png --feature authentication --step 01-signup
-    npx -y brain-axi shots add ./02-dashboard.png --feature authentication --step 02-dashboard
-    npx -y brain-axi shots add ./E1-bad-login.png --feature authentication --step E1-bad-login
+1. Save each screenshot under `<brainDir>/shots/<slug>/` — `.brain/shots/<slug>/`
+   by default; with `--brain .state`, `.state/shots/<slug>/` (naming: `naming.md`).
+   In a git worktree, that is the MAIN checkout's shots dir (pass its absolute
+   path); a worktree's own `.brain/shots/` is refused with
+   SHOT_OUTSIDE_SHOTS_DIR, and the error prints the right dir.
 
-This lands each file at
-.brain/features/<slug>/screenshots/<step>.<ext> — write the verdict doc's
-table links as relative paths from the verifications/ dir: ../screenshots/<step>.<ext>.
+2. Write the verdict body (structure: `verdict-doc.md`) to a scratch file
+   git IGNORES, e.g. tmp/verdict-<slug>.md with `tmp/` in .gitignore (add
+   it if missing — `brain init` does not): an untracked file counts as
+   uncommitted, so it alone would record the verdict `dirty: true`.
 
-Round N >= 2: prefix every --step with rN- (`--step r2-01-signup`,
-`--step r2-E1-bad-login`). `shots add` overwrites an existing step's file,
-so reusing round 1's step names would silently replace the images round 1's
-doc cites — the FAIL evidence the re-walk exists to answer. Link round N's
-doc to its own rN- files only.
+3. Record it — screenshots ride along with `--shot`, repeatable, each
+   `path::caption`:
 
-Then write the verdict doc itself to
-.brain/features/<slug>/verifications/<YYYY-MM-DD>.md (today's date; round
-N >= 2 is <YYYY-MM-DD>-rN.md — one Verdict per doc, never an addendum). There is
-no CLI write command for the doc body — write the file directly with your
-file-editing tool, following the structure above.
+       brain verifications add authentication --verdict FAIL --body-from tmp/verdict-authentication.md \
+         --shot .brain/shots/authentication/01-signup.png::"01-signup: form renders" \
+         --shot .brain/shots/authentication/E1-bad-login.png::"E1: bad password rejected" \
+         --verified-by verifier-agent-2 --implemented-by claude-main
 
-Confirm it's discoverable:
+   The verdict value must match the body's Verdict line (PASS | FAIL |
+   BLOCKED). The round number is automatic: the next round for that feature.
+   Round 2 and later get their own rN- shot files; never overwrite round 1's.
 
-    npx -y brain-axi verifications <slug>
-    npx -y brain-axi verifications view <slug> <YYYY-MM-DD>   (or <YYYY-MM-DD>-rN)
+4. Read it back and check the stamp:
 
-Both should show your new doc with the correct verdict parsed from the
-**Verdict** line. Then bind it to the code with a receipt naming BOTH sides.
-The receipt refuses a dirty working tree (any `git status --porcelain` output,
-untracked files included): commit the implementation and the verdict doc
-first. If unrelated WIP you can't commit is present, `--allow-dirty` stamps
-anyway and records `dirty: true` — weaker evidence, honestly labelled:
+       brain verifications view authentication --full
 
-    npx -y brain-axi receipt <slug> --verified-by <you> --implemented-by <who wrote it>
+   Read `verdict:`, `round:`, `commit:`, `dirty:`, `verified_by:`,
+   `implemented_by:` and that every shot listed is the file you meant. Use
+   `brain verifications list --feature authentication` for the round history.
 
-(`--implemented-by` defaults to HEAD's git author, `--verified-by` to
-`git config user.name`, then `$USER` — so a solo human stamping with defaults is caught
-as self-verified. A sub-agent verifier shares your git identity: always pass
-its own name via `--verified-by`. The receipt records each name's source
-— `verified_by_source` / `implemented_by_source`: `flag` or `default` —
-and a defaulted `verified_by` never counts as independent: `brain check
---strict` warns "identities not declared" even when the names differ, and
-the receipt's `warning:` says "identities defaulted" unless both flags are
-passed.) If the two are the same identity the receipt still stamps but
-prints a `warning:`, and `brain check --strict` reports a `warn` row;
-that must be matched by your `- **Independence**: self-verified — <reason>`
-line. If a checkpoint is warranted, follow up with
-`brain progress add --summary "..."` noting the verification result.
+Identity. `--verified-by` defaults to `feature-verifier` and
+`--implemented-by` defaults to HEAD's git author. A sub-agent verifier
+shares your git identity, so always pass `--verified-by` with the
+verifier's own name — and `--implemented-by` with whoever wrote the code —
+so the record shows two different parties. If both are the same identity,
+the body's `- **Independence**: self-verified — <reason>` line must say why
+no second agent was possible.
 
+Verbatim command output (CLI-only criteria, transcripts) goes to the run
+note, not the verdict body alone:
+
+    node bin/app.js export 2>&1 | brain runs append authentication --step "A2: app export" --observed -
+
+`brain features ship <slug>` is refused unless the latest verification is
+PASS (and no tasks are open), so a FAIL round is not the end state: the fix
+and a fresh verifier's next round are. Ship never refuses over ancestry
+(squash merges and rebases rewrite it), but it prints a `warning:` line when
+the PASS commit is not an ancestor of HEAD, is unknown, or was recorded
+`dirty: true` — the cue to re-take the verdict on the current HEAD.
