@@ -132,6 +132,11 @@ test("planForFile finds a plan by its file; shots are matched only when recorded
   const { db, root } = seeded(t);
   assert.equal(planForFile(db, root, path.join(root, "plans", "auth.html")).slug, "auth");
   assert.equal(planForFile(db, root, path.join(root, "plans", "other.html")), null);
+  // A file registered under two slugs: the bound slug wins, else the newest.
+  L.plans.upsert(db, { file: "plans/auth.html", slug: "auth-v2", root });
+  assert.equal(planForFile(db, root, path.join(root, "plans", "auth.html")).slug, "auth-v2");
+  assert.equal(planForFile(db, root, path.join(root, "plans", "auth.html"), "auth").slug, "auth");
+  assert.equal(planForFile(db, root, path.join(root, "plans", "auth.html"), "gone").slug, "auth-v2");
   assert.equal(shotsFor(db).length, 1);
   assert.ok(isRecordedShot(db, ".brain/shots/01-login.png"));
   assert.ok(isRecordedShot(db, ".brain/shots/01-login.png", "auth"));

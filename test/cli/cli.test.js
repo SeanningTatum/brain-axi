@@ -644,7 +644,7 @@ test("a fresh import writes .gitignore before publishing brain.db; a failed writ
   assert.ok(!fs.readdirSync(path.join(dst, ".brain")).some((n) => n.startsWith(".import-")), "staging dir removed");
 });
 
-test("a fresh import falls back to an exclusive copy where hard links are unsupported (Greptile r8)", (t) => {
+test("a fresh import falls back to a claimed rename where hard links are unsupported (Greptile r8)", (t) => {
   const src = repoWithBrain(t);
   const dump = brain(src, ["export", "--stdout"]).out;
   const env = preload(t, `import fs from "node:fs";
@@ -654,12 +654,12 @@ fs.linkSync = () => { throw Object.assign(new Error("EPERM: operation not permit
   ok(brain(dst, ["import", "-"], { input: dump, env }), /created: true/);
   assert.equal(brain(dst, ["export", "--stdout"]).out, dump);
   assert.match(fs.readFileSync(path.join(dst, ".gitignore"), "utf8"), /\.brain\/brain\.db/);
-  // Still no-clobber: a brain.db made meanwhile is refused, not replaced.
+  // Still no-clobber: a brain.db published meanwhile is refused, not replaced.
   const raced = gitRepo(tmp(t));
   const racer = preload(t, `import fs from "node:fs";
-const copy = fs.copyFileSync;
+const open = fs.openSync;
 fs.linkSync = () => { throw Object.assign(new Error("EPERM"), { code: "EPERM" }); };
-fs.copyFileSync = (a, b, m) => { if (String(b).endsWith("brain.db")) fs.writeFileSync(b, "theirs"); return copy(a, b, m); };
+fs.openSync = (p, ...rest) => { if (String(p).endsWith("brain.db.creating")) fs.writeFileSync(String(p).slice(0, -".creating".length), "theirs"); return open(p, ...rest); };
 `);
   failsWith(brain(raced, ["import", "-"], { input: dump, env: racer }), 1, "BRAIN_EXISTS");
   assert.equal(fs.readFileSync(path.join(raced, ".brain", "brain.db"), "utf8"), "theirs");

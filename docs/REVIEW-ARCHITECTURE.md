@@ -52,13 +52,15 @@ reopened if the file is replaced). A round is recorded when the agent's poll rec
 so the round history is exactly what the agent saw; prompts wait in the server until then
 (Ctrl-C on a poll loses nothing). Delivery is at-least-once with an ack: a poll moves the
 queued prompts (and the DOM outline sent with them) into `inflight`
-`{batch, prompts, dom_snapshot, session_ended, ended_by, deliveries}`
+`{batch, plan, prompts, dom_snapshot, session_ended, ended_by, deliveries}`
 instead of deleting them; the CLI records the round with that `batch` id, then
 `POST /api/ack`s it, and only the ack deletes the batch. A poll killed before the ack gets
 the same batch again (`redelivered: true`); `plans.addRound({batchId})` skips a batch id
-already recorded for the plan (migration `002`, unique `(plan_id, batch_id)`), so one batch
-is one round. A re-delivery carries `session_ended` only while the session is still ended:
-after a `--reopen` the old batch's end no longer closes the reopened session. A user End
+already recorded (under any plan; migration `002`, unique `(plan_id, batch_id)`), so one
+batch is one round. The batch carries the plan it was given for (`plan`, stamped when it is
+first sent), and the CLI records it into that plan, not the file's newest registration. A
+`--reopen` clears the in-flight batch's End: it belonged to the opening it closed, so a
+re-delivery never closes the reopened session or stands in for a later End. A user End
 that lands after the batch was first sent is never folded into the re-delivery (the CLI may
 already have recorded that batch id, so an attached End would be deduplicated away): the
 re-delivery says so in `next_step` (`end_follows`), and the next poll returns `ended`, which
@@ -74,9 +76,12 @@ flags a missing or changed plan.
 - State dir `~/.brain-axi/` (`BRAIN_AXI_STATE_DIR`): `sessions.json`, `server.log`. Until
   `sessions.json` exists, a pre-0.3 `state.json` (same session shape) is read, so queued
   prompts and the user-end latch survive the upgrade. Servers on different ports share
-  the store, so every read-modify-write holds `sessions.json.lock` (atomic `mkdir`; a lock
-  older than 2 s is broken). Reads treat a corrupt store as empty; a write first renames it
-  to `sessions.json.corrupt-<time>` (logged), so a save never overwrites it.
+  the store, so every read-modify-write holds `sessions.json.lock` (atomic `mkdir` with an
+  `owner` file `{pid, token}`; broken only when that pid is gone, or past 10 s). A writer
+  whose lock was broken anyway re-checks its token before the atomic rename, redoes the
+  read-modify-write on fresh state, and removes only a lock that still carries its token.
+  Reads treat a corrupt store as empty; a write first renames it to
+  `sessions.json.corrupt-<time>` (logged), so a save never overwrites it.
 - Session key: first 16 hex of `sha256(realpath(file))` — `sessionKey()` in server.js,
   imported by the CLI.
 - Idle shutdown: 30 min with no SSE client and no in-flight poll
@@ -88,7 +93,9 @@ flags a missing or changed plan.
   before draining (and re-checks before recording), so no batch is recorded or acked into
   another repo's brain. Plan binding likewise: while feedback is unrecorded, `review open`
   under another `--plan` refuses with `PLAN_MISMATCH` (and `/api/open` with 409) before
-  registering anything, so the batch is recorded into the plan it was given for, once.
+  registering anything, so the batch is recorded into the plan it was given for, once. A
+  switch the server refuses after the CLI registered the new slug changes nothing: the
+  session keeps its plan, the default for `open`, `poll` and `end` (`planForFile(…, slug)`).
 - Brain change poll: 1 s (`BRAIN_AXI_DB_POLL_MS`).
 - `/health` → `{ok, app: "brain-axi", version, api}`. The CLI respawns a server whose
   `version` or `api` (`REVIEW_API`, currently 3) differs from its own.
@@ -146,10 +153,10 @@ POSTs are same-origin guarded: an `Origin`/`Referer` that is present must match 
 | `POST /watch/<f>/annotate[/delete|/send]?brain=` | pin add `{shot, x, y, note}` / delete `{id}` / mark sent |
 | `GET /chrome.js`, `/dashboard.js`, `/lightbox.js`, `/vendor/mermaid.min.js`, `/session/<key>/sdk.js` | static |
 
-Poll payloads (wire contract unchanged; `batch` and `redelivered` are additive):
+Poll payloads (wire contract unchanged; `batch`, `plan` and `redelivered` are additive):
 
-- `{status: "feedback", prompts: [...], batch, redelivered?, dom_snapshot | dom_snapshot_chars: 0, layout_warnings?, session_ended?, ended_by?, next_step}`
-- `{status: "ended", ended_by, next_step}` · `{status: "missing", next_step}`
+- `{status: "feedback", prompts: [...], batch, plan?, redelivered?, dom_snapshot | dom_snapshot_chars: 0, layout_warnings?, session_ended?, ended_by?, next_step}`
+- `{status: "ended", plan?, ended_by, next_step}` · `{status: "missing", next_step}`
 
 `next_step` strings live in `NEXT_STEP` (server.js). Presence: a poll attached →
 `listening`; prompts queued with no poll → `working`; else `waiting`.
